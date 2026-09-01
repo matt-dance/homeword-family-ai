@@ -354,7 +354,7 @@ async def _log_message(
     )
     session.add(log)
 
-    if chat_session_id and direction == "input" and not blocked:
+    if chat_session_id and direction == "input":
         chat_session = await session.get(ChatSession, chat_session_id)
         if chat_session and not chat_session.preview:
             chat_session.preview = content[:200]

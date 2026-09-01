@@ -36,3 +36,10 @@ packages = ["homeward_gateway"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "unit: fast tests with no external services",
+    "integration: API-level tests using the app test client",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
