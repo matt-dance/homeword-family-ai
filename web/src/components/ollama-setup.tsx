@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type OllamaRecommendation, type OllamaStatus } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +30,7 @@ export function OllamaSetup({
   const [pullMessage, setPullMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const bootstrapAttempted = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -46,13 +47,13 @@ export function OllamaSetup({
       }
       onReadyChange?.(s.ready);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load Ollama status");
+      setError(e instanceof Error ? e.message : "Failed to load AI status");
     }
   }, [initializedSelection, onReadyChange]);
 
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 8000);
+    const interval = setInterval(refresh, 5000);
     return () => clearInterval(interval);
   }, [refresh]);
 
@@ -70,7 +71,7 @@ export function OllamaSetup({
         } else if (job.status === "error") {
           setPullJobId(null);
           setBusy(false);
-          setError(job.error || "Model download failed");
+          setError(job.error || "Download failed");
         }
       } catch {
         setPullJobId(null);
@@ -80,20 +81,45 @@ export function OllamaSetup({
     return () => clearInterval(interval);
   }, [pullJobId, refresh]);
 
-  const handleInstall = async () => {
-    if (!selectedModel) return;
+  const startDownload = async (model?: string) => {
+    const target = model || selectedModel;
+    if (!target) return;
     setBusy(true);
     setError("");
     try {
-      const result = await api.ollamaPull(selectedModel);
+      const result = await api.ollamaPull(target);
       setPullJobId(result.job_id);
       setPullProgress(0);
       setPullMessage("Starting download…");
     } catch (e) {
       setBusy(false);
-      setError(e instanceof Error ? e.message : "Install failed");
+      setError(e instanceof Error ? e.message : "Download failed");
     }
   };
+
+  useEffect(() => {
+    if (bootstrapAttempted.current || !status || !recommendations) return;
+    if (status.ready || pullJobId || busy) return;
+
+    bootstrapAttempted.current = true;
+    api.ollamaBootstrap()
+      .then(async (result) => {
+        if (result.ready) {
+          await refresh();
+          return;
+        }
+        if (result.job_id) {
+          if (result.model) setSelectedModel(result.model);
+          setPullJobId(result.job_id);
+          setBusy(true);
+          setPullProgress(0);
+          setPullMessage("Downloading recommended model…");
+        }
+      })
+      .catch(() => {
+        bootstrapAttempted.current = false;
+      });
+  }, [status, recommendations, pullJobId, busy, refresh]);
 
   const handleSave = async () => {
     if (!selectedModel) return;
@@ -110,8 +136,29 @@ export function OllamaSetup({
   };
 
   const selected = recommendations?.models.find((m) => m.id === selectedModel);
-  const canInstall = status?.reachable && selected && !selected.installed && selected.fits_machine;
+  const managed = status?.managed;
+  const canDownload = status?.reachable && selected && !selected.installed && selected.fits_machine;
   const isReady = status?.ready && selected?.installed;
+
+  const statusTitle = !status
+    ? "Checking AI status…"
+    : status.reachable
+      ? managed
+        ? "AI engine is running"
+        : "Ollama is running"
+      : managed
+        ? "AI engine is starting…"
+        : "AI is not running yet";
+
+  const statusDetail = !status
+    ? "One moment while Homeward checks your setup."
+    : status.reachable
+      ? managed
+        ? "Homeward includes Ollama — no separate install needed."
+        : `Connected to ${status.ollama_url}`
+      : managed
+        ? status.bootstrap_hint || "First launch can take a few minutes while everything starts."
+        : "Install Ollama from ollama.com, then run: ollama serve";
 
   return (
     <div className="space-y-4">
@@ -119,27 +166,23 @@ export function OllamaSetup({
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Server className="h-5 w-5" />
-            Local AI (Ollama)
+            Local AI
           </CardTitle>
           <CardDescription>
-            Homeward runs AI on your computer — nothing is sent to the cloud unless you enable it later.
+            Homeward runs AI on your computer. Nothing goes to the cloud unless you turn that on later.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between rounded-lg border p-3">
             <div className="flex items-center gap-3">
               <span
-                className={`h-3 w-3 rounded-full ${status?.reachable ? "bg-green-500" : "bg-destructive"}`}
+                className={`h-3 w-3 rounded-full ${
+                  status?.reachable ? "bg-green-500" : status ? "bg-amber-500 animate-pulse" : "bg-muted"
+                }`}
               />
               <div>
-                <p className="font-medium">
-                  {status?.reachable ? "Ollama is running" : "Ollama is not running"}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {status?.reachable
-                    ? `Connected to ${status.ollama_url}`
-                    : "Install from ollama.com, then run: ollama serve"}
-                </p>
+                <p className="font-medium">{statusTitle}</p>
+                <p className="text-xs text-muted-foreground">{statusDetail}</p>
               </div>
             </div>
             <Button variant="ghost" size="sm" onClick={refresh}>
@@ -150,23 +193,30 @@ export function OllamaSetup({
           {recommendations && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Cpu className="h-4 w-4" />
-              Detected {recommendations.system_ram_gb} GB RAM on this machine
+              This computer has about {recommendations.system_ram_gb} GB of memory
             </div>
           )}
 
-          {!status?.reachable && (
+          {!status?.reachable && !managed && (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
-              <p className="font-medium">Start Ollama first</p>
+              <p className="font-medium">Install Ollama to continue</p>
               <ol className="mt-2 list-decimal space-y-1 pl-4 text-muted-foreground">
                 <li>
-                  Download Ollama from{" "}
+                  Download from{" "}
                   <a href="https://ollama.com" className="underline" target="_blank" rel="noreferrer">
                     ollama.com
                   </a>
                 </li>
-                <li>Open a terminal and run: <code className="rounded bg-muted px-1">ollama serve</code></li>
-                <li>Come back here and click Refresh</li>
+                <li>Run: <code className="rounded bg-muted px-1">ollama serve</code></li>
+                <li>Come back here — Homeward will detect it automatically</li>
               </ol>
+            </div>
+          )}
+
+          {!status?.reachable && managed && (
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-muted-foreground">
+              Homeward is starting Ollama in the background. This page will update automatically —
+              no terminal commands needed.
             </div>
           )}
         </CardContent>
@@ -175,9 +225,9 @@ export function OllamaSetup({
       {recommendations && status?.reachable && (
         <Card>
           <CardHeader>
-            <CardTitle>Choose a model</CardTitle>
+            <CardTitle>Choose an AI model</CardTitle>
             <CardDescription>
-              Pick a model that fits your computer. Larger models give better answers but need more memory.
+              Pick one that fits your computer. We recommend the highlighted option — just click Download.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -207,7 +257,7 @@ export function OllamaSetup({
                     )}
                     {model.installed && (
                       <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-xs text-green-700 dark:text-green-400">
-                        Installed
+                        Ready
                       </span>
                     )}
                     {!model.fits_machine && (
@@ -218,7 +268,7 @@ export function OllamaSetup({
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">{model.description}</p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    ~{model.size_gb} GB download · {model.min_ram_gb} GB RAM minimum
+                    ~{model.size_gb} GB download · needs {model.min_ram_gb} GB RAM
                   </p>
                 </div>
               </label>
@@ -241,10 +291,10 @@ export function OllamaSetup({
             )}
 
             <div className="flex flex-wrap gap-2">
-              {canInstall && (
-                <Button onClick={handleInstall} disabled={busy || !!pullJobId}>
+              {canDownload && (
+                <Button onClick={() => startDownload()} disabled={busy || !!pullJobId}>
                   <Download className="mr-2 h-4 w-4" />
-                  Install model
+                  Download model
                 </Button>
               )}
               {selected?.installed && (
@@ -256,7 +306,7 @@ export function OllamaSetup({
 
             {isReady && (
               <p className="text-sm text-green-700 dark:text-green-400">
-                AI is ready — {status.chat_model} is installed and selected.
+                AI is ready — {status.chat_model} is downloaded and selected.
               </p>
             )}
           </CardContent>

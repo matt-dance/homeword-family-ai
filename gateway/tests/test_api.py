@@ -137,6 +137,12 @@ class TestOllama:
         assert resp.status_code == 200
         assert "session_id" in resp.json()
 
+    @pytest.mark.asyncio
+    async def test_ollama_bootstrap_requires_ollama(self, client):
+        await client.post("/api/v1/setup", json={"password": "testpass123"})
+        resp = await client.post("/api/v1/ollama/bootstrap")
+        assert resp.status_code in (200, 503)
+
 
 class TestPresets:
     @pytest.mark.asyncio

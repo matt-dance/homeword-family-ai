@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     anthropic_api_key: str = ""
 
+    # Packaging
+    docker_mode: bool = False
+
     # Database
     database_url: str = "sqlite+aiosqlite:///./homeward.db"
 

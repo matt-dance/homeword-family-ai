@@ -55,6 +55,7 @@ export interface BlockedAttempt {
 
 export interface OllamaStatus {
   reachable: boolean;
+  managed?: boolean;
   ollama_url: string;
   system_ram_gb: number;
   installed_models: string[];
@@ -63,6 +64,7 @@ export interface OllamaStatus {
   chat_model_ready: boolean;
   classifier_model_ready: boolean;
   ready: boolean;
+  bootstrap_hint?: string | null;
 }
 
 export interface OllamaModelOption {
@@ -191,6 +193,11 @@ export const api = {
       body: JSON.stringify({ model }),
     }),
   ollamaPullStatus: (jobId: string) => request<OllamaPullJob>(`/ollama/pull/${jobId}`),
+  ollamaBootstrap: () =>
+    request<{ ok: boolean; ready: boolean; model?: string; job_id?: string }>(
+      "/ollama/bootstrap",
+      { method: "POST" }
+    ),
   ollamaSettings: (chat_model: string, classifier_model?: string) =>
     request<{ ok: boolean; ollama: OllamaStatus }>("/settings/ollama", {
       method: "POST",

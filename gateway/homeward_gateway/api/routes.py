@@ -760,6 +760,28 @@ async def ollama_pull_status(
     return job
 
 
+@router.post("/ollama/bootstrap")
+async def ollama_bootstrap(
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Start downloading the recommended model if none is ready yet."""
+    if not await ollama_service.is_ollama_reachable():
+        raise HTTPException(
+            status_code=503,
+            detail="AI engine is still starting. Please wait a moment and try again.",
+        )
+    chat_model, classifier_model = await get_effective_models(session)
+    status = await ollama_service.get_status(chat_model, classifier_model)
+    if status["ready"]:
+        return {"ok": True, "ready": True, "model": chat_model}
+
+    recommendations = await ollama_service.get_recommendations(chat_model, classifier_model)
+    model = recommendations["recommended_model"]
+    job_id = ollama_service.start_pull(model)
+    return {"ok": True, "ready": False, "model": model, "job_id": job_id}
+
+
 @router.post("/settings/ollama")
 async def update_ollama_settings(
     body: OllamaSettingsRequest,

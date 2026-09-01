@@ -7,18 +7,25 @@ services:
     ports:
       - "11434:11434"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
   ollama-init:
     image: ollama/ollama:latest
     container_name: homeward-ollama-init
     depends_on:
-      - ollama
-    entrypoint: >
-      /bin/sh -c "
-      sleep 5;
-      ollama pull llama3.2:3b || true;
-      "
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./scripts/docker/pull-default-model.sh:/pull-default-model.sh:ro
+    entrypoint: ["/bin/sh", "/pull-default-model.sh"]
     environment:
       - OLLAMA_HOST=ollama:11434
+      - HOMEWARD_DEFAULT_MODEL=llama3.2:3b
     network_mode: service:ollama
     restart: "no"
 
@@ -28,8 +35,10 @@ services:
       dockerfile: gateway/Dockerfile
     container_name: homeward-gateway
     depends_on:
-      - ollama
+      ollama:
+        condition: service_healthy
     environment:
+      - HOMEWARD_DOCKER=true
       - HOMEWARD_OLLAMA_BASE_URL=http://ollama:11434
       - HOMEWARD_OLLAMA_MODEL=llama3.2:3b
       - HOMEWARD_CLASSIFIER_MODEL=llama3.2:3b
@@ -42,6 +51,18 @@ services:
     ports:
       - "8000:8000"
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
 
   web:
     build:
@@ -49,7 +70,8 @@ services:
       dockerfile: web/Dockerfile
     container_name: homeward-web
     depends_on:
-      - gateway
+      gateway:
+        condition: service_healthy
     environment:
       - GATEWAY_URL=http://gateway:8000
     ports:

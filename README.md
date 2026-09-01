@@ -2,38 +2,52 @@
 
 **Homeward** is an open-source, local-first family AI safety gateway. It sits between your children and AI models, filtering every message in and out with a fail-closed safety pipeline. Parents get a simple setup wizard, age-based presets, and a dashboard to review conversations — no YAML required for basic use.
 
+## Design goals
+
+- **Super easy setup** — no terminal, no technical knowledge for day-to-day use
+- **Local AI included** — Ollama runs automatically (Docker today; native `.dmg` / `.exe` installer later)
+- **Simple model picking** — choose a model in the setup wizard and click Download
+- **Privacy first** — everything stays on your computer unless a parent enables cloud AI
+
 ## Features (Phase 1)
 
 - **Local AI first** — Ollama is the default; cloud/BYOK is hidden until a parent enables it
 - **Fail-closed safety pipeline** — normalize → rules → classifier → policy → LLM → output filter
 - **Age presets** — Young Explorer (5–8), Curious Explorer (9–12), Teen Guided (13–17)
-- **Parent dashboard** — conversation logs, blocked attempts, optional cloud settings
+- **Parent dashboard** — conversation sessions, blocked attempts, model management
 - **Kid chat UI** — simple streaming chat with profile picker and friendly blocked messages
-- **Cross-platform** — Docker Compose on Mac, Windows, and Linux
+- **Cross-platform** — Docker Compose on Mac, Windows, and Linux today
 
-## Quick Start (Docker Compose)
+## Quick Start (recommended)
 
 **Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or Docker + Compose (Linux)
 
+### Mac / Linux
+
 ```bash
-# Clone and start
 git clone <your-repo-url> homeward
 cd homeward
-
-# Optional: set a secret key
-export HOMEWARD_SECRET_KEY="your-secure-random-string"
-
-docker compose up -d
-
-# Pull the Ollama model (first run may take a few minutes)
-docker compose exec ollama ollama pull llama3.2:3b
+./scripts/install.sh
 ```
 
-Open **http://localhost:43123** in your browser.
+### Windows (PowerShell)
 
-1. Complete the parent setup wizard (password + children + local AI model)
-2. Kids chat at **http://localhost:43123/chat**
-3. Parents manage at **http://localhost:43123/dashboard**
+```powershell
+git clone <your-repo-url> homeward
+cd homeward
+.\scripts\install.ps1
+```
+
+Then open **http://localhost:43123** in your browser.
+
+That's it — Homeward starts **Ollama automatically** and begins downloading a recommended AI model on first launch.
+
+### Setup wizard (in the browser)
+
+1. Create a parent password
+2. Add your children (name, age, safety level)
+3. Pick and download an AI model (or wait if one is already downloading)
+4. Done — kids can chat, you can review from the dashboard
 
 ### Stop
 
@@ -41,7 +55,32 @@ Open **http://localhost:43123** in your browser.
 docker compose down
 ```
 
+## What parents never need to do
+
+When using Docker (recommended):
+
+- Install Ollama separately
+- Run `ollama serve`
+- Run `ollama pull …` in a terminal
+- Edit config files for basic use
+
+The setup wizard handles model selection and download with plain-language buttons.
+
+## Roadmap: native installers
+
+Docker is the supported easy path **today**. Next step for non-technical families:
+
+| Platform | Goal |
+|----------|------|
+| **macOS** | Signed `.dmg` that installs Homeward + Ollama + dependencies |
+| **Windows** | `.exe` installer with the same one-click experience |
+| **Linux** | AppImage or distro packages |
+
+The in-app model picker and Ollama management UI are built to work the same way in both Docker and future native installs.
+
 ## Native Development Install
+
+For contributors and advanced users.
 
 ### Gateway (Python)
 
@@ -49,7 +88,6 @@ docker compose down
 cd gateway
 pip install -e ".[dev]"
 
-# From repo root so policies/ is found
 export HOMEWARD_DATA_DIR=./gateway/data
 export HOMEWARD_POLICIES_DIR=./policies
 export HOMEWARD_OLLAMA_BASE_URL=http://localhost:11434
@@ -66,19 +104,9 @@ npm install
 npm run dev   # runs on port 43123
 ```
 
-Set `GATEWAY_URL=http://localhost:8000` if the gateway runs elsewhere.
+### Ollama (manual, dev only)
 
-### Ollama (local AI)
-
-Install [Ollama](https://ollama.com/) and start it:
-
-```bash
-ollama serve
-```
-
-During setup (and in the parent dashboard), Homeward detects your computer's RAM and recommends models that fit. You can install and select a model from the UI — no terminal required after Ollama is running.
-
-Default model if none is selected: `llama3.2:3b`
+Install [Ollama](https://ollama.com/) and run `ollama serve`. The setup wizard will detect it and offer model downloads.
 
 ## Running Tests
 
@@ -94,12 +122,12 @@ pytest -v
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HOMEWARD_SECRET_KEY` | `change-me-in-production` | Session signing key — **change in production** |
+| `HOMEWARD_DOCKER` | `false` | Set automatically in Docker Compose |
 | `HOMEWARD_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API URL |
-| `HOMEWARD_OLLAMA_MODEL` | `llama3.2:3b` | Chat model |
+| `HOMEWARD_OLLAMA_MODEL` | `llama3.2:3b` | Default chat model |
 | `HOMEWARD_CLASSIFIER_MODEL` | `llama3.2:3b` | Safety classifier model |
 | `HOMEWARD_DATA_DIR` | `./data` | SQLite database directory |
 | `HOMEWARD_POLICIES_DIR` | `../policies` | Age preset YAML directory |
-| `HOMEWARD_CLOUD_ENABLED` | `false` | Enable cloud AI (parent can also toggle in UI) |
 | `GATEWAY_URL` | `http://localhost:8000` | Web app proxy target |
 
 ## Architecture
@@ -107,7 +135,7 @@ pytest -v
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────┐
 │  web (43123)│────▶│ gateway (8000)   │────▶│ Ollama      │
-│  Next.js    │     │ FastAPI pipeline │     │ llama3.2:3b │
+│  Next.js    │     │ FastAPI pipeline │     │ (included)  │
 └─────────────┘     └──────────────────┘     └─────────────┘
                             │
                      ┌──────┴──────┐
@@ -115,38 +143,6 @@ pytest -v
                      │ policies/   │
                      └─────────────┘
 ```
-
-### Safety Pipeline (every message in and out)
-
-1. **Normalize** — sanitization, length limits
-2. **Rules** — fast keyword/jailbreak matching
-3. **Classifier** — local Ollama model (rules fallback if unavailable)
-4. **Policy** — age preset + strictness slider
-5. **LLM** — LiteLLM → Ollama (or cloud if enabled)
-6. **Output filter** — same stages on responses
-
-On any error or timeout → **block**, never pass-through.
-
-## Project Structure
-
-```
-homeward/
-├── gateway/           # Python FastAPI safety gateway
-│   ├── homeward_gateway/
-│   └── tests/
-├── web/               # Next.js parent + kid UI
-├── policies/          # Bundled age preset YAML + JSON schema
-├── docker-compose.yml
-├── LICENSE            # MIT
-└── README.md
-```
-
-## Roadmap (not in Phase 1)
-
-- MITM proxy / browser extension
-- Native mobile apps
-- Hosted SaaS
-- Tailscale device pairing automation
 
 ## License
 
