@@ -132,7 +132,12 @@ async def setup(
     result = await session.execute(select(ParentAccount).limit(1))
     existing = result.scalar_one_or_none()
     if existing:
-        raise HTTPException(status_code=400, detail="Setup already completed")
+        if existing.setup_complete:
+            raise HTTPException(status_code=400, detail="Setup already completed")
+        if not verify_password(body.password, existing.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid password")
+        set_session_cookie(response, existing.id)
+        return {"ok": True, "parent_id": existing.id, "resumed": True}
 
     parent = ParentAccount(
         password_hash=hash_password(body.password),
@@ -142,7 +147,7 @@ async def setup(
     await session.commit()
     await session.refresh(parent)
     set_session_cookie(response, parent.id)
-    return {"ok": True, "parent_id": parent.id}
+    return {"ok": True, "parent_id": parent.id, "resumed": False}
 
 
 @router.post("/setup/complete")

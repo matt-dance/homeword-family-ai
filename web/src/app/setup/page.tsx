@@ -25,6 +25,7 @@ export default function SetupPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isResume, setIsResume] = useState(false);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [children, setChildren] = useState<ChildForm[]>([
     { name: "", age: 8, preset_id: "young_explorer", strictness: 4 },
@@ -33,6 +34,7 @@ export default function SetupPage() {
   useEffect(() => {
     api.setupStatus().then((s) => {
       if (s.setup_complete) router.replace("/dashboard");
+      else if (s.has_parent) setIsResume(true);
     });
     api.presets().then(setPresets).catch(() => {});
   }, [router]);
@@ -51,7 +53,20 @@ export default function SetupPage() {
     setError("");
     try {
       await api.setup(password);
-      setStep("children");
+      const existingChildren = await api.children().catch(() => []);
+      if (existingChildren.length > 0) {
+        setChildren(
+          existingChildren.map((c) => ({
+            name: c.name,
+            age: c.age ?? 8,
+            preset_id: c.preset_id ?? "curious_explorer",
+            strictness: c.strictness ?? 3,
+          }))
+        );
+        setStep("review");
+      } else {
+        setStep("children");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Setup failed");
     } finally {
@@ -157,10 +172,12 @@ export default function SetupPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="h-5 w-5" />
-                Create your parent password
+                {isResume ? "Continue setup" : "Create your parent password"}
               </CardTitle>
               <CardDescription>
-                This password protects your dashboard. Kids won&apos;t need it — they&apos;ll use their own profile.
+                {isResume
+                  ? "Enter the parent password you created earlier to finish setting up Homeward."
+                  : "This password protects your dashboard. Kids won&apos;t need it — they&apos;ll use their own profile."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">

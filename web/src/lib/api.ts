@@ -62,7 +62,7 @@ export const api = {
   health: () => request<{ status: string }>("/health"),
   setupStatus: () => request<SetupStatus>("/setup/status"),
   setup: (password: string) =>
-    request<{ ok: boolean }>("/setup", {
+    request<{ ok: boolean; resumed?: boolean }>("/setup", {
       method: "POST",
       body: JSON.stringify({ password }),
     }),

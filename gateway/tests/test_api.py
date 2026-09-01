@@ -69,6 +69,30 @@ class TestSetupFlow:
         resp = await client.post("/api/v1/auth/login", json={"password": "wrongpass"})
         assert resp.status_code == 401
 
+    @pytest.mark.asyncio
+    async def test_setup_resumes_incomplete(self, client):
+        await client.post("/api/v1/setup", json={"password": "testpass123"})
+        resp = await client.post("/api/v1/setup", json={"password": "testpass123"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["resumed"] is True
+
+    @pytest.mark.asyncio
+    async def test_setup_resume_wrong_password(self, client):
+        await client.post("/api/v1/setup", json={"password": "testpass123"})
+        resp = await client.post("/api/v1/setup", json={"password": "wrongpass123"})
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_setup_rejects_when_complete(self, client):
+        await client.post("/api/v1/setup", json={"password": "testpass123"})
+        await client.post("/api/v1/children", json={"name": "Emma", "age": 7, "strictness": 4})
+        await client.post("/api/v1/setup/complete")
+        resp = await client.post("/api/v1/setup", json={"password": "testpass123"})
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Setup already completed"
+
 
 class TestPresets:
     @pytest.mark.asyncio
