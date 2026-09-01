@@ -4,12 +4,25 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, type Preset } from "@/lib/api";
 import { HomewardLogo } from "@/components/homeward-logo";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { OllamaSetup } from "@/components/ollama-setup";
-import { Plus, Trash2, ChevronRight, Shield, KeyRound, Copy, Check } from "lucide-react";
+import { getAgeTheme, AGE_THEME_CONFIGS } from "@/lib/age-theme";
+import {
+  Plus,
+  Trash2,
+  ChevronRight,
+  Shield,
+  KeyRound,
+  Copy,
+  Check,
+  Sparkles,
+  BookOpen,
+  CheckCircle2,
+} from "lucide-react";
 
 interface ChildForm {
   name: string;
@@ -196,7 +209,10 @@ export default function SetupPage() {
   };
 
   const addChild = () => {
-    setChildren([...children, { name: "", age: 10, preset_id: "curious_explorer", strictness: 3, pin: "", homework_mode: false }]);
+    setChildren([
+      ...children,
+      { name: "", age: 10, preset_id: "curious_explorer", strictness: 3, pin: "", homework_mode: false },
+    ]);
   };
 
   const removeChild = (i: number) => {
@@ -262,32 +278,35 @@ export default function SetupPage() {
   const currentSetupIndex = setupSteps.indexOf(step);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50/50 to-background dark:from-slate-900/50">
-      <header className="border-b border-border bg-card/80 backdrop-blur p-4">
-        <HomewardLogo />
+    <div className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-background flex flex-col">
+      <header className="border-b border-border/70 bg-card/85 backdrop-blur-md px-6 py-4 flex items-center justify-between">
+        <HomewardLogo showTagline />
+        <ThemeToggle />
       </header>
 
-      <main className="mx-auto max-w-2xl p-4 sm:p-8">
-        <div className="mb-8 text-center">
-          <h1 className="text-2xl sm:text-3xl font-bold">Welcome to Homeward</h1>
-          <p className="mt-2 text-muted-foreground">
+      <main className="mx-auto flex-1 max-w-2xl w-full p-4 sm:p-8 animate-fade-in">
+        <div className="mb-8 text-center space-y-2">
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
+            {step === "login" || step === "forgot" ? "Parent Sign In" : "Welcome to Homeward"}
+          </h1>
+          <p className="text-sm text-muted-foreground max-w-md mx-auto">
             {step === "login" || step === "forgot"
-              ? "Sign in to your parent dashboard."
-              : "Set up your family\u2019s AI safety gateway in a few minutes. Everything runs locally on your computer."}
+              ? "Sign in to manage safety settings and review conversations."
+              : "Set up your family\u2019s local AI safety gateway in just a few minutes."}
           </p>
         </div>
 
         {currentSetupIndex >= 0 && (
-          <div className="mb-6 flex justify-center gap-2">
+          <div className="mb-8 flex items-center justify-center gap-2">
             {setupSteps.map((s, i) => (
               <div
                 key={s}
-                className={`h-2 w-12 sm:w-16 rounded-full transition-colors ${
+                className={`h-2.5 rounded-full transition-all duration-300 ${
                   step === s
-                    ? "bg-primary"
+                    ? "w-12 bg-primary shadow-sm shadow-primary/30"
                     : i < currentSetupIndex
-                      ? "bg-accent"
-                      : "bg-muted"
+                      ? "w-8 bg-emerald-500"
+                      : "w-8 bg-muted"
                 }`}
               />
             ))}
@@ -295,40 +314,45 @@ export default function SetupPage() {
         )}
 
         {error && (
-          <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+          <div className="mb-5 rounded-2xl border border-destructive/30 bg-destructive/10 p-3.5 text-xs sm:text-sm font-semibold text-destructive animate-slide-down">
             {error}
           </div>
         )}
 
         {step === "login" && (
-          <Card>
+          <Card className="border-border/80 shadow-md rounded-2xl">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5" />
-                Parent sign in
+              <CardTitle className="flex items-center gap-2 text-lg font-bold">
+                <Shield className="h-5 w-5 text-primary" />
+                Sign in to Parent Dashboard
               </CardTitle>
               <CardDescription>
-                Enter the password you created during setup.
+                Enter your parent password created during initial setup.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="login-password">Parent password</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="login-password">Parent Password</Label>
                 <Input
                   id="login-password"
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                  className="rounded-xl h-11"
                 />
               </div>
-              <Button onClick={handleLogin} disabled={loading || !statusLoaded} className="w-full">
-                Sign in
+              <Button
+                onClick={handleLogin}
+                disabled={loading || !statusLoaded}
+                className="w-full h-11 rounded-xl font-semibold shadow-sm shadow-primary/20"
+              >
+                Sign In
                 <ChevronRight className="ml-2 h-4 w-4" />
               </Button>
               <Button
                 variant="ghost"
-                className="w-full text-sm text-primary underline-offset-4 hover:underline"
+                className="w-full text-xs text-muted-foreground hover:text-foreground"
                 onClick={() => {
                   setError("");
                   setStep("forgot");
@@ -341,40 +365,50 @@ export default function SetupPage() {
         )}
 
         {step === "forgot" && (
-          <Card>
+          <Card className="border-border/80 shadow-md rounded-2xl">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <KeyRound className="h-5 w-5" />
-                Reset parent password
+              <CardTitle className="flex items-center gap-2 text-lg font-bold">
+                <KeyRound className="h-5 w-5 text-primary" />
+                Reset Parent Password
               </CardTitle>
               <CardDescription>
-                Enter the recovery code you saved during setup, then choose a new password.
+                Enter the emergency recovery code provided when you installed Homeward.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="recovery-code">Recovery code</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="recovery-code">Recovery Code</Label>
                 <Input
                   id="recovery-code"
                   placeholder="HOME-ABCD-EFGH-JKMN"
                   value={recoveryCode}
                   onChange={(e) => setRecoveryCode(e.target.value.toUpperCase())}
+                  className="rounded-xl font-mono text-xs uppercase"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="new-password">New password</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="new-password">New Password</Label>
                 <Input
                   id="new-password"
                   type="password"
                   placeholder="At least 8 characters"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
+                  className="rounded-xl"
                 />
               </div>
-              <Button onClick={handleForgotSubmit} disabled={loading} className="w-full">
-                Reset password
+              <Button
+                onClick={handleForgotSubmit}
+                disabled={loading}
+                className="w-full h-11 rounded-xl font-semibold shadow-sm shadow-primary/20"
+              >
+                Reset Password
               </Button>
-              <Button variant="ghost" onClick={() => setStep("login")} className="w-full">
+              <Button
+                variant="ghost"
+                onClick={() => setStep("login")}
+                className="w-full rounded-xl text-xs text-muted-foreground"
+              >
                 Back to sign in
               </Button>
             </CardContent>
@@ -382,31 +416,36 @@ export default function SetupPage() {
         )}
 
         {step === "password" && (
-          <Card>
+          <Card className="border-border/80 shadow-md rounded-2xl">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5" />
-                {isResume ? "Continue setup" : "Create your parent password"}
+              <CardTitle className="flex items-center gap-2 text-lg font-bold">
+                <Shield className="h-5 w-5 text-primary" />
+                {isResume ? "Continue Setup" : "Create Your Parent Password"}
               </CardTitle>
               <CardDescription>
                 {isResume
-                  ? "Enter the parent password you created earlier to finish setting up Homeward."
-                  : "This password protects your dashboard. Kids won\u2019t need it \u2014 they\u2019ll use their own profile."}
+                  ? "Enter the administrator password you created earlier to continue."
+                  : "This password protects your dashboard and settings. Kids will chat using their own child profiles."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="password">Parent password</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="password">Parent Password</Label>
                 <Input
                   id="password"
                   type="password"
                   placeholder="At least 8 characters"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  className="rounded-xl h-11"
                 />
               </div>
-              <Button onClick={handlePasswordSubmit} disabled={loading || !statusLoaded} className="w-full">
-                {statusLoaded ? "Continue" : "Loading..."}
+              <Button
+                onClick={handlePasswordSubmit}
+                disabled={loading || !statusLoaded}
+                className="w-full h-11 rounded-xl font-semibold shadow-sm shadow-primary/20"
+              >
+                {statusLoaded ? "Continue" : "Loading…"}
                 <ChevronRight className="ml-2 h-4 w-4" />
               </Button>
             </CardContent>
@@ -414,37 +453,53 @@ export default function SetupPage() {
         )}
 
         {step === "recovery" && (
-          <Card>
+          <Card className="border-border/80 shadow-md rounded-2xl">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <KeyRound className="h-5 w-5" />
-                Save your recovery code
+              <CardTitle className="flex items-center gap-2 text-lg font-bold">
+                <KeyRound className="h-5 w-5 text-primary" />
+                Save Your Recovery Code
               </CardTitle>
               <CardDescription>
-                Write this code down and keep it somewhere safe at home. It is the only way to reset your password if you forget it &mdash; Homeward runs locally, so there is no email reset.
+                Keep this code somewhere safe at home. Because Homeward runs 100% locally on your computer with no cloud tracking, this is the only way to recover access if you forget your password.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="rounded-lg border-2 border-dashed border-primary/40 bg-primary/5 p-4 text-center">
-                <p className="font-mono text-lg sm:text-xl tracking-wider font-semibold">{savedRecoveryCode}</p>
-                <Button variant="outline" size="sm" className="mt-3" onClick={copyRecoveryCode}>
-                  {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
-                  {copied ? "Copied" : "Copy code"}
+              <div className="rounded-2xl border-2 border-dashed border-primary/40 bg-primary/5 p-5 text-center space-y-3">
+                <p className="font-mono text-xl sm:text-2xl tracking-wider font-bold text-foreground">
+                  {savedRecoveryCode}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={copyRecoveryCode}
+                  className="rounded-xl text-xs font-semibold"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="mr-1.5 h-4 w-4 text-emerald-500" />
+                      Copied to clipboard
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="mr-1.5 h-4 w-4" />
+                      Copy code
+                    </>
+                  )}
                 </Button>
               </div>
-              <label className="flex items-start gap-2 text-sm">
+              <label className="flex items-center gap-2.5 rounded-xl border border-border/80 p-3.5 text-xs sm:text-sm font-medium cursor-pointer hover:bg-muted/30">
                 <input
                   type="checkbox"
                   checked={recoveryConfirmed}
                   onChange={(e) => setRecoveryConfirmed(e.target.checked)}
-                  className="mt-1 accent-primary"
+                  className="accent-primary rounded h-4 w-4"
                 />
-                I have saved this recovery code in a safe place
+                <span>I have saved this recovery code in a safe place</span>
               </label>
               <Button
                 onClick={() => (isResume ? router.replace("/dashboard") : continueAfterAuth())}
                 disabled={!recoveryConfirmed}
-                className="w-full"
+                className="w-full h-11 rounded-xl font-semibold shadow-sm shadow-primary/20"
               >
                 Continue
                 <ChevronRight className="ml-2 h-4 w-4" />
@@ -455,96 +510,132 @@ export default function SetupPage() {
 
         {step === "children" && (
           <div className="space-y-4">
-            <Card>
+            <Card className="border-border/80 shadow-xs rounded-2xl">
               <CardHeader>
-                <CardTitle>Add your children</CardTitle>
+                <CardTitle className="text-lg font-bold">Add Your Children</CardTitle>
                 <CardDescription>
-                  Each child gets age-appropriate safety settings. You can adjust strictness with a simple slider.
+                  Set up profiles for each child with age-appropriate safety presets and optional PIN locks.
                 </CardDescription>
               </CardHeader>
             </Card>
 
-            {children.map((child, i) => (
-              <Card key={i}>
-                <CardContent className="pt-6 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">Child {i + 1}</span>
+            {children.map((child, i) => {
+              const themeKey = getAgeTheme(child);
+              const theme = AGE_THEME_CONFIGS[themeKey];
+
+              return (
+                <Card key={i} className="border-border/80 shadow-xs rounded-2xl overflow-hidden">
+                  <div className="border-b border-border/60 bg-muted/30 px-6 py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-base">
+                        {theme.avatarEmoji}
+                      </span>
+                      <span className="font-bold text-sm text-foreground">
+                        Child {i + 1} {child.name ? `· ${child.name}` : ""}
+                      </span>
+                    </div>
                     {children.length > 1 && (
-                      <Button variant="ghost" size="sm" onClick={() => removeChild(i)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeChild(i)}
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     )}
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>Name</Label>
-                      <Input
-                        placeholder="Emma"
-                        value={child.name}
-                        onChange={(e) => updateChild(i, "name", e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Age</Label>
-                      <Input
-                        type="number"
-                        min={3}
-                        max={18}
-                        value={child.age}
-                        onChange={(e) => updateChild(i, "age", parseInt(e.target.value) || 8)}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>
-                      Safety level: {strictnessLabel(child.strictness)} ({child.strictness}/5)
-                    </Label>
-                    <input
-                      type="range"
-                      min={1}
-                      max={5}
-                      value={child.strictness}
-                      onChange={(e) => updateChild(i, "strictness", parseInt(e.target.value))}
-                      className="w-full accent-primary"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Preset: {presets.find((p) => p.id === child.preset_id)?.name || child.preset_id}
-                    </p>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>Profile PIN (optional)</Label>
-                      <Input
-                        type="password"
-                        placeholder="4–6 digits"
-                        value={child.pin}
-                        onChange={(e) => updateChild(i, "pin", e.target.value)}
-                        maxLength={6}
-                      />
-                    </div>
-                    <div className="flex items-end pb-2">
-                      <label className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={child.homework_mode}
-                          onChange={(e) => updateChild(i, "homework_mode", e.target.checked)}
-                          className="accent-primary"
+                  <CardContent className="pt-5 space-y-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label>Name</Label>
+                        <Input
+                          placeholder="e.g. Lincoln"
+                          value={child.name}
+                          onChange={(e) => updateChild(i, "name", e.target.value)}
+                          className="rounded-xl"
                         />
-                        Homework mode
-                      </label>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Age</Label>
+                        <Input
+                          type="number"
+                          min={3}
+                          max={18}
+                          value={child.age}
+                          onChange={(e) => updateChild(i, "age", parseInt(e.target.value, 10) || 8)}
+                          className="rounded-xl"
+                        />
+                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
 
-            <Button variant="outline" onClick={addChild} className="w-full">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <Label>
+                          Safety Strictness: {strictnessLabel(child.strictness)}
+                        </Label>
+                        <span className="font-bold text-primary">{child.strictness}/5</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={1}
+                        max={5}
+                        value={child.strictness}
+                        onChange={(e) => updateChild(i, "strictness", parseInt(e.target.value, 10))}
+                        className="w-full accent-primary h-2 bg-muted rounded-lg cursor-pointer"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Matched preset: <strong className="text-foreground">{theme.title}</strong> ({theme.ageRange})
+                      </p>
+                    </div>
+
+                    <div className="grid gap-4 sm:grid-cols-2 pt-1">
+                      <div className="space-y-1.5">
+                        <Label>Profile PIN (optional)</Label>
+                        <Input
+                          type="password"
+                          placeholder="4–6 digits"
+                          value={child.pin}
+                          onChange={(e) => updateChild(i, "pin", e.target.value)}
+                          maxLength={6}
+                          className="rounded-xl font-mono"
+                        />
+                      </div>
+                      <div className="flex items-end pb-1">
+                        <label className="flex items-center gap-2 rounded-xl border border-border/80 p-2.5 w-full text-xs font-medium cursor-pointer hover:bg-muted/30">
+                          <input
+                            type="checkbox"
+                            checked={child.homework_mode}
+                            onChange={(e) => updateChild(i, "homework_mode", e.target.checked)}
+                            className="accent-primary rounded h-4 w-4"
+                          />
+                          <span className="flex items-center gap-1.5">
+                            <BookOpen className="h-3.5 w-3.5 text-primary" />
+                            Homework Mode
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+
+            <Button
+              variant="outline"
+              onClick={addChild}
+              className="w-full h-11 rounded-2xl border-dashed border-border/90 text-muted-foreground hover:text-foreground"
+            >
               <Plus className="mr-2 h-4 w-4" />
               Add another child
             </Button>
 
-            <Button onClick={handleChildrenSubmit} disabled={loading} className="w-full">
-              Continue
+            <Button
+              onClick={handleChildrenSubmit}
+              disabled={loading}
+              className="w-full h-11 rounded-xl font-semibold shadow-sm shadow-primary/20"
+            >
+              Continue to AI Model Setup
               <ChevronRight className="ml-2 h-4 w-4" />
             </Button>
           </div>
@@ -561,30 +652,41 @@ export default function SetupPage() {
         )}
 
         {step === "review" && (
-          <Card>
+          <Card className="border-border/80 shadow-md rounded-2xl animate-pop-in">
             <CardHeader>
-              <CardTitle>You&apos;re all set!</CardTitle>
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500 mb-2">
+                <CheckCircle2 className="h-6 w-6" />
+              </div>
+              <CardTitle className="text-xl font-bold">You&apos;re all set!</CardTitle>
               <CardDescription>
-                Homeward is ready. Your kids can start chatting safely, and you can review conversations from your dashboard.
+                Homeward is fully configured. Your kids can start chatting safely, and you can review conversations from the parent dashboard.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <ul className="space-y-2 text-sm">
-                <li className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-accent" />
-                  {children.length} child profile{children.length !== 1 ? "s" : ""} created
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-accent" />
-                  Local AI via Ollama {ollamaReady ? "(ready)" : "(checking…)"}
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-accent" />
-                  All conversations logged for your review
-                </li>
-              </ul>
-              <Button onClick={handleComplete} disabled={loading || !ollamaReady} className="w-full" size="lg">
-                Go to Dashboard
+            <CardContent className="space-y-5">
+              <div className="rounded-2xl border border-border/80 bg-muted/30 p-4 space-y-2.5 text-xs sm:text-sm">
+                <div className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-emerald-500" />
+                  <span>
+                    <strong>{children.length}</strong> child profile{children.length !== 1 ? "s" : ""} created
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-emerald-500" />
+                  <span>
+                    Local Ollama AI engine {ollamaReady ? "(active and ready)" : "(downloading…)"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-emerald-500" />
+                  <span>All conversations logged privately on this computer</span>
+                </div>
+              </div>
+              <Button
+                onClick={handleComplete}
+                disabled={loading || !ollamaReady}
+                className="w-full h-12 rounded-xl text-base font-semibold shadow-sm shadow-primary/25"
+              >
+                Go to Parent Dashboard
                 <ChevronRight className="ml-2 h-4 w-4" />
               </Button>
             </CardContent>

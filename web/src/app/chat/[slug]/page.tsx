@@ -7,6 +7,7 @@ import { api, type Child } from "@/lib/api";
 import { slugifyName } from "@/lib/slug";
 import { KidChatView } from "@/components/kid-chat-view";
 import { HomewardLogo } from "@/components/homeward-logo";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Sparkles, Home, ArrowLeft } from "lucide-react";
 
@@ -51,7 +52,7 @@ function ChildChatContent() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-background">
         <Sparkles className="h-8 w-8 animate-pulse text-primary" />
       </div>
     );
@@ -59,25 +60,28 @@ function ChildChatContent() {
 
   if (notFound) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-emerald-50/50 to-background dark:from-slate-900/50">
-        <header className="border-b border-border bg-card/80 p-4">
+      <div className="min-h-screen bg-gradient-to-b from-primary/5 to-background flex flex-col">
+        <header className="border-b border-border/70 bg-card/80 p-4 flex items-center justify-between">
           <HomewardLogo />
+          <ThemeToggle />
         </header>
-        <main className="mx-auto max-w-md p-8 text-center">
-          <Sparkles className="mx-auto h-12 w-12 text-primary mb-4" />
+        <main className="mx-auto max-w-md p-8 text-center flex-1 flex flex-col justify-center animate-pop-in">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <Sparkles className="h-7 w-7" />
+          </div>
           <h1 className="text-2xl font-bold mb-2">Profile not found</h1>
-          <p className="text-muted-foreground mb-6">
+          <p className="text-muted-foreground text-sm mb-6">
             We couldn&apos;t find a chat profile for &ldquo;{slug}&rdquo;.
           </p>
           <div className="flex flex-col gap-3">
             <Link href="/chat">
-              <Button className="w-full">
+              <Button className="w-full rounded-xl">
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Pick a profile
               </Button>
             </Link>
             <Link href="/">
-              <Button variant="outline" className="w-full">
+              <Button variant="outline" className="w-full rounded-xl">
                 <Home className="mr-2 h-4 w-4" />
                 Home
               </Button>
@@ -108,7 +112,13 @@ function ChildChatContent() {
 
 export default function ChildChatPage() {
   return (
-    <Suspense fallback={<div className="flex min-h-screen items-center justify-center">Loading…</div>}>
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Sparkles className="h-8 w-8 animate-pulse text-primary" />
+        </div>
+      }
+    >
       <ChildChatContent />
     </Suspense>
   );

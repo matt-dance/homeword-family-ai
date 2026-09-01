@@ -4,7 +4,14 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { chatPathForChild } from "@/lib/slug";
 import { useRouter, useSearchParams } from "next/navigation";
-import { api, type ChatSessionSummary, type ConversationLog, type BlockedAttempt, type Child } from "@/lib/api";
+import {
+  api,
+  type ChatSessionSummary,
+  type ConversationLog,
+  type BlockedAttempt,
+  type Child,
+} from "@/lib/api";
+import { getAgeTheme, AGE_THEME_CONFIGS } from "@/lib/age-theme";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -16,6 +23,12 @@ import {
   Sparkles,
   AlertTriangle,
   Filter,
+  CheckCircle2,
+  Clock,
+  BookOpen,
+  ArrowRight,
+  ShieldCheck,
+  Zap,
 } from "lucide-react";
 
 function DashboardContent() {
@@ -38,14 +51,16 @@ function DashboardContent() {
   useEffect(() => {
     const load = async () => {
       try {
-        const childFilter = filterChildId && !Number.isNaN(filterChildId) ? filterChildId : undefined;
-        const [sessionsData, blockedData, childrenData, blockedStats, health] = await Promise.all([
-          api.sessions(childFilter),
-          api.blocked(childFilter),
-          api.children(),
-          api.blockedStats(childFilter).catch(() => ({ today_count: 0, total_count: 0 })),
-          api.health().catch(() => ({ status: "degraded", ollama: { ready: false } })),
-        ]);
+        const childFilter =
+          filterChildId && !Number.isNaN(filterChildId) ? filterChildId : undefined;
+        const [sessionsData, blockedData, childrenData, blockedStats, health] =
+          await Promise.all([
+            api.sessions(childFilter),
+            api.blocked(childFilter),
+            api.children(),
+            api.blockedStats(childFilter).catch(() => ({ today_count: 0, total_count: 0 })),
+            api.health().catch(() => ({ status: "degraded", ollama: { ready: false } })),
+          ]);
         setSessions(sessionsData);
         setBlocked(blockedData);
         setChildren(childrenData);
@@ -97,346 +112,557 @@ function DashboardContent() {
     const end = new Date(lastAt);
     const sameDay = start.toDateString() === end.toDateString();
     if (sameDay) {
-      return `${start.toLocaleDateString()} · ${start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} – ${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+      return `${start.toLocaleDateString()} · ${start.toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })} – ${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
     }
     return `${start.toLocaleString()} – ${end.toLocaleString()}`;
   };
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-5xl p-8">
-        <p className="text-muted-foreground">Loading dashboard…</p>
+      <main className="mx-auto max-w-5xl p-8 flex items-center justify-center min-h-[50vh]">
+        <div className="flex flex-col items-center gap-3">
+          <Sparkles className="h-8 w-8 animate-pulse text-primary" />
+          <p className="text-sm font-medium text-muted-foreground">Loading dashboard…</p>
+        </div>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto max-w-5xl p-4 sm:p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Parent Dashboard</h1>
-        <p className="text-muted-foreground">
-          See what your kids have been chatting about and anything Homeward blocked.
-          {filteredChild && (
-            <span className="block mt-1 text-sm">
-              Showing activity for <span className="font-medium text-foreground">{filteredChild.name}</span>
-            </span>
-          )}
-        </p>
+    <main className="mx-auto max-w-5xl p-4 sm:p-8 space-y-6 animate-fade-in">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/60 pb-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+            Parent Dashboard
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Review chat conversations, active presets, and safety filter events.
+            {filteredChild && (
+              <span className="block mt-0.5 font-medium text-primary">
+                Filtered for {filteredChild.name}
+              </span>
+            )}
+          </p>
+        </div>
+
+        <Link href="/chat">
+          <Button className="rounded-xl shadow-sm shadow-primary/20 font-medium">
+            <Sparkles className="mr-2 h-4 w-4" />
+            Open Kid Chat
+          </Button>
+        </Link>
       </div>
 
+      {/* Child Filter Chips */}
       {children.length > 0 && (
-        <div className="mb-6 flex flex-wrap items-center gap-3">
-          <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant={filterChildId == null ? "default" : "outline"}
-              onClick={() => setChildFilter(null)}
-            >
-              All children
-            </Button>
-            {children.map((child) => (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5 mr-1">
+            <Filter className="h-3.5 w-3.5" />
+            Filter:
+          </span>
+          <Button
+            size="sm"
+            variant={filterChildId == null ? "default" : "outline"}
+            onClick={() => setChildFilter(null)}
+            className="rounded-full text-xs font-medium h-8 px-3.5"
+          >
+            All children
+          </Button>
+          {children.map((child) => {
+            const themeKey = getAgeTheme(child);
+            const theme = AGE_THEME_CONFIGS[themeKey];
+            const isSelected = filterChildId === child.id;
+
+            return (
               <Button
                 key={child.id}
                 size="sm"
-                variant={filterChildId === child.id ? "default" : "outline"}
+                variant={isSelected ? "default" : "outline"}
                 onClick={() => setChildFilter(child.id)}
+                className={`rounded-full text-xs font-medium h-8 px-3.5 gap-1.5 transition-all ${
+                  isSelected ? "shadow-sm shadow-primary/20" : "hover:border-primary/50"
+                }`}
               >
-                {child.name}
+                <span>{theme.avatarEmoji}</span>
+                <span>{child.name}</span>
               </Button>
-            ))}
-          </div>
+            );
+          })}
         </div>
       )}
 
-      {/* Overview */}
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardContent className="flex items-center gap-3 pt-6">
-            <Users className="h-8 w-8 text-primary shrink-0" />
-            <div>
-              <p className="text-2xl font-bold">{children.length}</p>
-              <p className="text-xs text-muted-foreground">Child profile{children.length !== 1 ? "s" : ""}</p>
+      {/* Metric Cards */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Card className="relative overflow-hidden border-border/80 shadow-xs hover:shadow-md transition-all">
+          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-500" />
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-3xl font-extrabold tracking-tight text-foreground">
+                  {children.length}
+                </p>
+                <p className="text-xs font-medium text-muted-foreground mt-1">
+                  Child Profile{children.length !== 1 ? "s" : ""}
+                </p>
+              </div>
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-500">
+                <Users className="h-5 w-5" />
+              </div>
             </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 pt-6">
-            <MessageSquare className="h-8 w-8 text-primary shrink-0" />
-            <div>
-              <p className="text-2xl font-bold">{sessions.length}</p>
-              <p className="text-xs text-muted-foreground">Recent chat session{sessions.length !== 1 ? "s" : ""}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className={blockedToday > 0 ? "border-amber-300 dark:border-amber-700" : ""}>
-          <CardContent className="flex items-center gap-3 pt-6">
-            <ShieldAlert className={`h-8 w-8 shrink-0 ${blockedToday > 0 ? "text-amber-600" : "text-primary"}`} />
-            <div>
-              <p className="text-2xl font-bold">{blockedToday}</p>
-              <p className="text-xs text-muted-foreground">Blocked today · {blockedTotal} all time</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className={aiReady === false ? "border-amber-300 dark:border-amber-700" : ""}>
-          <CardContent className="flex items-center gap-3 pt-6">
-            <Sparkles className={`h-8 w-8 shrink-0 ${aiReady ? "text-primary" : "text-amber-600"}`} />
-            <div>
-              <p className="text-lg font-bold">{aiReady ? "Ready" : "Not ready"}</p>
-              <p className="text-xs text-muted-foreground">
-                Local AI {aiReady ? "is running" : "needs attention — check Settings"}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
 
-      {blockedToday > 0 && (
-        <div className="mb-6 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-          <div>
-            <p className="font-medium text-amber-900 dark:text-amber-100">
-              {blockedToday} message{blockedToday !== 1 ? "s" : ""} blocked today
-            </p>
-            <p className="text-amber-800 dark:text-amber-200">
-              Homeward stopped these before they reached the AI. Review them in the Blocked tab below.
-            </p>
-          </div>
-        </div>
-      )}
+        <Card className="relative overflow-hidden border-border/80 shadow-xs hover:shadow-md transition-all">
+          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-500" />
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-3xl font-extrabold tracking-tight text-foreground">
+                  {sessions.length}
+                </p>
+                <p className="text-xs font-medium text-muted-foreground mt-1">
+                  Chat Session{sessions.length !== 1 ? "s" : ""}
+                </p>
+              </div>
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-500">
+                <MessageSquare className="h-5 w-5" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
-      {/* Children at a glance */}
-      {children.length > 0 && (
-        <div className="mb-6">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Your children</h2>
-            <Link href="/dashboard/profiles">
-              <Button variant="ghost" size="sm">
-                <Users className="mr-2 h-4 w-4" />
-                Manage profiles
-              </Button>
-            </Link>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {children.map((child) => (
-              <Card
-                key={child.id}
-                className={filterChildId === child.id ? "ring-2 ring-primary/40" : ""}
-              >
-                <CardContent className="flex items-center justify-between gap-2 pt-6">
-                  <button
-                    type="button"
-                    className="min-w-0 text-left"
-                    onClick={() => setChildFilter(child.id)}
-                  >
-                    <p className="font-medium truncate">{child.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      Age {child.age} · Safety {child.strictness}/5
-                      {child.homework_mode && " · Homework"}
-                      {child.quiet_hours_enabled && " · Quiet hours"}
-                    </p>
-                  </button>
-                  <Link href={chatPathForChild(child)}>
-                    <Button size="sm" variant="outline">Chat</Button>
-                  </Link>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Activity tabs */}
-      <div className="mb-4 flex gap-2 border-b border-border">
-        {[
-          { id: "logs" as const, label: "Conversations", icon: MessageSquare },
-          {
-            id: "blocked" as const,
-            label: blockedToday > 0 ? `Blocked (${blockedToday} today)` : "Blocked",
-            icon: ShieldAlert,
-          },
-        ].map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              tab === id
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
+        <Card
+          className={`relative overflow-hidden border-border/80 shadow-xs hover:shadow-md transition-all ${
+            blockedToday > 0 ? "border-amber-500/40 bg-amber-500/5" : ""
+          }`}
+        >
+          <div
+            className={`absolute top-0 left-0 right-0 h-1 ${
+              blockedToday > 0
+                ? "bg-amber-500"
+                : "bg-gradient-to-r from-emerald-500 to-teal-500"
             }`}
-          >
-            <Icon className="h-4 w-4" />
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "logs" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent conversations</CardTitle>
-            <CardDescription>
-              Browse chat sessions by visit. Click a session to read the full exchange.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {selectedSession ? (
-              <div className="space-y-4">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setSelectedSession(null);
-                    setSessionMessages([]);
-                  }}
-                >
-                  <ArrowLeft className="mr-2 h-4 w-4" />
-                  Back to sessions
-                </Button>
-
-                <div className="rounded-lg border border-border p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="font-medium">{childName(selectedSession.child_id)}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {formatSessionWhen(selectedSession.started_at, selectedSession.last_at)}
-                      </p>
-                    </div>
-                    <span className="text-xs text-muted-foreground">
-                      {selectedSession.message_count} message{selectedSession.message_count !== 1 ? "s" : ""}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm text-muted-foreground italic">
-                    &ldquo;{selectedSession.preview}&rdquo;
-                  </p>
-                  {selectedSession.summary && (
-                    <p className="mt-3 text-sm border-t border-border pt-3">
-                      <span className="font-medium">Summary: </span>
-                      {selectedSession.summary}
-                    </p>
-                  )}
-                </div>
-
-                {sessionLoading ? (
-                  <p className="py-8 text-center text-sm text-muted-foreground">Loading messages…</p>
-                ) : sessionMessages.length === 0 ? (
-                  <p className="py-8 text-center text-sm text-muted-foreground">No messages in this session.</p>
+          />
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-3xl font-extrabold tracking-tight text-foreground">
+                  {blockedToday}
+                </p>
+                <p className="text-xs font-medium text-muted-foreground mt-1">
+                  Blocked today · {blockedTotal} all time
+                </p>
+              </div>
+              <div
+                className={`flex h-11 w-11 items-center justify-center rounded-2xl ${
+                  blockedToday > 0
+                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                    : "bg-emerald-500/10 text-emerald-500"
+                }`}
+              >
+                {blockedToday > 0 ? (
+                  <ShieldAlert className="h-5 w-5" />
                 ) : (
-                  <div className="space-y-3">
-                    {sessionMessages.map((log) => (
-                      <div
-                        key={log.id}
-                        className={`rounded-lg border p-3 text-sm ${
-                          log.blocked
-                            ? "border-destructive/30 bg-destructive/5"
-                            : log.direction === "input"
-                              ? "border-primary/20 bg-primary/5 mr-8"
-                              : "border-border bg-card ml-8"
-                        }`}
-                      >
-                        <div className="mb-1 flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium uppercase text-muted-foreground">
-                            {log.direction === "input" ? childName(log.child_id) : "Homeward"}
-                            {log.blocked && " · blocked"}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(log.created_at).toLocaleTimeString([], {
-                              hour: "numeric",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                        </div>
-                        <p className="whitespace-pre-wrap">{log.content}</p>
-                      </div>
-                    ))}
-                  </div>
+                  <ShieldCheck className="h-5 w-5" />
                 )}
               </div>
-            ) : sessions.length === 0 ? (
-              <div className="py-12 text-center">
-                <MessageCircle className="mx-auto h-10 w-10 text-muted-foreground/50 mb-3" />
-                <p className="text-sm text-muted-foreground">
-                  No conversations yet. Send your kids to Kid Chat to get started.
-                </p>
-                <Link href="/chat">
-                  <Button className="mt-4" variant="outline">Open Kid Chat</Button>
-                </Link>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {sessions.map((session) => (
-                  <button
-                    key={session.id}
-                    onClick={() => openSession(session)}
-                    className="flex w-full items-start gap-3 rounded-lg border border-border p-4 text-left transition-colors hover:bg-muted/50"
-                  >
-                    <MessageCircle className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="font-medium">{childName(session.child_id)}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(session.last_at).toLocaleString()}
-                        </span>
-                      </div>
-                      <p className="mt-1 truncate text-sm text-muted-foreground">
-                        {session.summary || session.preview}
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {session.message_count} message{session.message_count !== 1 ? "s" : ""}
-                        {session.legacy && " · imported session"}
-                      </p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
+            </div>
           </CardContent>
         </Card>
+
+        <Card className="relative overflow-hidden border-border/80 shadow-xs hover:shadow-md transition-all">
+          <div
+            className={`absolute top-0 left-0 right-0 h-1 ${
+              aiReady ? "bg-emerald-500" : "bg-amber-500"
+            }`}
+          />
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xl font-bold tracking-tight text-foreground flex items-center gap-1.5">
+                  {aiReady ? "Online" : "Needs Setup"}
+                  {aiReady && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
+                </p>
+                <p className="text-xs font-medium text-muted-foreground mt-1">
+                  Local Ollama AI
+                </p>
+              </div>
+              <div
+                className={`flex h-11 w-11 items-center justify-center rounded-2xl ${
+                  aiReady
+                    ? "bg-emerald-500/10 text-emerald-500"
+                    : "bg-amber-500/10 text-amber-500"
+                }`}
+              >
+                <Zap className="h-5 w-5" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Safety Alert Banner */}
+      {blockedToday > 0 && (
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm animate-slide-down">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="flex-1">
+            <p className="font-semibold text-amber-950 dark:text-amber-100">
+              {blockedToday} message{blockedToday !== 1 ? "s" : ""} prevented today
+            </p>
+            <p className="text-amber-900/90 dark:text-amber-200/90 text-xs sm:text-sm mt-0.5">
+              Homeward stopped these before they reached the model. Switch to the Blocked tab below to inspect details.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setTab("blocked")}
+            className="rounded-xl border-amber-500/30 bg-card/80 text-xs font-medium shrink-0"
+          >
+            View blocked
+          </Button>
+        </div>
       )}
 
-      {tab === "blocked" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Blocked attempts</CardTitle>
-            <CardDescription>
-              Messages that were stopped by Homeward&apos;s safety filters before reaching the AI.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {blocked.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-8 text-center">
-                No blocked attempts — great news!
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {blocked.map((a) => (
-                  <div key={a.id} className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-medium">{childName(a.child_id)}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(a.created_at).toLocaleString()}
+      {/* Children Overview Grid */}
+      {children.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+              Child Profiles
+            </h2>
+            <Link
+              href="/dashboard/profiles"
+              className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
+            >
+              <span>Manage profiles</span>
+              <ArrowRight className="h-3 w-3" />
+            </Link>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {children.map((child) => {
+              const themeKey = getAgeTheme(child);
+              const theme = AGE_THEME_CONFIGS[themeKey];
+              const isSelected = filterChildId === child.id;
+
+              return (
+                <Card
+                  key={child.id}
+                  className={`relative overflow-hidden transition-all hover:border-primary/50 shadow-xs ${
+                    isSelected ? "ring-2 ring-primary border-primary/40 shadow-sm" : ""
+                  }`}
+                >
+                  <CardContent className="flex items-center justify-between gap-3 p-4">
+                    <button
+                      type="button"
+                      className="flex items-center gap-3 min-w-0 text-left"
+                      onClick={() => setChildFilter(child.id)}
+                    >
+                      <div
+                        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-lg ${theme.avatarBg}`}
+                      >
+                        {theme.avatarEmoji}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-bold text-foreground text-base truncate">
+                          {child.name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {theme.ageRange} · Safety {child.strictness ?? 3}/5
+                        </p>
+                        {child.homework_mode && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5">
+                            <BookOpen className="h-3 w-3" /> Homework mode
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                    <Link href={chatPathForChild(child)}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-xl h-8 px-3 text-xs font-medium border-primary/30 text-primary hover:bg-primary/5"
+                      >
+                        Chat
+                      </Button>
+                    </Link>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Activity Navigation Tabs */}
+      <div className="space-y-4 pt-2">
+        <div className="flex gap-2 border-b border-border/70">
+          {[
+            { id: "logs" as const, label: "Conversations", icon: MessageSquare, count: sessions.length },
+            {
+              id: "blocked" as const,
+              label: "Blocked Attempts",
+              icon: ShieldAlert,
+              count: blockedToday,
+              badgeVariant: blockedToday > 0 ? "amber" : "neutral",
+            },
+          ].map(({ id, label, icon: Icon, count, badgeVariant }) => (
+            <button
+              key={id}
+              onClick={() => setTab(id)}
+              className={`flex items-center gap-2 pb-3 px-3 text-sm font-semibold border-b-2 transition-all ${
+                tab === id
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              <span>{label}</span>
+              {typeof count === "number" && (
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+                    badgeVariant === "amber" && count > 0
+                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Conversation Logs Tab */}
+        {tab === "logs" && (
+          <Card className="border-border/80 shadow-xs">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-lg font-bold">Recent Chat Sessions</CardTitle>
+              <CardDescription>
+                Select any conversation session to inspect the full kid & assistant dialogue.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {selectedSession ? (
+                <div className="space-y-4 animate-fade-in">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedSession(null);
+                      setSessionMessages([]);
+                    }}
+                    className="rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground"
+                  >
+                    <ArrowLeft className="mr-1.5 h-4 w-4" />
+                    Back to all sessions
+                  </Button>
+
+                  <div className="rounded-2xl border border-border/80 bg-muted/30 p-4 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-foreground text-base">
+                          {childName(selectedSession.child_id)}
+                        </span>
+                        <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+                          {selectedSession.message_count} messages
+                        </span>
+                      </div>
+                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {formatSessionWhen(selectedSession.started_at, selectedSession.last_at)}
                       </span>
                     </div>
-                    <p className="text-xs text-muted-foreground">Stage: {a.stage} · {a.reason}</p>
-                    <p className="mt-1">{a.content}</p>
+                    {selectedSession.summary && (
+                      <p className="text-xs sm:text-sm text-foreground/90 pt-1 border-t border-border/50">
+                        <strong className="font-semibold text-primary">Summary: </strong>
+                        {selectedSession.summary}
+                      </p>
+                    )}
                   </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+
+                  {sessionLoading ? (
+                    <div className="py-12 text-center text-sm text-muted-foreground">
+                      <Sparkles className="h-6 w-6 animate-pulse text-primary mx-auto mb-2" />
+                      Loading messages…
+                    </div>
+                  ) : sessionMessages.length === 0 ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">
+                      No messages recorded in this session.
+                    </p>
+                  ) : (
+                    <div className="space-y-3 pt-2">
+                      {sessionMessages.map((log) => (
+                        <div
+                          key={log.id}
+                          className={`flex ${log.direction === "input" ? "justify-end" : "justify-start"}`}
+                        >
+                          <div
+                            className={`max-w-[85%] rounded-2xl p-4 text-sm leading-relaxed shadow-xs ${
+                              log.blocked
+                                ? "border border-destructive/40 bg-destructive/10 text-destructive"
+                                : log.direction === "input"
+                                  ? "bg-primary text-primary-foreground font-medium"
+                                  : "border border-border/80 bg-card text-foreground"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3 text-xs mb-1 opacity-80">
+                              <span className="font-semibold">
+                                {log.direction === "input" ? childName(log.child_id) : "Homeward AI"}
+                                {log.blocked && " · 🛑 Blocked"}
+                              </span>
+                              <span>
+                                {new Date(log.created_at).toLocaleTimeString([], {
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                            </div>
+                            <p className="whitespace-pre-wrap">{log.content}</p>
+                            {log.block_reason && (
+                              <p className="text-xs font-semibold mt-2 pt-1.5 border-t border-destructive/30">
+                                Reason: {log.block_reason}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : sessions.length === 0 ? (
+                <div className="py-12 text-center space-y-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground mx-auto">
+                    <MessageCircle className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-foreground">No conversations yet</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      When your kids start chatting, their sessions will appear here.
+                    </p>
+                  </div>
+                  <Link href="/chat">
+                    <Button variant="outline" size="sm" className="rounded-xl mt-2">
+                      Open Kid Chat
+                    </Button>
+                  </Link>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {sessions.map((session) => (
+                    <button
+                      key={session.id}
+                      onClick={() => openSession(session)}
+                      className="flex w-full items-start gap-3.5 rounded-2xl border border-border/70 bg-card p-4 text-left shadow-2xs transition-all hover:border-primary/50 hover:bg-muted/30 active:scale-[0.99]"
+                    >
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary mt-0.5">
+                        <MessageCircle className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-bold text-foreground text-sm sm:text-base">
+                            {childName(session.child_id)}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(session.last_at).toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="mt-1 truncate text-xs sm:text-sm text-muted-foreground">
+                          {session.summary || session.preview}
+                        </p>
+                        <div className="mt-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+                          <span className="rounded-full bg-muted px-2 py-0.5">
+                            {session.message_count} message{session.message_count !== 1 ? "s" : ""}
+                          </span>
+                          {session.legacy && <span>· legacy session</span>}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Blocked Attempts Tab */}
+        {tab === "blocked" && (
+          <Card className="border-border/80 shadow-xs">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-lg font-bold">Blocked Attempts</CardTitle>
+              <CardDescription>
+                Messages stopped by Homeward&apos;s multi-stage safety filters before reaching the AI model.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {blocked.length === 0 ? (
+                <div className="py-12 text-center space-y-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500 mx-auto">
+                    <ShieldCheck className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-foreground">No blocked messages</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      All conversations have stayed within safety policy guidelines.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {blocked.map((attempt) => (
+                    <div
+                      key={attempt.id}
+                      className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 space-y-2 shadow-2xs"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-foreground text-sm">
+                            {childName(attempt.child_id)}
+                          </span>
+                          <span className="rounded-full bg-destructive/15 px-2 py-0.5 text-[11px] font-semibold text-destructive uppercase">
+                            {attempt.stage || "Filter"}
+                          </span>
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(attempt.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="rounded-xl bg-background/80 p-3 border border-destructive/20 text-sm">
+                        <p className="font-mono text-xs text-foreground/90">
+                          &ldquo;{attempt.content}&rdquo;
+                        </p>
+                      </div>
+                      {attempt.reason && (
+                        <p className="text-xs text-destructive font-medium">
+                          Safety flag: {attempt.reason}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
     </main>
   );
 }
 
 export default function DashboardPage() {
   return (
-    <Suspense fallback={
-      <main className="mx-auto max-w-5xl p-8">
-        <p className="text-muted-foreground">Loading dashboard…</p>
-      </main>
-    }>
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Sparkles className="h-8 w-8 animate-pulse text-primary" />
+        </div>
+      }
+    >
       <DashboardContent />
     </Suspense>
   );
