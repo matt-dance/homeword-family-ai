@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import { applyVoiceSettings, loadBestVoice } from "@/lib/speech-voice";
 
 const MAX_RECORD_MS = 20_000;
 const SILENCE_THRESHOLD = 0.018;
@@ -34,12 +33,11 @@ function measureRms(analyser: AnalyserNode, buffer: Uint8Array<ArrayBuffer>): nu
 
 export interface UseVoiceChatOptions {
   onTranscript: (text: string) => void;
-  readAloudEnabled?: boolean;
+  onListeningStart?: () => void;
 }
 
-export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoiceChatOptions) {
+export function useVoiceChat({ onTranscript, onListeningStart }: UseVoiceChatOptions) {
   const [listening, setListening] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
@@ -47,8 +45,8 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
   const [interimTranscript, setInterimTranscript] = useState("");
   const [heardSpeech, setHeardSpeech] = useState(false);
 
-  const readAloudRef = useRef(readAloudEnabled);
   const onTranscriptRef = useRef(onTranscript);
+  const onListeningStartRef = useRef(onListeningStart);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -58,12 +56,11 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
   const vadFrameRef = useRef<number | null>(null);
   const vadStateRef = useRef({ speechDetected: false, lastSpeechAt: 0, startedAt: 0 });
   const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const ttsVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
   const stopListeningRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
-    readAloudRef.current = readAloudEnabled;
-  }, [readAloudEnabled]);
+    onListeningStartRef.current = onListeningStart;
+  }, [onListeningStart]);
 
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
@@ -84,10 +81,6 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
       .then((status) => setVoiceSupported(status.available))
       .catch(() => setVoiceSupported(false));
   }, []);
-
-  useEffect(() => loadBestVoice((voice) => {
-    ttsVoiceRef.current = voice;
-  }), []);
 
   const stopVad = useCallback(() => {
     if (vadFrameRef.current) {
@@ -131,26 +124,6 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
     stopVad();
     stopPreviewRecognition();
   }, [stopVad, stopPreviewRecognition]);
-
-  const stopSpeaking = useCallback(() => {
-    if (typeof window === "undefined") return;
-    window.speechSynthesis.cancel();
-    setSpeaking(false);
-  }, []);
-
-  const speak = useCallback((text: string) => {
-    if (!readAloudRef.current || typeof window === "undefined") return;
-    const synth = window.speechSynthesis;
-    if (!synth || !text.trim()) return;
-
-    synth.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    applyVoiceSettings(utterance, ttsVoiceRef.current);
-    utterance.onstart = () => setSpeaking(true);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-    synth.speak(utterance);
-  }, []);
 
   const stopListening = useCallback(() => {
     const recorder = recorderRef.current;
@@ -262,7 +235,7 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
   const startListening = useCallback(async () => {
     if (!voiceSupported || listening || transcribing) return;
 
-    stopSpeaking();
+    onListeningStartRef.current?.();
     setSpeechError(null);
     setInterimTranscript("");
     setHeardSpeech(false);
@@ -339,7 +312,6 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
     voiceSupported,
     listening,
     transcribing,
-    stopSpeaking,
     cleanupStream,
     stopListening,
     startVad,
@@ -357,15 +329,13 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
   useEffect(
     () => () => {
       stopListening();
-      stopSpeaking();
       cleanupStream();
     },
-    [stopListening, stopSpeaking, cleanupStream],
+    [stopListening, cleanupStream],
   );
 
   return {
     listening,
-    speaking,
     transcribing,
     voiceSupported,
     speechError,
@@ -373,7 +343,5 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
     interimTranscript,
     heardSpeech,
     toggleListening,
-    speak,
-    stopSpeaking,
   };
 }

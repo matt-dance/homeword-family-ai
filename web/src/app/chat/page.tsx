@@ -5,7 +5,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, streamChat, type Child, type ConversationStarter } from "@/lib/api";
 import { useVoiceChat } from "@/hooks/use-voice-chat";
+import { useReadAloud } from "@/hooks/use-read-aloud";
 import { VoiceListener } from "@/components/voice-listener";
+import { ReadAloudText } from "@/components/read-aloud-text";
+import { primeReadAloudFromGesture } from "@/lib/read-aloud";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -17,8 +20,8 @@ import {
   Mic,
   MicOff,
   Volume2,
-  VolumeX,
-  RotateCcw,
+  Play,
+  Square,
   PlusCircle,
   LayoutList,
   Moon,
@@ -47,25 +50,25 @@ function ChatContent() {
   const [streaming, setStreaming] = useState(false);
   const [loading, setLoading] = useState(true);
   const [chatSessionId, setChatSessionId] = useState<number | null>(null);
-  const [readAloud, setReadAloud] = useState(false);
   const [starters, setStarters] = useState<ConversationStarter[]>([]);
   const [simpleMode, setSimpleMode] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [resumeOffered, setResumeOffered] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const sendRef = useRef<(text: string) => Promise<void>>(async () => {});
+  const sendRef = useRef<(text: string, fromVoice?: boolean) => Promise<void>>(async () => {});
+  const autoReadNextRef = useRef(false);
 
-  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+  const { supported: readAloudSupported, state: readAloudState, speakMessage, stop: stopReadAloud, isSpeakingMessage } =
+    useReadAloud();
 
   const handleVoiceTranscript = useCallback((text: string) => {
-    setReadAloud(true);
+    autoReadNextRef.current = true;
     setInput(text);
-    void sendRef.current(text);
+    void sendRef.current(text, true);
   }, []);
 
   const {
     listening,
-    speaking,
     transcribing,
     voiceSupported,
     speechError,
@@ -73,15 +76,13 @@ function ChatContent() {
     interimTranscript,
     heardSpeech,
     toggleListening,
-    speak,
-    stopSpeaking,
   } = useVoiceChat({
-      onTranscript: handleVoiceTranscript,
-      readAloudEnabled: readAloud,
-    });
+    onTranscript: handleVoiceTranscript,
+    onListeningStart: stopReadAloud,
+  });
 
   const handleMicClick = () => {
-    if (!listening) setReadAloud(true);
+    primeReadAloudFromGesture();
     toggleListening();
   };
 
@@ -163,7 +164,7 @@ function ChatContent() {
 
   const handleNewChat = async () => {
     if (!selectedChild || streaming) return;
-    stopSpeaking();
+    stopReadAloud();
     const previousSessionId = chatSessionId;
     setChatSessionId(null);
     setMessages([]);
@@ -179,7 +180,7 @@ function ChatContent() {
   };
 
   const handleSelectChild = (child: Child) => {
-    stopSpeaking();
+    stopReadAloud();
     setSelectedChild(child);
     setPin("");
     setPinError("");
@@ -214,9 +215,11 @@ function ChatContent() {
   };
 
   const handleSend = useCallback(
-    async (overrideText?: string) => {
+    async (overrideText?: string, fromVoice = false) => {
       const userMsg = (overrideText ?? input).trim();
       if (!userMsg || !selectedChild || streaming) return;
+
+      if (fromVoice) autoReadNextRef.current = true;
 
       if (selectedChild.chat_available === false) {
         setPinError(selectedChild.chat_unavailable_message || "Chat is not available right now.");
@@ -233,6 +236,7 @@ function ChatContent() {
 
       setInput("");
       setPinError("");
+      stopReadAloud();
       setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
       setStreaming(true);
 
@@ -260,13 +264,25 @@ function ChatContent() {
               ...prev.filter((m) => !(m.role === "assistant" && m.content === assistantContent && m.blocked)),
               { role: "assistant", content: blockedMsg, blocked: true },
             ]);
-            speak(blockedMsg);
           },
           () => {
             setStreaming(false);
-            if (assistantContent && !assistantContent.includes("Something went wrong")) {
-              speak(assistantContent);
-            }
+            if (!assistantContent || assistantContent.includes("Something went wrong")) return;
+            if (!autoReadNextRef.current) return;
+            autoReadNextRef.current = false;
+            window.setTimeout(() => {
+              setMessages((prev) => {
+                let idx = -1;
+                for (let i = prev.length - 1; i >= 0; i--) {
+                  if (prev[i].role === "assistant") {
+                    idx = i;
+                    break;
+                  }
+                }
+                if (idx >= 0) speakMessage(`msg-${idx}`, prev[idx].content);
+                return prev;
+              });
+            }, 0);
           },
           chatSessionId,
         );
@@ -274,11 +290,10 @@ function ChatContent() {
         const fallback =
           e instanceof Error ? e.message : "Something went wrong. Please try again in a moment!";
         setMessages((prev) => [...prev, { role: "assistant", content: fallback, blocked: true }]);
-        speak(fallback);
         setStreaming(false);
       }
     },
-    [input, selectedChild, streaming, pinVerified, chatSessionId, sessionReady, messages, speak],
+    [input, selectedChild, streaming, pinVerified, chatSessionId, sessionReady, messages, speakMessage, stopReadAloud],
   );
 
   useEffect(() => {
@@ -403,7 +418,11 @@ function ChatContent() {
     );
   }
 
-  const visibleMessages = simpleMode && messages.length > 0 ? messages.slice(-2) : messages;
+  const displayedMessages = (
+    simpleMode && messages.length > 0
+      ? messages.map((m, i) => ({ message: m, index: i })).slice(-2)
+      : messages.map((m, i) => ({ message: m, index: i }))
+  );
 
   return (
     <div className="flex min-h-screen flex-col bg-gradient-to-b from-blue-50/30 to-background dark:from-slate-900/30">
@@ -433,23 +452,11 @@ function ChatContent() {
               <LayoutList className="h-4 w-4" />
               <span className="ml-1 hidden sm:inline text-xs">{simpleMode ? "Simple" : "Full"}</span>
             </Button>
-            {voiceSupported && (
-              <Button
-                variant={readAloud ? "outline" : "ghost"}
-                size="sm"
-                onClick={() => {
-                  if (readAloud) stopSpeaking();
-                  setReadAloud((v) => !v);
-                }}
-              >
-                {readAloud ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-              </Button>
-            )}
             <Button
               variant="ghost"
               size="sm"
               onClick={() => {
-                stopSpeaking();
+                stopReadAloud();
                 setSelectedChild(null);
                 setMessages([]);
                 setPin("");
@@ -494,23 +501,59 @@ function ChatContent() {
             </div>
           )}
 
-          {visibleMessages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div
-                className={`max-w-[90%] rounded-2xl px-4 py-3 ${
-                  simpleMode ? "text-base sm:text-lg px-5 py-4" : "text-sm"
-                } ${
-                  msg.role === "user"
-                    ? "bg-primary text-primary-foreground"
-                    : msg.blocked
-                      ? "bg-amber-50 border border-amber-200 text-amber-900 dark:bg-amber-900/20 dark:text-amber-100"
-                      : "bg-card border border-border"
-                }`}
-              >
-                {msg.content}
+          {displayedMessages.map(({ message: msg, index: i }) => {
+            const messageKey = `msg-${i}`;
+            const isAssistant = msg.role === "assistant";
+            const isReading = isSpeakingMessage(messageKey);
+
+            return (
+              <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[90%] ${isAssistant ? "space-y-2" : ""}`}>
+                  <div
+                    className={`rounded-2xl px-4 py-3 ${
+                      simpleMode ? "text-base sm:text-lg px-5 py-4" : "text-sm"
+                    } ${
+                      msg.role === "user"
+                        ? "bg-primary text-primary-foreground"
+                        : msg.blocked
+                          ? "bg-amber-50 border border-amber-200 text-amber-900 dark:bg-amber-900/20 dark:text-amber-100"
+                          : "bg-card border border-border"
+                    } ${isReading ? "ring-2 ring-primary/30" : ""}`}
+                  >
+                    {isAssistant && readAloudSupported ? (
+                      <ReadAloudText
+                        text={msg.content}
+                        charIndex={isReading ? readAloudState.charIndex : null}
+                        isActive={isReading}
+                      />
+                    ) : (
+                      msg.content
+                    )}
+                  </div>
+                  {isAssistant && readAloudSupported && !streaming && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-2"
+                      onClick={() => speakMessage(messageKey, msg.content)}
+                    >
+                      {isReading ? (
+                        <>
+                          <Square className="h-3.5 w-3.5" />
+                          Stop reading
+                        </>
+                      ) : (
+                        <>
+                          <Play className="h-3.5 w-3.5" />
+                          Listen
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {streaming && (
             <div className="flex justify-start">
@@ -520,23 +563,7 @@ function ChatContent() {
             </div>
           )}
 
-          {lastAssistant && !streaming && voiceSupported && (
-            <div className="flex justify-center">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setReadAloud(true);
-                  speak(lastAssistant.content);
-                }}
-              >
-                <RotateCcw className="mr-2 h-4 w-4" />
-                Say that again
-              </Button>
-            </div>
-          )}
-
-          {speaking && !streaming && (
+          {readAloudState.isSpeaking && !streaming && (
             <div className="flex justify-center">
               <p className="text-xs text-muted-foreground flex items-center gap-1">
                 <Volume2 className="h-3 w-3 animate-pulse" />
