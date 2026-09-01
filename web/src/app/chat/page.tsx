@@ -541,6 +541,11 @@ function ChatContent() {
           {(speechError || pinError) && (
             <p className="text-xs text-destructive text-center">{speechError || pinError}</p>
           )}
+          {listening && !speechError && (
+            <p className="text-sm text-primary text-center font-medium animate-pulse">
+              Listening… say something!
+            </p>
+          )}
           <div className="flex gap-2">
             {voiceSupported && (
               <Button
