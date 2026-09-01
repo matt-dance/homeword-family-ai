@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, streamChat, type Child, type ConversationStarter } from "@/lib/api";
 import { useVoiceChat } from "@/hooks/use-voice-chat";
+import { VoiceListener } from "@/components/voice-listener";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -62,8 +63,19 @@ function ChatContent() {
     void sendRef.current(text);
   }, []);
 
-  const { listening, speaking, transcribing, voiceSupported, speechError, toggleListening, speak, stopSpeaking } =
-    useVoiceChat({
+  const {
+    listening,
+    speaking,
+    transcribing,
+    voiceSupported,
+    speechError,
+    audioLevel,
+    interimTranscript,
+    heardSpeech,
+    toggleListening,
+    speak,
+    stopSpeaking,
+  } = useVoiceChat({
       onTranscript: handleVoiceTranscript,
       readAloudEnabled: readAloud,
     });
@@ -542,9 +554,12 @@ function ChatContent() {
             <p className="text-xs text-destructive text-center">{speechError || pinError}</p>
           )}
           {listening && !speechError && (
-            <p className="text-sm text-primary text-center font-medium animate-pulse">
-              Listening… tap the mic again when you&apos;re done speaking
-            </p>
+            <VoiceListener
+              audioLevel={audioLevel}
+              interimTranscript={interimTranscript}
+              heardSpeech={heardSpeech}
+              simpleMode={simpleMode}
+            />
           )}
           {transcribing && (
             <p className="text-sm text-muted-foreground text-center">Understanding what you said…</p>

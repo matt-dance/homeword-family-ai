@@ -69,3 +69,8 @@ declare var webkitSpeechRecognition: {
   prototype: SpeechRecognition;
   new (): SpeechRecognition;
 };
+
+interface Window {
+  SpeechRecognition?: typeof SpeechRecognition;
+  webkitSpeechRecognition?: typeof webkitSpeechRecognition;
+}
