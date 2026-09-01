@@ -234,6 +234,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ child_id: childId, end_session_id: endSessionId ?? null }),
     }),
+  transcribeStatus: () =>
+    request<{ available: boolean; ready: boolean; model: string; message: string | null }>(
+      "/chat/transcribe/status",
+    ),
+  transcribeAudio: async (blob: Blob) => {
+    const form = new FormData();
+    form.append("audio", blob, blob.type.includes("mp4") ? "speech.mp4" : "speech.webm");
+    const res = await fetch(`${API_BASE}/chat/transcribe`, {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const detail = err.detail;
+      throw new Error(typeof detail === "string" ? detail : "Could not transcribe audio");
+    }
+    return res.json() as Promise<{ text: string }>;
+  },
   blockedStats: () =>
     request<{ today_count: number; total_count: number }>("/dashboard/blocked/stats"),
   blocked: () => request<BlockedAttempt[]>("/dashboard/blocked"),

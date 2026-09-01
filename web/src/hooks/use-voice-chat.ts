@@ -1,35 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "@/lib/api";
 
-type SpeechRecognitionCtor = new () => SpeechRecognition;
+const MAX_RECORD_MS = 20_000;
 
-function getSpeechRecognition(): SpeechRecognitionCtor | null {
-  if (typeof window === "undefined") return null;
-  const w = window as Window & {
-    SpeechRecognition?: SpeechRecognitionCtor;
-    webkitSpeechRecognition?: SpeechRecognitionCtor;
-  };
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
-}
-
-function errorMessage(code: string): string | null {
-  switch (code) {
-    case "aborted":
-      return null;
-    case "not-allowed":
-      return "Microphone access was blocked. Ask a parent to allow the mic in browser settings.";
-    case "no-speech":
-      return "I didn't hear anything — tap the mic and speak clearly.";
-    case "network":
-      return "Voice typing needs an internet connection in Chrome. You can type instead.";
-    case "audio-capture":
-      return "No microphone found. Check your device settings or try typing.";
-    case "service-not-allowed":
-      return "Voice is not available in this browser tab. Try Chrome or Edge.";
-    default:
-      return "Could not hear you. Tap the mic and try again.";
-  }
+function pickMimeType(): string | undefined {
+  if (typeof MediaRecorder === "undefined") return undefined;
+  const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+  return types.find((type) => MediaRecorder.isTypeSupported(type));
 }
 
 export interface UseVoiceChatOptions {
@@ -40,11 +19,15 @@ export interface UseVoiceChatOptions {
 export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoiceChatOptions) {
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
   const readAloudRef = useRef(readAloudEnabled);
   const onTranscriptRef = useRef(onTranscript);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const stopTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     readAloudRef.current = readAloudEnabled;
@@ -55,25 +38,30 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
   }, [onTranscript]);
 
   useEffect(() => {
-    const Recognition = getSpeechRecognition();
-    const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
-    setVoiceSupported(Boolean(Recognition && synth));
+    const hasRecorder = typeof MediaRecorder !== "undefined";
+    const hasMic = typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+    const hasSpeech = typeof window !== "undefined" && Boolean(window.speechSynthesis);
+
+    if (!hasRecorder || !hasMic || !hasSpeech) {
+      setVoiceSupported(false);
+      return;
+    }
+
+    api
+      .transcribeStatus()
+      .then((status) => setVoiceSupported(status.available))
+      .catch(() => setVoiceSupported(false));
   }, []);
 
-  const stopListening = useCallback(() => {
-    const recognition = recognitionRef.current;
-    if (!recognition) return;
-    try {
-      recognition.stop();
-    } catch {
-      try {
-        recognition.abort();
-      } catch {
-        // ignore
-      }
+  const cleanupStream = useCallback(() => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    recorderRef.current = null;
+    chunksRef.current = [];
+    if (stopTimerRef.current) {
+      window.clearTimeout(stopTimerRef.current);
+      stopTimerRef.current = null;
     }
-    recognitionRef.current = null;
-    setListening(false);
   }, []);
 
   const stopSpeaking = useCallback(() => {
@@ -97,90 +85,90 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
     synth.speak(utterance);
   }, []);
 
-  const startListening = useCallback(async () => {
-    const Recognition = getSpeechRecognition();
-    if (!Recognition) {
-      setSpeechError("Voice is not supported in this browser. Try Chrome or Edge.");
-      return;
+  const stopListening = useCallback(() => {
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    } else {
+      cleanupStream();
+      setListening(false);
     }
+  }, [cleanupStream]);
 
-    if (recognitionRef.current) {
-      stopListening();
-      return;
-    }
+  const startListening = useCallback(async () => {
+    if (!voiceSupported || listening || transcribing) return;
 
     stopSpeaking();
     setSpeechError(null);
 
-    // Warm up mic permission so SpeechRecognition is not rejected instantly.
-    if (navigator.mediaDevices?.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((track) => track.stop());
-      } catch {
-        setSpeechError("Microphone access was blocked. Ask a parent to allow the mic in browser settings.");
-        return;
-      }
+    const mimeType = pickMimeType();
+    if (!mimeType) {
+      setSpeechError("This browser cannot record audio. Try Chrome or Edge.");
+      return;
     }
-
-    const recognition = new Recognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-
-    let gotResult = false;
-
-    recognition.onstart = () => {
-      setListening(true);
-      setSpeechError(null);
-    };
-
-    recognition.onend = () => {
-      recognitionRef.current = null;
-      setListening(false);
-    };
-
-    recognition.onerror = (event) => {
-      recognitionRef.current = null;
-      setListening(false);
-      if (gotResult) return;
-      const message = errorMessage(event.error);
-      if (message) setSpeechError(message);
-    };
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let transcript = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          transcript += event.results[i][0].transcript;
-        }
-      }
-      transcript = transcript.trim();
-      if (!transcript) return;
-
-      gotResult = true;
-      setSpeechError(null);
-      onTranscriptRef.current(transcript);
-      try {
-        recognition.stop();
-      } catch {
-        // ignore
-      }
-    };
-
-    recognitionRef.current = recognition;
 
     try {
-      recognition.start();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+
+      const recorder = new MediaRecorder(stream, { mimeType });
+      recorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
+
+      recorder.onstop = async () => {
+        setListening(false);
+        cleanupStream();
+
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        chunksRef.current = [];
+        if (!blob.size) {
+          setSpeechError("I didn't hear anything — tap the mic and speak clearly.");
+          return;
+        }
+
+        setTranscribing(true);
+        setSpeechError(null);
+        try {
+          const result = await api.transcribeAudio(blob);
+          if (result.text) {
+            onTranscriptRef.current(result.text);
+          } else {
+            setSpeechError("Could not make out any words. Try again.");
+          }
+        } catch (e) {
+          setSpeechError(
+            e instanceof Error ? e.message : "Could not understand that. Try again or type instead.",
+          );
+        } finally {
+          setTranscribing(false);
+        }
+      };
+
+      recorder.onerror = () => {
+        setListening(false);
+        cleanupStream();
+        setSpeechError("Could not record audio. Try again.");
+      };
+
+      recorder.start();
+      setListening(true);
+
+      stopTimerRef.current = window.setTimeout(() => {
+        stopListening();
+      }, MAX_RECORD_MS);
     } catch {
-      recognitionRef.current = null;
+      cleanupStream();
       setListening(false);
-      setSpeechError("Could not start the microphone. Tap again in a moment.");
+      setSpeechError("Microphone access was blocked. Ask a parent to allow the mic in browser settings.");
     }
-  }, [stopListening, stopSpeaking]);
+  }, [voiceSupported, listening, transcribing, stopSpeaking, cleanupStream, stopListening]);
 
   const toggleListening = useCallback(() => {
-    if (listening || recognitionRef.current) {
+    if (listening) {
       stopListening();
     } else {
       void startListening();
@@ -191,13 +179,15 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
     () => () => {
       stopListening();
       stopSpeaking();
+      cleanupStream();
     },
-    [stopListening, stopSpeaking],
+    [stopListening, stopSpeaking, cleanupStream],
   );
 
   return {
     listening,
     speaking,
+    transcribing,
     voiceSupported,
     speechError,
     toggleListening,

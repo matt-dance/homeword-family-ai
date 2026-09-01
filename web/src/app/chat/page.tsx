@@ -62,7 +62,7 @@ function ChatContent() {
     void sendRef.current(text);
   }, []);
 
-  const { listening, speaking, voiceSupported, speechError, toggleListening, speak, stopSpeaking } =
+  const { listening, speaking, transcribing, voiceSupported, speechError, toggleListening, speak, stopSpeaking } =
     useVoiceChat({
       onTranscript: handleVoiceTranscript,
       readAloudEnabled: readAloud,
@@ -543,8 +543,11 @@ function ChatContent() {
           )}
           {listening && !speechError && (
             <p className="text-sm text-primary text-center font-medium animate-pulse">
-              Listening… say something!
+              Listening… tap the mic again when you&apos;re done speaking
             </p>
+          )}
+          {transcribing && (
+            <p className="text-sm text-muted-foreground text-center">Understanding what you said…</p>
           )}
           <div className="flex gap-2">
             {voiceSupported && (
@@ -553,7 +556,7 @@ function ChatContent() {
                 variant={listening ? "destructive" : "outline"}
                 size="icon"
                 onClick={handleMicClick}
-                disabled={streaming || !sessionReady}
+                disabled={streaming || transcribing || !sessionReady}
                 className={`shrink-0 ${simpleMode ? "h-12 w-12" : "h-10 w-10"}`}
               >
                 {listening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
@@ -564,12 +567,12 @@ function ChatContent() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
-              disabled={streaming || listening || !sessionReady}
+              disabled={streaming || listening || transcribing || !sessionReady}
               className={`flex-1 ${simpleMode ? "h-12 text-base" : ""}`}
             />
             <Button
               onClick={() => handleSend()}
-              disabled={streaming || !input.trim() || !sessionReady}
+              disabled={streaming || !input.trim() || !sessionReady || transcribing}
               size="icon"
               className={simpleMode ? "h-12 w-12" : ""}
             >

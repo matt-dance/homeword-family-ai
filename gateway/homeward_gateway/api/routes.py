@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated, AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -27,6 +27,7 @@ from homeward_gateway.auth.recovery import (
 from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.chat.starters import get_conversation_starters
 from homeward_gateway.chat.summary import summarize_session
+from homeward_gateway.voice.transcribe import get_whisper_status, transcribe_bytes, whisper_available
 from homeward_gateway.config import settings
 from homeward_gateway.db.database import (
     BlockedAttempt,
@@ -568,6 +569,50 @@ async def verify_pin(
         raise HTTPException(status_code=403, detail="Invalid PIN")
     reset_attempts(f"pin:{client_key}:{child_id}")
     return {"ok": True, "child_id": child.id, "name": child.name}
+
+
+@router.get("/chat/transcribe/status")
+async def transcribe_status():
+    return get_whisper_status()
+
+
+@router.post("/chat/transcribe")
+async def transcribe_audio(
+    request: Request,
+    audio: UploadFile = File(...),
+):
+    if not whisper_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Local voice typing is not available on this Homeward server.",
+        )
+
+    client_key = request.client.host if request.client else "unknown"
+    check_rate_limit(f"transcribe:{client_key}")
+
+    content = await audio.read()
+    suffix = ".webm"
+    if audio.filename and "." in audio.filename:
+        suffix = "." + audio.filename.rsplit(".", 1)[-1].lower()
+
+    try:
+        text = transcribe_bytes(content, suffix=suffix)
+    except ValueError as exc:
+        record_attempt(f"transcribe:{client_key}")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Transcription failed")
+        record_attempt(f"transcribe:{client_key}")
+        raise HTTPException(status_code=500, detail="Could not transcribe audio") from exc
+
+    if not text:
+        record_attempt(f"transcribe:{client_key}")
+        raise HTTPException(status_code=400, detail="Could not make out any words. Try speaking again.")
+
+    reset_attempts(f"transcribe:{client_key}")
+    return {"text": text}
 
 
 @router.post("/chat/sessions")
