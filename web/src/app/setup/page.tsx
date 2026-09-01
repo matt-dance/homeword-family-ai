@@ -26,6 +26,7 @@ export default function SetupPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [isResume, setIsResume] = useState(false);
+  const [statusLoaded, setStatusLoaded] = useState(false);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [children, setChildren] = useState<ChildForm[]>([
     { name: "", age: 8, preset_id: "young_explorer", strictness: 4 },
@@ -35,9 +36,55 @@ export default function SetupPage() {
     api.setupStatus().then((s) => {
       if (s.setup_complete) router.replace("/dashboard");
       else if (s.has_parent) setIsResume(true);
+      setStatusLoaded(true);
     });
     api.presets().then(setPresets).catch(() => {});
   }, [router]);
+
+  const continueAfterAuth = async () => {
+    const existingChildren = await api.children().catch(() => []);
+    if (existingChildren.length > 0) {
+      setChildren(
+        existingChildren.map((c) => ({
+          name: c.name,
+          age: c.age ?? 8,
+          preset_id: c.preset_id ?? "curious_explorer",
+          strictness: c.strictness ?? 3,
+        }))
+      );
+      setStep("review");
+    } else {
+      setStep("children");
+    }
+  };
+
+  const authenticateParent = async () => {
+    if (isResume) {
+      const result = await api.login(password);
+      if (result.setup_complete) {
+        router.replace("/dashboard");
+        return false;
+      }
+      return true;
+    }
+
+    try {
+      await api.setup(password);
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "";
+      if (message === "Setup already completed") {
+        const result = await api.login(password);
+        if (result.setup_complete) {
+          router.replace("/dashboard");
+          return false;
+        }
+        setIsResume(true);
+        return true;
+      }
+      throw e;
+    }
+  };
 
   const presetForAge = (age: number) => {
     const match = presets.find((p) => age >= p.age_min && age <= p.age_max);
@@ -52,21 +99,8 @@ export default function SetupPage() {
     setLoading(true);
     setError("");
     try {
-      await api.setup(password);
-      const existingChildren = await api.children().catch(() => []);
-      if (existingChildren.length > 0) {
-        setChildren(
-          existingChildren.map((c) => ({
-            name: c.name,
-            age: c.age ?? 8,
-            preset_id: c.preset_id ?? "curious_explorer",
-            strictness: c.strictness ?? 3,
-          }))
-        );
-        setStep("review");
-      } else {
-        setStep("children");
-      }
+      const shouldContinue = await authenticateParent();
+      if (shouldContinue) await continueAfterAuth();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Setup failed");
     } finally {
@@ -191,8 +225,8 @@ export default function SetupPage() {
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </div>
-              <Button onClick={handlePasswordSubmit} disabled={loading} className="w-full">
-                Continue
+              <Button onClick={handlePasswordSubmit} disabled={loading || !statusLoaded} className="w-full">
+                {statusLoaded ? "Continue" : "Loading..."}
                 <ChevronRight className="ml-2 h-4 w-4" />
               </Button>
             </CardContent>
