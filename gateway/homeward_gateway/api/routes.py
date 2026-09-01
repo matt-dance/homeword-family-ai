@@ -8,7 +8,7 @@ from typing import Annotated, AsyncIterator
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from homeward_gateway.auth.parent_auth import (
@@ -21,13 +21,16 @@ from homeward_gateway.auth.parent_auth import (
 from homeward_gateway.config import settings
 from homeward_gateway.db.database import (
     BlockedAttempt,
+    ChatSession,
     ChildProfile,
     ConversationLog,
     ParentAccount,
     get_session,
 )
+from homeward_gateway.dashboard.sessions import find_legacy_session, group_legacy_logs
 from homeward_gateway.ollama import service as ollama_service
 from homeward_gateway.ollama.runtime import get_effective_models
+from homeward_gateway.models.response_limits import trim_response
 from homeward_gateway.pipeline.pipeline import PipelineResult, process_chat, process_chat_stream
 from homeward_gateway.pipeline.policy import load_all_presets, preset_for_age
 
@@ -60,7 +63,12 @@ class ChildCreate(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     child_id: int
+    session_id: int | None = None
     history: list[dict] = Field(default_factory=list)
+
+
+class SessionCreateRequest(BaseModel):
+    child_id: int
 
 
 class CloudSettingsRequest(BaseModel):
@@ -292,6 +300,25 @@ async def verify_pin(
     return {"ok": True, "child_id": child.id, "name": child.name}
 
 
+@router.post("/chat/sessions")
+async def create_chat_session(
+    body: SessionCreateRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    result = await session.execute(select(ChildProfile).where(ChildProfile.id == body.child_id))
+    child = result.scalar_one_or_none()
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+    chat_session = ChatSession(child_id=child.id)
+    session.add(chat_session)
+    await session.commit()
+    await session.refresh(chat_session)
+    return {
+        "session_id": chat_session.id,
+        "started_at": chat_session.started_at.isoformat(),
+    }
+
+
 # --- Chat ---
 
 
@@ -314,16 +341,24 @@ async def _log_message(
     blocked: bool = False,
     block_reason: str | None = None,
     stage: str | None = None,
+    chat_session_id: int | None = None,
 ) -> None:
     log = ConversationLog(
         child_id=child_id,
+        session_id=chat_session_id,
         direction=direction,
-        content=content[:2000],
+        content=content[:4000],
         blocked=blocked,
         block_reason=block_reason,
         stage=stage,
     )
     session.add(log)
+
+    if chat_session_id and direction == "input" and not blocked:
+        chat_session = await session.get(ChatSession, chat_session_id)
+        if chat_session and not chat_session.preview:
+            chat_session.preview = content[:200]
+
     if blocked:
         attempt = BlockedAttempt(
             child_id=child_id,
@@ -333,6 +368,30 @@ async def _log_message(
         )
         session.add(attempt)
     await session.commit()
+
+
+async def _resolve_chat_session(
+    session: AsyncSession,
+    child_id: int,
+    session_id: int | None,
+) -> int | None:
+    if session_id:
+        result = await session.execute(
+            select(ChatSession).where(
+                ChatSession.id == session_id,
+                ChatSession.child_id == child_id,
+            )
+        )
+        chat_session = result.scalar_one_or_none()
+        if not chat_session:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        return chat_session.id
+
+    chat_session = ChatSession(child_id=child_id)
+    session.add(chat_session)
+    await session.commit()
+    await session.refresh(chat_session)
+    return chat_session.id
 
 
 BLOCKED_MESSAGE = (
@@ -357,6 +416,7 @@ async def chat(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     child, preset = await _get_child_context(body.child_id, session)
+    chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
     chat_model, classifier_model = await get_effective_models(session)
     result = await process_chat(
         body.message,
@@ -373,20 +433,23 @@ async def chat(
         await _log_message(
             session, child.id, "input", body.message,
             blocked=True, block_reason=result.block_reason, stage=result.stage,
+            chat_session_id=chat_session_id,
         )
         return {
             "blocked": True,
             "message": user_facing_message(result.stage),
             "reason": result.block_reason,
             "stage": result.stage,
+            "session_id": chat_session_id,
         }
 
-    await _log_message(session, child.id, "input", body.message)
-    await _log_message(session, child.id, "output", result.content or "")
+    await _log_message(session, child.id, "input", body.message, chat_session_id=chat_session_id)
+    await _log_message(session, child.id, "output", result.content or "", chat_session_id=chat_session_id)
 
     return {
         "blocked": False,
         "message": result.content,
+        "session_id": chat_session_id,
     }
 
 
@@ -396,6 +459,7 @@ async def chat_stream(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     child, preset = await _get_child_context(body.child_id, session)
+    chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
     chat_model, classifier_model = await get_effective_models(session)
 
     async def event_stream() -> AsyncIterator[str]:
@@ -421,6 +485,7 @@ async def chat_stream(
                         await _log_message(
                             log_session, child.id, "input", body.message,
                             blocked=True, block_reason=item.block_reason, stage=item.stage,
+                            chat_session_id=chat_session_id,
                         )
                         payload = json.dumps({
                             "type": "blocked",
@@ -435,17 +500,143 @@ async def chat_stream(
                     yield f"data: {payload}\n\n"
 
             if not blocked_early:
-                full = "".join(collected)
-                await _log_message(log_session, child.id, "input", body.message)
+                full = trim_response("".join(collected), preset.max_response_length)
+                await _log_message(
+                    log_session, child.id, "input", body.message, chat_session_id=chat_session_id
+                )
                 if full:
-                    await _log_message(log_session, child.id, "output", full)
+                    await _log_message(
+                        log_session, child.id, "output", full, chat_session_id=chat_session_id
+                    )
 
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'session_id': chat_session_id})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # --- Dashboard ---
+
+
+def _serialize_log(log: ConversationLog) -> dict:
+    return {
+        "id": log.id,
+        "child_id": log.child_id,
+        "session_id": log.session_id,
+        "direction": log.direction,
+        "content": log.content,
+        "blocked": log.blocked,
+        "block_reason": log.block_reason,
+        "created_at": log.created_at.isoformat(),
+    }
+
+
+@router.get("/dashboard/sessions")
+async def dashboard_sessions(
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    limit: int = 30,
+):
+    children_result = await session.execute(
+        select(ChildProfile).where(ChildProfile.parent_id == parent.id)
+    )
+    children = children_result.scalars().all()
+    child_ids = [c.id for c in children]
+    if not child_ids:
+        return []
+
+    counts_result = await session.execute(
+        select(
+            ConversationLog.session_id,
+            func.count(ConversationLog.id),
+            func.max(ConversationLog.created_at),
+        )
+        .where(ConversationLog.session_id.is_not(None))
+        .where(ConversationLog.child_id.in_(child_ids))
+        .group_by(ConversationLog.session_id)
+    )
+    counts_by_session = {
+        row[0]: {"message_count": row[1], "last_at": row[2]} for row in counts_result.all()
+    }
+
+    sessions_result = await session.execute(
+        select(ChatSession)
+        .where(ChatSession.child_id.in_(child_ids))
+        .order_by(ChatSession.started_at.desc())
+        .limit(limit)
+    )
+    chat_sessions = sessions_result.scalars().all()
+    items = []
+    for chat_session in chat_sessions:
+        stats = counts_by_session.get(chat_session.id, {"message_count": 0, "last_at": chat_session.started_at})
+        items.append(
+            {
+                "id": str(chat_session.id),
+                "legacy": False,
+                "child_id": chat_session.child_id,
+                "preview": chat_session.preview or "Conversation",
+                "message_count": stats["message_count"],
+                "started_at": chat_session.started_at.isoformat(),
+                "last_at": stats["last_at"].isoformat() if stats["last_at"] else chat_session.started_at.isoformat(),
+            }
+        )
+
+    orphan_result = await session.execute(
+        select(ConversationLog)
+        .where(ConversationLog.child_id.in_(child_ids))
+        .where(ConversationLog.session_id.is_(None))
+        .order_by(ConversationLog.created_at.desc())
+    )
+    legacy_items = group_legacy_logs(list(orphan_result.scalars().all()))
+    items.extend(legacy_items)
+    items.sort(key=lambda item: item["last_at"], reverse=True)
+    return items[:limit]
+
+
+@router.get("/dashboard/sessions/{session_id}/messages")
+async def dashboard_session_messages(
+    session_id: str,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    children_result = await session.execute(
+        select(ChildProfile).where(ChildProfile.parent_id == parent.id)
+    )
+    child_ids = [c.id for c in children_result.scalars().all()]
+    if not child_ids:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if session_id.startswith("legacy-"):
+        orphan_result = await session.execute(
+            select(ConversationLog)
+            .where(ConversationLog.child_id.in_(child_ids))
+            .where(ConversationLog.session_id.is_(None))
+        )
+        logs = find_legacy_session(list(orphan_result.scalars().all()), session_id)
+        if not logs:
+            raise HTTPException(status_code=404, detail="Session not found")
+        logs.sort(key=lambda log: log.created_at)
+        return [_serialize_log(log) for log in logs]
+
+    try:
+        numeric_id = int(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Session not found") from exc
+
+    session_result = await session.execute(
+        select(ChatSession).where(
+            ChatSession.id == numeric_id,
+            ChatSession.child_id.in_(child_ids),
+        )
+    )
+    if not session_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    logs_result = await session.execute(
+        select(ConversationLog)
+        .where(ConversationLog.session_id == numeric_id)
+        .order_by(ConversationLog.created_at.asc())
+    )
+    return [_serialize_log(log) for log in logs_result.scalars().all()]
 
 
 @router.get("/dashboard/logs")

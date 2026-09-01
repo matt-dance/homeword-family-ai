@@ -6,6 +6,7 @@ from typing import AsyncIterator
 import litellm
 
 from homeward_gateway.config import settings
+from homeward_gateway.models.response_limits import chars_to_max_tokens, trim_response
 
 logger = logging.getLogger(__name__)
 litellm.set_verbose = False
@@ -48,11 +49,11 @@ async def generate_response(
             api_key=api_key,
             api_base=settings.ollama_base_url if not settings.cloud_enabled else None,
             timeout=settings.llm_timeout,
-            max_tokens=min(max_length, 1200),
+            max_tokens=chars_to_max_tokens(max_length),
             temperature=0.7,
         )
         content = response.choices[0].message.content or ""
-        return content[:max_length]
+        return trim_response(content, max_length)
     except Exception as e:
         logger.error("LLM error: %s", e)
         raise
@@ -85,7 +86,7 @@ async def stream_response(
             api_key=api_key,
             api_base=settings.ollama_base_url if not settings.cloud_enabled else None,
             timeout=settings.llm_timeout,
-            max_tokens=min(max_length, 1200),
+            max_tokens=chars_to_max_tokens(max_length),
             temperature=0.7,
             stream=True,
         )
@@ -93,9 +94,9 @@ async def stream_response(
             delta = chunk.choices[0].delta.content or ""
             if delta:
                 total += len(delta)
-                if total > max_length:
-                    break
                 yield delta
+        if total == 0:
+            return
     except Exception as e:
         logger.error("LLM stream error: %s", e)
         raise

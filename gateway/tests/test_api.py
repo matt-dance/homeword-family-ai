@@ -125,6 +125,18 @@ class TestOllama:
         assert data["ok"] is True
         assert data["ollama"]["chat_model"] == "llama3.2:3b"
 
+    @pytest.mark.asyncio
+    async def test_create_chat_session(self, client):
+        await client.post("/api/v1/setup", json={"password": "testpass123"})
+        child = await client.post(
+            "/api/v1/children",
+            json={"name": "Emma", "age": 7, "strictness": 4},
+        )
+        child_id = child.json()["id"]
+        resp = await client.post("/api/v1/chat/sessions", json={"child_id": child_id})
+        assert resp.status_code == 200
+        assert "session_id" in resp.json()
+
 
 class TestPresets:
     @pytest.mark.asyncio

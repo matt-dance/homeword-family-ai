@@ -26,11 +26,22 @@ export interface SetupStatus {
 export interface ConversationLog {
   id: number;
   child_id: number;
+  session_id?: number | null;
   direction: string;
   content: string;
   blocked: boolean;
   block_reason: string | null;
   created_at: string;
+}
+
+export interface ChatSessionSummary {
+  id: string;
+  legacy: boolean;
+  child_id: number;
+  preview: string;
+  message_count: number;
+  started_at: string;
+  last_at: string;
 }
 
 export interface BlockedAttempt {
@@ -156,6 +167,14 @@ export const api = {
       body: JSON.stringify({ message, child_id: childId, history }),
     }),
   logs: () => request<ConversationLog[]>("/dashboard/logs"),
+  sessions: () => request<ChatSessionSummary[]>("/dashboard/sessions"),
+  sessionMessages: (sessionId: string) =>
+    request<ConversationLog[]>(`/dashboard/sessions/${sessionId}/messages`),
+  createChatSession: (childId: number) =>
+    request<{ session_id: number; started_at: string }>("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ child_id: childId }),
+    }),
   blocked: () => request<BlockedAttempt[]>("/dashboard/blocked"),
   devices: () =>
     request<{ devices: unknown[]; message: string }>("/dashboard/devices"),
@@ -186,12 +205,13 @@ export async function streamChat(
   onToken: (token: string) => void,
   onBlocked: (message: string) => void,
   onDone: () => void,
+  sessionId?: number,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/chat/stream`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, child_id: childId, history }),
+    body: JSON.stringify({ message, child_id: childId, history, session_id: sessionId }),
   });
 
   if (!res.ok) throw new Error("Stream failed");

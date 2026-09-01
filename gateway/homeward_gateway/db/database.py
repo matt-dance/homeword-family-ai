@@ -44,6 +44,23 @@ class ChildProfile(Base):
     )
 
     parent: Mapped["ParentAccount"] = relationship(back_populates="children")
+    chat_sessions: Mapped[list["ChatSession"]] = relationship(
+        back_populates="child", cascade="all, delete-orphan"
+    )
+
+
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    child_id: Mapped[int] = mapped_column(ForeignKey("child_profiles.id"), nullable=False)
+    preview: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    child: Mapped["ChildProfile"] = relationship(back_populates="chat_sessions")
+    messages: Mapped[list["ConversationLog"]] = relationship(back_populates="session")
 
 
 class ConversationLog(Base):
@@ -51,6 +68,7 @@ class ConversationLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     child_id: Mapped[int] = mapped_column(ForeignKey("child_profiles.id"), nullable=False)
+    session_id: Mapped[int | None] = mapped_column(ForeignKey("chat_sessions.id"), nullable=True)
     direction: Mapped[str] = mapped_column(String(10), nullable=False)  # input | output
     content: Mapped[str] = mapped_column(Text, nullable=False)
     blocked: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -59,6 +77,8 @@ class ConversationLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+    session: Mapped["ChatSession | None"] = relationship(back_populates="messages")
 
 
 class BlockedAttempt(Base):
@@ -83,6 +103,7 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_parent_columns)
+        await conn.run_sync(_migrate_session_columns)
 
 
 def _migrate_parent_columns(connection) -> None:
@@ -97,6 +118,21 @@ def _migrate_parent_columns(connection) -> None:
         connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN ollama_model VARCHAR(100)"))
     if "classifier_model" not in columns:
         connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN classifier_model VARCHAR(100)"))
+
+
+def _migrate_session_columns(connection) -> None:
+    import sqlalchemy as sa
+
+    inspector = sa.inspect(connection)
+    tables = inspector.get_table_names()
+    if "chat_sessions" not in tables:
+        ChatSession.__table__.create(connection)
+    if "conversation_logs" in tables:
+        columns = {col["name"] for col in inspector.get_columns("conversation_logs")}
+        if "session_id" not in columns:
+            connection.execute(
+                sa.text("ALTER TABLE conversation_logs ADD COLUMN session_id INTEGER")
+            )
 
 
 async def get_session() -> AsyncSession:

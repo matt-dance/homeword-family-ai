@@ -28,6 +28,7 @@ function ChatContent() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [chatSessionId, setChatSessionId] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,9 +38,13 @@ function ChatContent() {
         const childParam = searchParams.get("child");
         if (childParam) {
           const match = kids.find((k) => k.id === parseInt(childParam));
-          if (match && !match.has_pin) setSelectedChild(match);
-        } else if (kids.length === 1 && !kids[0].has_pin) {
+          if (match) {
+            setSelectedChild(match);
+            setPinVerified(!match.has_pin);
+          }
+        } else if (kids.length === 1) {
           setSelectedChild(kids[0]);
+          setPinVerified(!kids[0].has_pin);
         }
       })
       .catch(() => router.replace("/setup"))
@@ -50,11 +55,19 @@ function ChatContent() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    if (!selectedChild || !pinVerified || chatSessionId) return;
+    api.createChatSession(selectedChild.id)
+      .then((session) => setChatSessionId(session.session_id))
+      .catch(() => setPinError("Could not start chat session. Try switching profiles."));
+  }, [selectedChild, pinVerified, chatSessionId]);
+
   const handleSelectChild = (child: Child) => {
     setSelectedChild(child);
     setPin("");
     setPinError("");
     setPinVerified(!child.has_pin);
+    setChatSessionId(null);
     setMessages([]);
   };
 
@@ -64,6 +77,7 @@ function ChatContent() {
       await api.verifyPin(selectedChild.id, pin);
       setPinError("");
       setPinVerified(true);
+      setChatSessionId(null);
       setMessages([]);
     } catch {
       setPinError("That PIN doesn't match. Try again!");
@@ -76,6 +90,10 @@ function ChatContent() {
   // Verify pin first if needed
     if (selectedChild.has_pin && !pinVerified) {
       setPinError("Please enter your PIN first");
+      return;
+    }
+    if (!chatSessionId) {
+      setPinError("Chat session is not ready yet. Please wait a moment.");
       return;
     }
 
@@ -109,6 +127,7 @@ function ChatContent() {
           ]);
         },
         () => setStreaming(false),
+        chatSessionId,
       );
     } catch {
       setMessages((prev) => [
@@ -210,7 +229,7 @@ function ChatContent() {
               <p className="text-xs text-muted-foreground">Homeward is keeping you safe</p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => { setSelectedChild(null); setMessages([]); setPin(""); setPinVerified(false); }}>
+          <Button variant="ghost" size="sm" onClick={() => { setSelectedChild(null); setMessages([]); setPin(""); setPinVerified(false); setChatSessionId(null); }}>
             Switch profile
           </Button>
         </div>

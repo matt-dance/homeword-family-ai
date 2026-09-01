@@ -31,7 +31,7 @@ docker compose exec ollama ollama pull llama3.2:3b
 
 Open **http://localhost:43123** in your browser.
 
-1. Complete the parent setup wizard (password + children)
+1. Complete the parent setup wizard (password + children + local AI model)
 2. Kids chat at **http://localhost:43123/chat**
 3. Parents manage at **http://localhost:43123/dashboard**
 

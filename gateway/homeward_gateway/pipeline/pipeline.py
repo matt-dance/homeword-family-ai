@@ -8,6 +8,7 @@ from homeward_gateway.pipeline.normalize import normalize
 from homeward_gateway.pipeline.policy import PolicyPreset, check_policy_match
 from homeward_gateway.pipeline.rules import check_rules
 from homeward_gateway.models.router import generate_response, stream_response
+from homeward_gateway.models.response_limits import trim_response
 
 
 @dataclass
@@ -187,7 +188,7 @@ async def process_chat_stream(
         yield PipelineResult(allowed=False, block_reason="llm stream error", stage="llm")
         return
 
-    full_response = "".join(collected)
+    full_response = trim_response("".join(collected), preset.max_response_length)
     output_result = await filter_output(full_response, preset, strictness, classifier_model)
     if not output_result.allowed:
         yield PipelineResult(allowed=False, block_reason=output_result.block_reason, stage=output_result.stage)
