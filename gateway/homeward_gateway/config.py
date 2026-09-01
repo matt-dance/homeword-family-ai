@@ -32,9 +32,11 @@ class Settings(BaseSettings):
     # Packaging
     docker_mode: bool = False
 
-    # Local voice (Whisper)
+    # Local voice (Whisper + Piper TTS)
     whisper_model: str = "tiny.en"
     whisper_max_bytes: int = 5_000_000
+    piper_voice: str = "en_US-lessac-medium"
+    speak_max_chars: int = 4_000
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./homeward.db"

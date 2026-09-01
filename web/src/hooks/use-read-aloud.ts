@@ -1,31 +1,31 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  createReadAloudController,
-  isReadAloudSupported,
-  primeReadAloudFromGesture,
-  type ReadAloudState,
-} from "@/lib/read-aloud";
+import { api } from "@/lib/api";
+import { createReadAloudController, type ReadAloudState } from "@/lib/read-aloud";
 
 export function useReadAloud() {
-  const controllerRef = useRef(createReadAloudController());
+  const controllerRef = useRef(createReadAloudController((text) => api.speakText(text)));
   const [supported, setSupported] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<ReadAloudState>({
     messageKey: null,
     wordIndex: 0,
     isSpeaking: false,
+    isLoading: false,
   });
 
   useEffect(() => {
-    setSupported(isReadAloudSupported());
+    api
+      .speakStatus()
+      .then((status) => setSupported(status.available))
+      .catch(() => setSupported(false));
     return () => controllerRef.current.dispose();
   }, []);
 
   const stop = useCallback(() => {
     controllerRef.current.stop();
-    setState({ messageKey: null, wordIndex: 0, isSpeaking: false });
+    setState({ messageKey: null, wordIndex: 0, isSpeaking: false, isLoading: false });
     setError(null);
   }, []);
 
@@ -33,7 +33,6 @@ export function useReadAloud() {
     (messageKey: string, text: string) => {
       if (!text.trim()) return;
 
-      primeReadAloudFromGesture();
       setError(null);
 
       if (state.isSpeaking && state.messageKey === messageKey) {
@@ -42,17 +41,20 @@ export function useReadAloud() {
       }
 
       stop();
+      setState({ messageKey, wordIndex: 0, isSpeaking: false, isLoading: true });
 
-      controllerRef.current.speak(text, {
-        onStart: () => setState({ messageKey, wordIndex: 0, isSpeaking: true }),
+      void controllerRef.current.speak(text, {
+        onStart: () => setState({ messageKey, wordIndex: 0, isSpeaking: true, isLoading: false }),
         onWordIndex: (wordIndex) =>
           setState((prev) =>
-            prev.messageKey === messageKey ? { ...prev, wordIndex, isSpeaking: true } : prev,
+            prev.messageKey === messageKey
+              ? { ...prev, wordIndex, isSpeaking: true, isLoading: false }
+              : prev,
           ),
-        onEnd: () => setState({ messageKey: null, wordIndex: 0, isSpeaking: false }),
+        onEnd: () => setState({ messageKey: null, wordIndex: 0, isSpeaking: false, isLoading: false }),
         onError: (message) => {
           setError(message);
-          setState({ messageKey: null, wordIndex: 0, isSpeaking: false });
+          setState({ messageKey: null, wordIndex: 0, isSpeaking: false, isLoading: false });
         },
       });
     },
@@ -66,6 +68,6 @@ export function useReadAloud() {
     speakMessage,
     stop,
     isSpeakingMessage: (messageKey: string) =>
-      state.isSpeaking && state.messageKey === messageKey,
+      (state.isSpeaking || state.isLoading) && state.messageKey === messageKey,
   };
 }

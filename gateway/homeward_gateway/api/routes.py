@@ -28,6 +28,13 @@ from homeward_gateway.auth.recovery import (
 from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.chat.starters import get_conversation_starters
 from homeward_gateway.chat.summary import summarize_session
+from homeward_gateway.voice.speak import (
+    get_speak_status,
+    piper_available,
+    run_speak_self_test,
+    sanitize_for_speech,
+    synthesize_wav_bytes,
+)
 from homeward_gateway.voice.transcribe import (
     get_whisper_status,
     run_voice_self_test,
@@ -112,6 +119,10 @@ class ChatRequest(BaseModel):
 class SessionCreateRequest(BaseModel):
     child_id: int
     end_session_id: int | None = None
+
+
+class SpeakRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
 
 
 class CloudSettingsRequest(BaseModel):
@@ -628,6 +639,53 @@ async def transcribe_audio(
 
     reset_attempts(f"transcribe:{client_key}")
     return {"text": text}
+
+
+@router.get("/chat/speak/status")
+async def speak_status():
+    return get_speak_status()
+
+
+@router.get("/chat/speak/self-test")
+async def speak_self_test():
+    """Automated read-aloud pipeline check (no speakers required)."""
+    result = await asyncio.to_thread(run_speak_self_test)
+    if not result.get("ok"):
+        raise HTTPException(status_code=503, detail=result)
+    return result
+
+
+@router.post("/chat/speak")
+async def speak_text(body: SpeakRequest, request: Request):
+    if not piper_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Local read-aloud is not available on this Homeward server.",
+        )
+
+    client_key = request.client.host if request.client else "unknown"
+    check_rate_limit(f"speak:{client_key}")
+
+    cleaned = sanitize_for_speech(body.text)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Nothing to read aloud")
+    if len(cleaned) > settings.speak_max_chars:
+        raise HTTPException(status_code=400, detail="Text is too long to read aloud")
+
+    try:
+        audio = await asyncio.to_thread(synthesize_wav_bytes, cleaned)
+    except ValueError as exc:
+        record_attempt(f"speak:{client_key}")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Read-aloud synthesis failed")
+        record_attempt(f"speak:{client_key}")
+        raise HTTPException(status_code=500, detail="Could not read text aloud") from exc
+
+    reset_attempts(f"speak:{client_key}")
+    return Response(content=audio, media_type="audio/wav")
 
 
 @router.post("/chat/sessions")

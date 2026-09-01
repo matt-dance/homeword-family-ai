@@ -253,6 +253,23 @@ export const api = {
     }
     return res.json() as Promise<{ text: string }>;
   },
+  speakStatus: () =>
+    request<{ available: boolean; ready: boolean; voice: string; message: string | null }>(
+      "/chat/speak/status",
+    ),
+  speakText: async (text: string) => {
+    const res = await fetch(`${API_BASE}/chat/speak`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const detail = err.detail;
+      throw new Error(typeof detail === "string" ? detail : "Could not read text aloud");
+    }
+    return res.blob();
+  },
   blockedStats: () =>
     request<{ today_count: number; total_count: number }>("/dashboard/blocked/stats"),
   blocked: () => request<BlockedAttempt[]>("/dashboard/blocked"),

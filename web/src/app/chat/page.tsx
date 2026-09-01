@@ -8,7 +8,6 @@ import { useVoiceChat } from "@/hooks/use-voice-chat";
 import { useReadAloud } from "@/hooks/use-read-aloud";
 import { VoiceListener } from "@/components/voice-listener";
 import { ReadAloudText } from "@/components/read-aloud-text";
-import { primeReadAloudFromGesture } from "@/lib/read-aloud";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -82,7 +81,7 @@ function ChatContent() {
   });
 
   const handleMicClick = () => {
-    primeReadAloudFromGesture();
+    stopReadAloud();
     toggleListening();
   };
 
@@ -536,12 +535,20 @@ function ChatContent() {
                       size="sm"
                       className="h-8 gap-2"
                       onClick={() => speakMessage(messageKey, msg.content)}
+                      disabled={readAloudState.isLoading && readAloudState.messageKey === messageKey}
                     >
                       {isReading ? (
-                        <>
-                          <Square className="h-3.5 w-3.5" />
-                          Stop reading
-                        </>
+                        readAloudState.isLoading ? (
+                          <>
+                            <Volume2 className="h-3.5 w-3.5 animate-pulse" />
+                            Loading…
+                          </>
+                        ) : (
+                          <>
+                            <Square className="h-3.5 w-3.5" />
+                            Stop reading
+                          </>
+                        )
                       ) : (
                         <>
                           <Play className="h-3.5 w-3.5" />

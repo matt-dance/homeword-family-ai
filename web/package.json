@@ -6,7 +6,8 @@
     "dev": "next dev -p 43123",
     "build": "next build",
     "start": "next start -p 43123",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:read-aloud": "vitest run src/lib/read-aloud.test.ts"
   },
   "dependencies": {
     "next": "^15.1.0",
@@ -24,6 +25,7 @@
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.5"
   }
 }

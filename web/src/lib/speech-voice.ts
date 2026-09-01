@@ -61,3 +61,12 @@ export function applyVoiceSettings(utterance: SpeechSynthesisUtterance, voice: S
 export function tokenizeWords(text: string): string[] {
   return text.match(/\S+/g) ?? [];
 }
+
+/** Strip emoji and odd characters that cause browser TTS to silently fail. */
+export function sanitizeForSpeech(text: string): string {
+  return text
+    .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
+    .replace(/[\u2600-\u27BF]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}

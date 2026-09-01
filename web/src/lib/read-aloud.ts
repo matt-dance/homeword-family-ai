@@ -1,9 +1,10 @@
-import { applyVoiceSettings, loadBestVoice, pickBestVoice, tokenizeWords } from "@/lib/speech-voice";
+import { sanitizeForSpeech, tokenizeWords } from "@/lib/speech-voice";
 
 export interface ReadAloudState {
   messageKey: string | null;
   wordIndex: number;
   isSpeaking: boolean;
+  isLoading: boolean;
 }
 
 export interface SpeakOptions {
@@ -13,156 +14,107 @@ export interface SpeakOptions {
   onError?: (message: string) => void;
 }
 
-function getSynth(): SpeechSynthesis | null {
-  if (typeof window === "undefined") return null;
-  return window.speechSynthesis ?? null;
+export type FetchSpeechAudio = (text: string) => Promise<Blob>;
+
+export function wordIndexFromProgress(wordCount: number, currentTime: number, duration: number): number {
+  if (!wordCount || !duration || duration <= 0) return 0;
+  const progress = Math.min(1, Math.max(0, currentTime / duration));
+  return Math.min(wordCount - 1, Math.floor(progress * wordCount));
 }
 
-function primeSynth(synth: SpeechSynthesis) {
-  if (synth.paused) synth.resume();
-  synth.getVoices();
-}
-
-export function createReadAloudController() {
-  let voice: SpeechSynthesisVoice | null = null;
-  let utterance: SpeechSynthesisUtterance | null = null;
+export function createReadAloudController(fetchSpeechAudio: FetchSpeechAudio) {
+  let audio: HTMLAudioElement | null = null;
+  let objectUrl: string | null = null;
   let progressTimer: number | null = null;
-  let unsubscribeVoice: (() => void) | undefined;
+  let activeWords: string[] = [];
 
   const clearProgress = () => {
     if (progressTimer !== null) {
-      window.clearInterval(progressTimer);
+      globalThis.clearInterval(progressTimer);
       progressTimer = null;
     }
   };
 
-  const ensureVoice = () => {
-    if (typeof window === "undefined") return;
-    if (!unsubscribeVoice) {
-      unsubscribeVoice = loadBestVoice((loaded) => {
-        voice = loaded;
-      });
-    }
-    if (!voice) {
-      voice = pickBestVoice(window.speechSynthesis.getVoices());
+  const revokeUrl = () => {
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
     }
   };
 
   const stop = () => {
     clearProgress();
-    utterance = null;
-    const synth = getSynth();
-    if (!synth) return;
-    synth.cancel();
+    if (audio) {
+      audio.onplay = null;
+      audio.onended = null;
+      audio.onerror = null;
+      audio.ontimeupdate = null;
+      audio.pause();
+      audio = null;
+    }
+    revokeUrl();
+    activeWords = [];
   };
 
-  const startWordProgress = (text: string, options: SpeakOptions) => {
-    const words = tokenizeWords(text);
-    if (!words.length) return;
-
-    const startedAt = Date.now();
-    const msPerWord = 360;
-
+  const trackProgress = (options: SpeakOptions) => {
     clearProgress();
-    options.onWordIndex?.(0);
-
-    progressTimer = window.setInterval(() => {
-      const elapsed = Date.now() - startedAt;
-      const index = Math.min(words.length - 1, Math.floor(elapsed / msPerWord));
+    progressTimer = globalThis.setInterval(() => {
+      if (!audio || !activeWords.length) return;
+      const index = wordIndexFromProgress(activeWords.length, audio.currentTime, audio.duration || 0);
       options.onWordIndex?.(index);
     }, 80);
   };
 
-  const speakOnce = (
-    text: string,
-    options: SpeakOptions,
-    selectedVoice: SpeechSynthesisVoice | null,
-    retried: boolean,
-  ) => {
-    const synth = getSynth();
-    if (!synth) return;
-
-    const next = new SpeechSynthesisUtterance(text);
-    applyVoiceSettings(next, selectedVoice);
-    utterance = next;
-
-    next.onstart = () => {
-      options.onStart?.();
-      startWordProgress(text, options);
-    };
-
-    next.onend = () => {
-      clearProgress();
-      utterance = null;
+  const speak = async (text: string, options: SpeakOptions = {}) => {
+    const trimmed = sanitizeForSpeech(text);
+    if (!trimmed) {
+      options.onError?.("Nothing to read aloud.");
       options.onEnd?.();
-    };
-
-    next.onerror = () => {
-      clearProgress();
-      utterance = null;
-      if (!retried) {
-        speakOnce(text, options, null, true);
-        return;
-      }
-      options.onError?.("Could not read aloud. Try clicking Listen again.");
-      options.onEnd?.();
-    };
-
-    primeSynth(synth);
-    window.setTimeout(() => {
-      if (synth.speaking || synth.pending) synth.cancel();
-      window.setTimeout(() => synth.speak(next), 50);
-    }, 50);
-  };
-
-  const speak = (text: string, options: SpeakOptions = {}) => {
-    const trimmed = text.trim();
-    const synth = getSynth();
-    if (!synth || !trimmed) return false;
-
-    ensureVoice();
-    stop();
-    primeSynth(synth);
-
-    const voices = synth.getVoices();
-    if (!voice && voices.length) {
-      voice = pickBestVoice(voices);
+      return false;
     }
 
-    if (!voices.length) {
-      let started = false;
-      const onVoices = () => {
-        if (started) return;
-        started = true;
-        voice = pickBestVoice(synth.getVoices());
-        speakOnce(trimmed, options, voice, false);
+    stop();
+    activeWords = tokenizeWords(trimmed);
+
+    try {
+      const blob = await fetchSpeechAudio(trimmed);
+      if (!blob.size) throw new Error("Empty audio response");
+
+      objectUrl = URL.createObjectURL(blob);
+      audio = new Audio(objectUrl);
+
+      audio.onplay = () => {
+        options.onStart?.();
+        options.onWordIndex?.(0);
+        trackProgress(options);
       };
-      synth.addEventListener("voiceschanged", onVoices, { once: true });
-      window.setTimeout(onVoices, 250);
+
+      audio.onended = () => {
+        stop();
+        options.onEnd?.();
+      };
+
+      audio.onerror = () => {
+        stop();
+        options.onError?.("Could not play read-aloud audio.");
+        options.onEnd?.();
+      };
+
+      await audio.play();
       return true;
+    } catch (error) {
+      stop();
+      const message =
+        error instanceof Error ? error.message : "Could not read aloud. Try clicking Listen again.";
+      options.onError?.(message);
+      options.onEnd?.();
+      return false;
     }
-
-    speakOnce(trimmed, options, voice, false);
-    return true;
   };
 
-  const dispose = () => {
-    stop();
-    unsubscribeVoice?.();
-    unsubscribeVoice = undefined;
-  };
+  const dispose = () => stop();
 
   return { speak, stop, dispose };
-}
-
-export function primeReadAloudFromGesture(): void {
-  const synth = getSynth();
-  if (!synth) return;
-  primeSynth(synth);
-}
-
-export function isReadAloudSupported(): boolean {
-  return typeof window !== "undefined" && Boolean(window.speechSynthesis);
 }
 
 export function splitTextForHighlight(text: string): Array<{ text: string; start: number; wordIndex: number | null }> {

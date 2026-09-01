@@ -158,6 +158,23 @@ pytest tests/test_transcribe.py -v -m slow
 
 Quick unit/API tests skip Whisper with `-m "not slow"` (the default in `test-voice.sh`).
 
+### Read-aloud — automated, no browser or speakers needed
+
+Homeward synthesizes speech on the **gateway** with local Piper TTS and plays it in the browser as WAV audio (browser `speechSynthesis` is not used — it is unreliable).
+
+```bash
+./scripts/test-read-aloud.sh
+```
+
+This runs `GET /api/v1/chat/speak/self-test`, verifies the speak endpoint returns a valid WAV, runs gateway pytest, and web vitest for the read-aloud player logic.
+
+Full Piper integration (slower, downloads voice on first run):
+
+```bash
+cd gateway
+pytest tests/test_speak.py -v -m slow
+```
+
 ## Environment Variables
 
 | Variable | Default | Description |
