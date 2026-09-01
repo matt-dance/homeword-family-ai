@@ -16,6 +16,25 @@ export interface Child {
   preset_id?: string;
   strictness?: number;
   has_pin?: boolean;
+  homework_mode?: boolean;
+  allow_resume?: boolean;
+  quiet_hours_enabled?: boolean;
+  quiet_hours_start?: string | null;
+  quiet_hours_end?: string | null;
+  quiet_hours_days?: string | null;
+  chat_available?: boolean;
+  chat_unavailable_message?: string | null;
+}
+
+export interface ConversationStarter {
+  label: string;
+  message: string;
+}
+
+export interface ResumableSession {
+  session_id: number;
+  messages: Array<{ role: string; content: string; blocked?: boolean }>;
+  preview: string | null;
 }
 
 export interface SetupStatus {
@@ -42,6 +61,7 @@ export interface ChatSessionSummary {
   message_count: number;
   started_at: string;
   last_at: string;
+  summary?: string | null;
 }
 
 export interface BlockedAttempt {
@@ -164,11 +184,37 @@ export const api = {
     preset_id?: string;
     strictness: number;
     pin?: string;
+    homework_mode?: boolean;
   }) =>
     request<Child>("/children", {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  updateChild: (
+    childId: number,
+    data: Partial<{
+      name: string;
+      age: number;
+      preset_id: string;
+      strictness: number;
+      pin: string;
+      clear_pin: boolean;
+      homework_mode: boolean;
+      allow_resume: boolean;
+      quiet_hours_enabled: boolean;
+      quiet_hours_start: string;
+      quiet_hours_end: string;
+      quiet_hours_days: string;
+    }>,
+  ) =>
+    request<Child>(`/children/${childId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  conversationStarters: (childId: number) =>
+    request<ConversationStarter[]>(`/children/${childId}/starters`),
+  resumeSession: (childId: number) =>
+    request<ResumableSession>(`/children/${childId}/sessions/resume`),
   verifyPin: (childId: number, pin: string) =>
     request<{ ok: boolean; child_id: number; name: string }>(
       `/children/${childId}/verify-pin`,
@@ -183,11 +229,13 @@ export const api = {
   sessions: () => request<ChatSessionSummary[]>("/dashboard/sessions"),
   sessionMessages: (sessionId: string) =>
     request<ConversationLog[]>(`/dashboard/sessions/${sessionId}/messages`),
-  createChatSession: (childId: number) =>
+  createChatSession: (childId: number, endSessionId?: number) =>
     request<{ session_id: number; started_at: string }>("/chat/sessions", {
       method: "POST",
-      body: JSON.stringify({ child_id: childId }),
+      body: JSON.stringify({ child_id: childId, end_session_id: endSessionId ?? null }),
     }),
+  blockedStats: () =>
+    request<{ today_count: number; total_count: number }>("/dashboard/blocked/stats"),
   blocked: () => request<BlockedAttempt[]>("/dashboard/blocked"),
   devices: () =>
     request<{ devices: unknown[]; message: string }>("/dashboard/devices"),
@@ -232,7 +280,15 @@ export async function streamChat(
     body: JSON.stringify({ message, child_id: childId, history, session_id: sessionId }),
   });
 
-  if (!res.ok) throw new Error("Stream failed");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    const detail = err.detail;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : "Stream failed";
+    throw new Error(message);
+  }
 
   const reader = res.body?.getReader();
   if (!reader) throw new Error("No reader");

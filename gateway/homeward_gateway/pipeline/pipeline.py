@@ -131,6 +131,7 @@ async def process_chat(
     age: int,
     chat_model: str | None = None,
     classifier_model: str | None = None,
+    homework_mode: bool = False,
 ) -> PipelineResult:
     """Full pipeline: filter input → LLM → filter output."""
     input_result = await filter_input(user_message, preset, strictness, classifier_model)
@@ -142,9 +143,10 @@ async def process_chat(
             messages + [{"role": "user", "content": input_result.content}],
             child_name,
             age,
-            preset.name,
+            preset,
             preset.max_response_length,
             model=chat_model,
+            homework_mode=homework_mode,
         )
     except Exception:
         return PipelineResult(allowed=False, block_reason="llm error", stage="llm")
@@ -165,6 +167,7 @@ async def process_chat_stream(
     age: int,
     chat_model: str | None = None,
     classifier_model: str | None = None,
+    homework_mode: bool = False,
 ) -> AsyncIterator[str | PipelineResult]:
     """Stream pipeline: filter input first, then stream LLM, filter output at end."""
     input_result = await filter_input(user_message, preset, strictness, classifier_model)
@@ -178,9 +181,10 @@ async def process_chat_stream(
             messages + [{"role": "user", "content": input_result.content}],
             child_name,
             age,
-            preset.name,
+            preset,
             preset.max_response_length,
             model=chat_model,
+            homework_mode=homework_mode,
         ):
             collected.append(token)
             yield token

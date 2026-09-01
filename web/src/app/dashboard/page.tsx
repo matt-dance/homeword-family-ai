@@ -45,22 +45,29 @@ export default function DashboardPage() {
   const [passwordMessage, setPasswordMessage] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [passwordSaving, setPasswordSaving] = useState(false);
+  const [blockedToday, setBlockedToday] = useState(0);
+  const [editingChildId, setEditingChildId] = useState<number | null>(null);
+  const [childDraft, setChildDraft] = useState<Partial<Child & { pin: string; clear_pin: boolean }>>({});
+  const [childSaveMessage, setChildSaveMessage] = useState("");
+  const [childSaveError, setChildSaveError] = useState("");
 
   useEffect(() => {
     const load = async () => {
       try {
         const me = await api.me();
         setCloudEnabled(me.cloud_enabled);
-        const [sessionsData, blockedData, childrenData, devicesData] = await Promise.all([
+        const [sessionsData, blockedData, childrenData, devicesData, blockedStats] = await Promise.all([
           api.sessions(),
           api.blocked(),
           api.children(),
           api.devices(),
+          api.blockedStats(),
         ]);
         setSessions(sessionsData);
         setBlocked(blockedData);
         setChildren(childrenData);
         setDevicesMessage(devicesData.message);
+        setBlockedToday(blockedStats.today_count);
       } catch {
         router.replace("/setup");
       } finally {
@@ -100,6 +107,43 @@ export default function DashboardPage() {
   };
 
   const childName = (id: number) => children.find((c) => c.id === id)?.name || `Child #${id}`;
+
+  const startEditChild = (child: Child) => {
+    setEditingChildId(child.id);
+    setChildDraft({
+      ...child,
+      pin: "",
+      clear_pin: false,
+    });
+    setChildSaveMessage("");
+    setChildSaveError("");
+  };
+
+  const saveChildSettings = async () => {
+    if (!editingChildId) return;
+    setChildSaveError("");
+    setChildSaveMessage("");
+    try {
+      const updated = await api.updateChild(editingChildId, {
+        name: childDraft.name,
+        age: childDraft.age,
+        strictness: childDraft.strictness,
+        pin: childDraft.pin || undefined,
+        clear_pin: childDraft.clear_pin,
+        homework_mode: childDraft.homework_mode,
+        allow_resume: childDraft.allow_resume,
+        quiet_hours_enabled: childDraft.quiet_hours_enabled,
+        quiet_hours_start: childDraft.quiet_hours_start || undefined,
+        quiet_hours_end: childDraft.quiet_hours_end || undefined,
+        quiet_hours_days: childDraft.quiet_hours_days || undefined,
+      });
+      setChildren((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      setChildSaveMessage("Saved!");
+      setEditingChildId(null);
+    } catch (e) {
+      setChildSaveError(e instanceof Error ? e.message : "Could not save");
+    }
+  };
 
   const openSession = async (session: ChatSessionSummary) => {
     setSelectedSession(session);
@@ -159,20 +203,152 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        {/* Children overview */}
-        <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold">Parent Dashboard</h1>
+          <p className="text-muted-foreground">
+            Review conversations, blocked attempts, and manage settings.
+          </p>
+          {blockedToday > 0 && (
+            <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">
+              {blockedToday} blocked attempt{blockedToday !== 1 ? "s" : ""} today — check the Blocked tab.
+            </p>
+          )}
+        </div>
+
+        {/* Children overview + settings */}
+        <div className="mb-6 space-y-3">
           {children.map((child) => (
             <Card key={child.id}>
-              <CardContent className="flex items-center justify-between pt-6">
-                <div>
-                  <p className="font-medium">{child.name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    Age {child.age} · Strictness {child.strictness}/5
-                  </p>
+              <CardContent className="pt-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium">{child.name}</p>
+                    <p className="text-sm text-muted-foreground">
+                      Age {child.age} · Strictness {child.strictness}/5
+                      {child.homework_mode && " · Homework mode"}
+                      {child.quiet_hours_enabled && " · Quiet hours on"}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => startEditChild(child)}>
+                      Edit
+                    </Button>
+                    <Link href={`/chat?child=${child.id}`}>
+                      <Button size="sm" variant="outline">Open chat</Button>
+                    </Link>
+                  </div>
                 </div>
-                <Link href={`/chat?child=${child.id}`}>
-                  <Button size="sm" variant="outline">Open chat</Button>
-                </Link>
+
+                {editingChildId === child.id && (
+                  <div className="space-y-4 border-t border-border pt-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Name</label>
+                        <Input
+                          value={childDraft.name || ""}
+                          onChange={(e) => setChildDraft({ ...childDraft, name: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Age</label>
+                        <Input
+                          type="number"
+                          min={3}
+                          max={18}
+                          value={childDraft.age ?? 8}
+                          onChange={(e) => setChildDraft({ ...childDraft, age: parseInt(e.target.value) || 8 })}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Strictness ({childDraft.strictness}/5)</label>
+                      <input
+                        type="range"
+                        min={1}
+                        max={5}
+                        value={childDraft.strictness ?? 3}
+                        onChange={(e) => setChildDraft({ ...childDraft, strictness: parseInt(e.target.value) })}
+                        className="w-full accent-primary"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Profile PIN (optional)</label>
+                      <Input
+                        type="password"
+                        placeholder={child.has_pin ? "Enter new PIN to change" : "4–6 digits"}
+                        value={childDraft.pin || ""}
+                        onChange={(e) => setChildDraft({ ...childDraft, pin: e.target.value, clear_pin: false })}
+                        maxLength={6}
+                      />
+                      {child.has_pin && (
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={childDraft.clear_pin || false}
+                            onChange={(e) => setChildDraft({ ...childDraft, clear_pin: e.target.checked, pin: "" })}
+                            className="accent-primary"
+                          />
+                          Remove PIN
+                        </label>
+                      )}
+                    </div>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={childDraft.homework_mode || false}
+                        onChange={(e) => setChildDraft({ ...childDraft, homework_mode: e.target.checked })}
+                        className="accent-primary"
+                      />
+                      Homework mode (hints only, no full answers)
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={childDraft.allow_resume !== false}
+                        onChange={(e) => setChildDraft({ ...childDraft, allow_resume: e.target.checked })}
+                        className="accent-primary"
+                      />
+                      Let child resume last chat
+                    </label>
+                    <div className="space-y-3 rounded-lg border border-border p-3">
+                      <label className="flex items-center gap-2 text-sm font-medium">
+                        <input
+                          type="checkbox"
+                          checked={childDraft.quiet_hours_enabled || false}
+                          onChange={(e) => setChildDraft({ ...childDraft, quiet_hours_enabled: e.target.checked })}
+                          className="accent-primary"
+                        />
+                        Quiet hours (limit when chat is available)
+                      </label>
+                      {childDraft.quiet_hours_enabled && (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-1">
+                            <label className="text-xs text-muted-foreground">Start (24h)</label>
+                            <Input
+                              placeholder="15:00"
+                              value={childDraft.quiet_hours_start || ""}
+                              onChange={(e) => setChildDraft({ ...childDraft, quiet_hours_start: e.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs text-muted-foreground">End (24h)</label>
+                            <Input
+                              placeholder="19:00"
+                              value={childDraft.quiet_hours_end || ""}
+                              onChange={(e) => setChildDraft({ ...childDraft, quiet_hours_end: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    {childSaveError && <p className="text-sm text-destructive">{childSaveError}</p>}
+                    {childSaveMessage && <p className="text-sm text-green-700 dark:text-green-400">{childSaveMessage}</p>}
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={saveChildSettings}>Save</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditingChildId(null)}>Cancel</Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -182,7 +358,7 @@ export default function DashboardPage() {
         <div className="mb-4 flex gap-2 border-b border-border">
           {[
             { id: "logs" as const, label: "Conversations", icon: MessageSquare },
-            { id: "blocked" as const, label: "Blocked", icon: ShieldAlert },
+            { id: "blocked" as const, label: blockedToday > 0 ? `Blocked (${blockedToday} today)` : "Blocked", icon: ShieldAlert },
             { id: "devices" as const, label: "Devices", icon: Smartphone },
           ].map(({ id, label, icon: Icon }) => (
             <button
@@ -238,6 +414,12 @@ export default function DashboardPage() {
                     <p className="mt-2 text-sm text-muted-foreground italic">
                       &ldquo;{selectedSession.preview}&rdquo;
                     </p>
+                    {selectedSession.summary && (
+                      <p className="mt-3 text-sm border-t border-border pt-3">
+                        <span className="font-medium">Summary: </span>
+                        {selectedSession.summary}
+                      </p>
+                    )}
                   </div>
 
                   {sessionLoading ? (
@@ -295,7 +477,9 @@ export default function DashboardPage() {
                             {new Date(session.last_at).toLocaleString()}
                           </span>
                         </div>
-                        <p className="mt-1 truncate text-sm text-muted-foreground">{session.preview}</p>
+                        <p className="mt-1 truncate text-sm text-muted-foreground">
+                          {session.summary || session.preview}
+                        </p>
                         <p className="mt-1 text-xs text-muted-foreground">
                           {session.message_count} message{session.message_count !== 1 ? "s" : ""}
                           {session.legacy && " · imported session"}

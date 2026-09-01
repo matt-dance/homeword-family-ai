@@ -6,33 +6,25 @@ from typing import AsyncIterator
 import litellm
 
 from homeward_gateway.config import settings
+from homeward_gateway.models.prompts import build_system_prompt
 from homeward_gateway.models.response_limits import chars_to_max_tokens, trim_response
+from homeward_gateway.pipeline.policy import PolicyPreset
 
 logger = logging.getLogger(__name__)
 litellm.set_verbose = False
-
-
-def _build_system_prompt(child_name: str, age: int, preset_name: str) -> str:
-    return (
-        f"You are a friendly, helpful assistant for {child_name}, who is {age} years old. "
-        f"Safety level: {preset_name}. "
-        "Keep responses age-appropriate, positive, and educational. "
-        "Never discuss violence, explicit content, drugs, or dangerous activities. "
-        "If asked something inappropriate, gently redirect to a safer topic. "
-        "Be encouraging and use simple language when appropriate."
-    )
 
 
 async def generate_response(
     messages: list[dict],
     child_name: str,
     age: int,
-    preset_name: str,
+    preset: PolicyPreset,
     max_length: int = 800,
     model: str | None = None,
+    homework_mode: bool = False,
 ) -> str:
     """Generate a non-streaming LLM response via Ollama (default) or cloud if enabled."""
-    system = _build_system_prompt(child_name, age, preset_name)
+    system = build_system_prompt(child_name, age, preset, homework_mode)
     full_messages = [{"role": "system", "content": system}] + messages
 
     if settings.cloud_enabled and settings.openai_api_key:
@@ -63,12 +55,13 @@ async def stream_response(
     messages: list[dict],
     child_name: str,
     age: int,
-    preset_name: str,
+    preset: PolicyPreset,
     max_length: int = 800,
     model: str | None = None,
+    homework_mode: bool = False,
 ) -> AsyncIterator[str]:
     """Stream LLM response tokens."""
-    system = _build_system_prompt(child_name, age, preset_name)
+    system = build_system_prompt(child_name, age, preset, homework_mode)
     full_messages = [{"role": "system", "content": system}] + messages
 
     if settings.cloud_enabled and settings.openai_api_key:

@@ -24,6 +24,8 @@ async def fresh_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(db_module._migrate_parent_columns)
+        await conn.run_sync(db_module._migrate_child_columns)
+        await conn.run_sync(db_module._migrate_chat_session_columns)
         await conn.run_sync(db_module._migrate_session_columns)
 
     yield

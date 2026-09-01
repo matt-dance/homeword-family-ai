@@ -16,6 +16,8 @@ interface ChildForm {
   age: number;
   preset_id: string;
   strictness: number;
+  pin: string;
+  homework_mode: boolean;
 }
 
 type Step = "login" | "password" | "recovery" | "children" | "model" | "review" | "forgot";
@@ -35,7 +37,7 @@ export default function SetupPage() {
   const [statusLoaded, setStatusLoaded] = useState(false);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [children, setChildren] = useState<ChildForm[]>([
-    { name: "", age: 8, preset_id: "young_explorer", strictness: 4 },
+    { name: "", age: 8, preset_id: "young_explorer", strictness: 4, pin: "", homework_mode: false },
   ]);
   const [ollamaReady, setOllamaReady] = useState(false);
 
@@ -73,6 +75,8 @@ export default function SetupPage() {
           age: c.age ?? 8,
           preset_id: c.preset_id ?? "curious_explorer",
           strictness: c.strictness ?? 3,
+          pin: "",
+          homework_mode: c.homework_mode ?? false,
         }))
       );
       setStep("model");
@@ -192,14 +196,14 @@ export default function SetupPage() {
   };
 
   const addChild = () => {
-    setChildren([...children, { name: "", age: 10, preset_id: "curious_explorer", strictness: 3 }]);
+    setChildren([...children, { name: "", age: 10, preset_id: "curious_explorer", strictness: 3, pin: "", homework_mode: false }]);
   };
 
   const removeChild = (i: number) => {
     setChildren(children.filter((_, idx) => idx !== i));
   };
 
-  const updateChild = (i: number, field: keyof ChildForm, value: string | number) => {
+  const updateChild = (i: number, field: keyof ChildForm, value: string | number | boolean) => {
     const updated = [...children];
     updated[i] = { ...updated[i], [field]: value };
     if (field === "age") {
@@ -225,6 +229,8 @@ export default function SetupPage() {
           age: child.age,
           preset_id: child.preset_id,
           strictness: child.strictness,
+          pin: child.pin.trim() || undefined,
+          homework_mode: child.homework_mode,
         });
       }
       setStep("model");
@@ -504,6 +510,29 @@ export default function SetupPage() {
                     <p className="text-xs text-muted-foreground">
                       Preset: {presets.find((p) => p.id === child.preset_id)?.name || child.preset_id}
                     </p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Profile PIN (optional)</Label>
+                      <Input
+                        type="password"
+                        placeholder="4–6 digits"
+                        value={child.pin}
+                        onChange={(e) => updateChild(i, "pin", e.target.value)}
+                        maxLength={6}
+                      />
+                    </div>
+                    <div className="flex items-end pb-2">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={child.homework_mode}
+                          onChange={(e) => updateChild(i, "homework_mode", e.target.checked)}
+                          className="accent-primary"
+                        />
+                        Homework mode
+                      </label>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

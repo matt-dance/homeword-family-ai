@@ -40,6 +40,12 @@ class ChildProfile(Base):
     preset_id: Mapped[str] = mapped_column(String(50), nullable=False)
     strictness: Mapped[int] = mapped_column(Integer, default=3)
     pin: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    homework_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_resume: Mapped[bool] = mapped_column(Boolean, default=True)
+    quiet_hours_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    quiet_hours_start: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    quiet_hours_end: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    quiet_hours_days: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -56,6 +62,7 @@ class ChatSession(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     child_id: Mapped[int] = mapped_column(ForeignKey("child_profiles.id"), nullable=False)
     preview: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -104,6 +111,8 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_parent_columns)
+        await conn.run_sync(_migrate_child_columns)
+        await conn.run_sync(_migrate_chat_session_columns)
         await conn.run_sync(_migrate_session_columns)
 
 
@@ -121,6 +130,37 @@ def _migrate_parent_columns(connection) -> None:
         connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN classifier_model VARCHAR(100)"))
     if "recovery_code_hash" not in columns:
         connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN recovery_code_hash VARCHAR(255)"))
+
+
+def _migrate_child_columns(connection) -> None:
+    import sqlalchemy as sa
+
+    inspector = sa.inspect(connection)
+    if "child_profiles" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("child_profiles")}
+    additions = [
+        ("homework_mode", "BOOLEAN DEFAULT 0"),
+        ("allow_resume", "BOOLEAN DEFAULT 1"),
+        ("quiet_hours_enabled", "BOOLEAN DEFAULT 0"),
+        ("quiet_hours_start", "VARCHAR(5)"),
+        ("quiet_hours_end", "VARCHAR(5)"),
+        ("quiet_hours_days", "VARCHAR(20)"),
+    ]
+    for name, col_type in additions:
+        if name not in columns:
+            connection.execute(sa.text(f"ALTER TABLE child_profiles ADD COLUMN {name} {col_type}"))
+
+
+def _migrate_chat_session_columns(connection) -> None:
+    import sqlalchemy as sa
+
+    inspector = sa.inspect(connection)
+    if "chat_sessions" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("chat_sessions")}
+    if "summary" not in columns:
+        connection.execute(sa.text("ALTER TABLE chat_sessions ADD COLUMN summary TEXT"))
 
 
 def _migrate_session_columns(connection) -> None:

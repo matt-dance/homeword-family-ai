@@ -24,6 +24,9 @@ from homeward_gateway.auth.recovery import (
     hash_recovery_code,
     verify_recovery_code,
 )
+from homeward_gateway.chat.quiet_hours import is_chat_available
+from homeward_gateway.chat.starters import get_conversation_starters
+from homeward_gateway.chat.summary import summarize_session
 from homeward_gateway.config import settings
 from homeward_gateway.db.database import (
     BlockedAttempt,
@@ -74,6 +77,22 @@ class ChildCreate(BaseModel):
     preset_id: str | None = None
     strictness: int = Field(default=3, ge=1, le=5)
     pin: str | None = None
+    homework_mode: bool = False
+
+
+class ChildUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    age: int | None = Field(default=None, ge=3, le=18)
+    preset_id: str | None = None
+    strictness: int | None = Field(default=None, ge=1, le=5)
+    pin: str | None = None
+    clear_pin: bool = False
+    homework_mode: bool | None = None
+    allow_resume: bool | None = None
+    quiet_hours_enabled: bool | None = None
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+    quiet_hours_days: str | None = None
 
 
 class ChatRequest(BaseModel):
@@ -85,6 +104,7 @@ class ChatRequest(BaseModel):
 
 class SessionCreateRequest(BaseModel):
     child_id: int
+    end_session_id: int | None = None
 
 
 class CloudSettingsRequest(BaseModel):
@@ -282,6 +302,92 @@ async def auth_me(parent: Annotated[ParentAccount, Depends(require_parent)]):
     }
 
 
+# --- Children helpers ---
+
+
+def _serialize_child(c: ChildProfile) -> dict:
+    available, unavailable_message = is_chat_available(
+        enabled=c.quiet_hours_enabled,
+        start=c.quiet_hours_start,
+        end=c.quiet_hours_end,
+        days=c.quiet_hours_days,
+    )
+    return {
+        "id": c.id,
+        "name": c.name,
+        "age": c.age,
+        "preset_id": c.preset_id,
+        "strictness": c.strictness,
+        "has_pin": c.pin is not None,
+        "homework_mode": c.homework_mode,
+        "allow_resume": c.allow_resume,
+        "quiet_hours_enabled": c.quiet_hours_enabled,
+        "quiet_hours_start": c.quiet_hours_start,
+        "quiet_hours_end": c.quiet_hours_end,
+        "quiet_hours_days": c.quiet_hours_days,
+        "chat_available": available,
+        "chat_unavailable_message": unavailable_message,
+    }
+
+
+def _serialize_child_public(c: ChildProfile) -> dict:
+    available, unavailable_message = is_chat_available(
+        enabled=c.quiet_hours_enabled,
+        start=c.quiet_hours_start,
+        end=c.quiet_hours_end,
+        days=c.quiet_hours_days,
+    )
+    return {
+        "id": c.id,
+        "name": c.name,
+        "has_pin": c.pin is not None,
+        "allow_resume": c.allow_resume,
+        "chat_available": available,
+        "chat_unavailable_message": unavailable_message,
+        "homework_mode": c.homework_mode,
+    }
+
+
+async def _summarize_chat_session(
+    session: AsyncSession,
+    chat_session_id: int,
+    child: ChildProfile,
+    chat_model: str | None,
+) -> None:
+    chat_session = await session.get(ChatSession, chat_session_id)
+    if not chat_session or chat_session.summary:
+        return
+
+    logs_result = await session.execute(
+        select(ConversationLog)
+        .where(ConversationLog.session_id == chat_session_id)
+        .order_by(ConversationLog.created_at.asc())
+    )
+    logs = list(logs_result.scalars().all())
+    if not logs:
+        return
+
+    exchanges: list[tuple[str, str]] = []
+    pending_user: str | None = None
+    blocked_count = 0
+    for log in logs:
+        if log.blocked:
+            blocked_count += 1
+        if log.direction == "input" and not log.blocked:
+            pending_user = log.content
+        elif log.direction == "output" and pending_user:
+            exchanges.append((pending_user, log.content))
+            pending_user = None
+
+    chat_session.summary = await summarize_session(
+        child.name,
+        exchanges,
+        blocked_count,
+        chat_model=chat_model,
+    )
+    await session.commit()
+
+
 # --- Children ---
 
 
@@ -294,17 +400,7 @@ async def list_children(
         select(ChildProfile).where(ChildProfile.parent_id == parent.id)
     )
     children = result.scalars().all()
-    return [
-        {
-            "id": c.id,
-            "name": c.name,
-            "age": c.age,
-            "preset_id": c.preset_id,
-            "strictness": c.strictness,
-            "has_pin": c.pin is not None,
-        }
-        for c in children
-    ]
+    return [_serialize_child(c) for c in children]
 
 
 @router.post("/children")
@@ -329,17 +425,65 @@ async def create_child(
         preset_id=preset_id,
         strictness=body.strictness,
         pin=body.pin,
+        homework_mode=body.homework_mode,
     )
     session.add(child)
     await session.commit()
     await session.refresh(child)
-    return {
-        "id": child.id,
-        "name": child.name,
-        "age": child.age,
-        "preset_id": child.preset_id,
-        "strictness": child.strictness,
-    }
+    return _serialize_child(child)
+
+
+@router.patch("/children/{child_id}")
+async def update_child(
+    child_id: int,
+    body: ChildUpdate,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    result = await session.execute(
+        select(ChildProfile).where(
+            ChildProfile.id == child_id,
+            ChildProfile.parent_id == parent.id,
+        )
+    )
+    child = result.scalar_one_or_none()
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    if body.name is not None:
+        child.name = body.name
+    if body.age is not None:
+        child.age = body.age
+        if body.preset_id is None:
+            preset = preset_for_age(body.age, PRESETS)
+            if preset:
+                child.preset_id = preset.id
+    if body.preset_id is not None:
+        if body.preset_id not in PRESETS:
+            raise HTTPException(status_code=400, detail="Invalid preset")
+        child.preset_id = body.preset_id
+    if body.strictness is not None:
+        child.strictness = body.strictness
+    if body.clear_pin:
+        child.pin = None
+    elif body.pin is not None:
+        child.pin = body.pin or None
+    if body.homework_mode is not None:
+        child.homework_mode = body.homework_mode
+    if body.allow_resume is not None:
+        child.allow_resume = body.allow_resume
+    if body.quiet_hours_enabled is not None:
+        child.quiet_hours_enabled = body.quiet_hours_enabled
+    if body.quiet_hours_start is not None:
+        child.quiet_hours_start = body.quiet_hours_start or None
+    if body.quiet_hours_end is not None:
+        child.quiet_hours_end = body.quiet_hours_end or None
+    if body.quiet_hours_days is not None:
+        child.quiet_hours_days = body.quiet_hours_days or None
+
+    await session.commit()
+    await session.refresh(child)
+    return _serialize_child(child)
 
 
 @router.get("/children/public")
@@ -347,25 +491,82 @@ async def list_children_public(session: Annotated[AsyncSession, Depends(get_sess
     """Public endpoint for kid profile picker — no auth required."""
     result = await session.execute(select(ChildProfile))
     children = result.scalars().all()
-    return [
-        {"id": c.id, "name": c.name, "has_pin": c.pin is not None}
-        for c in children
-    ]
+    return [_serialize_child_public(c) for c in children]
+
+
+@router.get("/children/{child_id}/starters")
+async def child_conversation_starters(
+    child_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    child, preset = await _get_child_context(child_id, session)
+    return get_conversation_starters(preset)
+
+
+@router.get("/children/{child_id}/sessions/resume")
+async def resume_child_session(
+    child_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    result = await session.execute(select(ChildProfile).where(ChildProfile.id == child_id))
+    child = result.scalar_one_or_none()
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+    if not child.allow_resume:
+        raise HTTPException(status_code=404, detail="No resumable session")
+
+    session_result = await session.execute(
+        select(ChatSession)
+        .where(ChatSession.child_id == child_id)
+        .order_by(ChatSession.started_at.desc())
+        .limit(1)
+    )
+    chat_session = session_result.scalar_one_or_none()
+    if not chat_session:
+        raise HTTPException(status_code=404, detail="No resumable session")
+
+    logs_result = await session.execute(
+        select(ConversationLog)
+        .where(ConversationLog.session_id == chat_session.id)
+        .order_by(ConversationLog.created_at.asc())
+    )
+    logs = list(logs_result.scalars().all())
+    if not logs:
+        raise HTTPException(status_code=404, detail="No resumable session")
+
+    messages: list[dict] = []
+    for log in logs:
+        if log.blocked and log.direction == "input":
+            continue
+        role = "user" if log.direction == "input" else "assistant"
+        messages.append({"role": role, "content": log.content, "blocked": log.blocked})
+
+    return {
+        "session_id": chat_session.id,
+        "messages": messages,
+        "preview": chat_session.preview,
+    }
 
 
 @router.post("/children/{child_id}/verify-pin")
 async def verify_pin(
     child_id: int,
     body: dict,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
+    client_key = request.client.host if request.client else "unknown"
+    check_rate_limit(f"pin:{client_key}:{child_id}")
+
     pin = body.get("pin", "")
     result = await session.execute(select(ChildProfile).where(ChildProfile.id == child_id))
     child = result.scalar_one_or_none()
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
     if child.pin and child.pin != pin:
+        record_attempt(f"pin:{client_key}:{child_id}")
         raise HTTPException(status_code=403, detail="Invalid PIN")
+    reset_attempts(f"pin:{client_key}:{child_id}")
     return {"ok": True, "child_id": child.id, "name": child.name}
 
 
@@ -378,6 +579,18 @@ async def create_chat_session(
     child = result.scalar_one_or_none()
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
+
+    chat_model, _ = await get_effective_models(session)
+    if body.end_session_id:
+        end_result = await session.execute(
+            select(ChatSession).where(
+                ChatSession.id == body.end_session_id,
+                ChatSession.child_id == child.id,
+            )
+        )
+        if end_result.scalar_one_or_none():
+            await _summarize_chat_session(session, body.end_session_id, child, chat_model)
+
     chat_session = ChatSession(child_id=child.id)
     session.add(chat_session)
     await session.commit()
@@ -479,12 +692,24 @@ def user_facing_message(stage: str | None) -> str:
     return BLOCKED_MESSAGE
 
 
+def _ensure_chat_available(child: ChildProfile) -> None:
+    available, message = is_chat_available(
+        enabled=child.quiet_hours_enabled,
+        start=child.quiet_hours_start,
+        end=child.quiet_hours_end,
+        days=child.quiet_hours_days,
+    )
+    if not available:
+        raise HTTPException(status_code=403, detail=message or "Chat is not available right now")
+
+
 @router.post("/chat")
 async def chat(
     body: ChatRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     child, preset = await _get_child_context(body.child_id, session)
+    _ensure_chat_available(child)
     chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
     chat_model, classifier_model = await get_effective_models(session)
     result = await process_chat(
@@ -496,6 +721,7 @@ async def chat(
         child.age,
         chat_model=chat_model,
         classifier_model=classifier_model,
+        homework_mode=child.homework_mode,
     )
 
     if not result.allowed:
@@ -528,6 +754,7 @@ async def chat_stream(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     child, preset = await _get_child_context(body.child_id, session)
+    _ensure_chat_available(child)
     chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
     chat_model, classifier_model = await get_effective_models(session)
 
@@ -547,6 +774,7 @@ async def chat_stream(
                 child.age,
                 chat_model=chat_model,
                 classifier_model=classifier_model,
+                homework_mode=child.homework_mode,
             ):
                 if isinstance(item, PipelineResult):
                     if not item.allowed:
@@ -646,6 +874,7 @@ async def dashboard_sessions(
                 "message_count": stats["message_count"],
                 "started_at": chat_session.started_at.isoformat(),
                 "last_at": stats["last_at"].isoformat() if stats["last_at"] else chat_session.started_at.isoformat(),
+                "summary": chat_session.summary,
             }
         )
 
@@ -740,6 +969,33 @@ async def dashboard_logs(
         }
         for log in logs
     ]
+
+
+@router.get("/dashboard/blocked/stats")
+async def dashboard_blocked_stats(
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    children_result = await session.execute(
+        select(ChildProfile).where(ChildProfile.parent_id == parent.id)
+    )
+    child_ids = [c.id for c in children_result.scalars().all()]
+    if not child_ids:
+        return {"today_count": 0, "total_count": 0}
+
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    total_result = await session.execute(
+        select(func.count(BlockedAttempt.id)).where(BlockedAttempt.child_id.in_(child_ids))
+    )
+    today_result = await session.execute(
+        select(func.count(BlockedAttempt.id))
+        .where(BlockedAttempt.child_id.in_(child_ids))
+        .where(BlockedAttempt.created_at >= today_start)
+    )
+    return {
+        "today_count": today_result.scalar() or 0,
+        "total_count": total_result.scalar() or 0,
+    }
 
 
 @router.get("/dashboard/blocked")
