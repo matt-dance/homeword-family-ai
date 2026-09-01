@@ -141,6 +141,23 @@ pytest -v
 
 External services (Ollama, LiteLLM) are **mocked or bypassed** in tests so CI stays fast and deterministic.
 
+### Voice (mic) — automated, no microphone needed
+
+Kid chat records audio in the browser and sends it to the gateway for **local Whisper** transcription. You do not need to tap the mic to verify the pipeline after every change:
+
+```bash
+./scripts/test-voice.sh
+```
+
+This runs a bundled speech sample through Whisper (FLAC + WebM) and hits `GET /api/v1/chat/transcribe/self-test`. For the full Whisper integration (slower, downloads model on first run):
+
+```bash
+cd gateway
+pytest tests/test_transcribe.py -v -m slow
+```
+
+Quick unit/API tests skip Whisper with `-m "not slow"` (the default in `test-voice.sh`).
+
 ## Environment Variables
 
 | Variable | Default | Description |

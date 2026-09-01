@@ -1,5 +1,6 @@
 """API routes."""
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -27,7 +28,12 @@ from homeward_gateway.auth.recovery import (
 from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.chat.starters import get_conversation_starters
 from homeward_gateway.chat.summary import summarize_session
-from homeward_gateway.voice.transcribe import get_whisper_status, transcribe_bytes, whisper_available
+from homeward_gateway.voice.transcribe import (
+    get_whisper_status,
+    run_voice_self_test,
+    transcribe_bytes,
+    whisper_available,
+)
 from homeward_gateway.config import settings
 from homeward_gateway.db.database import (
     BlockedAttempt,
@@ -576,6 +582,15 @@ async def transcribe_status():
     return get_whisper_status()
 
 
+@router.get("/chat/transcribe/self-test")
+async def transcribe_self_test():
+    """Automated end-to-end voice pipeline check (no mic required)."""
+    result = await asyncio.to_thread(run_voice_self_test)
+    if not result.get("ok"):
+        raise HTTPException(status_code=503, detail=result)
+    return result
+
+
 @router.post("/chat/transcribe")
 async def transcribe_audio(
     request: Request,
@@ -596,7 +611,7 @@ async def transcribe_audio(
         suffix = "." + audio.filename.rsplit(".", 1)[-1].lower()
 
     try:
-        text = transcribe_bytes(content, suffix=suffix)
+        text = await asyncio.to_thread(transcribe_bytes, content, suffix)
     except ValueError as exc:
         record_attempt(f"transcribe:{client_key}")
         raise HTTPException(status_code=400, detail=str(exc)) from exc

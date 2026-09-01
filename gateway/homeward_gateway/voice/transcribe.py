@@ -11,6 +11,11 @@ from homeward_gateway.config import settings
 
 logger = logging.getLogger(__name__)
 
+FIXTURES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
+SELF_TEST_FIXTURE = FIXTURES_DIR / "jfk-sample.flac"
+SELF_TEST_WEBM_FIXTURE = FIXTURES_DIR / "jfk-sample.webm"
+SELF_TEST_SNIPPET = "ask not what your country can do for you"
+
 _model = None
 _model_lock = threading.Lock()
 _load_error: str | None = None
@@ -106,3 +111,67 @@ def transcribe_bytes(data: bytes, suffix: str = ".webm") -> str:
         tmp.write(data)
         tmp.flush()
         return transcribe_file(Path(tmp.name))
+
+
+def run_voice_self_test() -> dict:
+    """End-to-end check: bundled speech sample → Whisper → expected phrase."""
+    if not whisper_available():
+        return {
+            "ok": False,
+            "stage": "import",
+            "message": "faster-whisper is not installed",
+        }
+
+    if not SELF_TEST_FIXTURE.is_file():
+        return {
+            "ok": False,
+            "stage": "fixture",
+            "message": f"Missing test audio at {SELF_TEST_FIXTURE}",
+        }
+
+    try:
+        ensure_model()
+    except RuntimeError as exc:
+        return {"ok": False, "stage": "model", "message": str(exc)}
+
+    try:
+        text = transcribe_file(SELF_TEST_FIXTURE)
+    except Exception as exc:
+        logger.exception("Voice self-test transcription failed")
+        return {"ok": False, "stage": "transcribe", "message": str(exc)}
+
+    if SELF_TEST_SNIPPET not in text.lower():
+        return {
+            "ok": False,
+            "stage": "transcribe",
+            "message": f"Unexpected transcript (got: {text[:120]!r})",
+            "text": text,
+        }
+
+    webm_ok = True
+    webm_message: str | None = None
+    if SELF_TEST_WEBM_FIXTURE.is_file():
+        try:
+            webm_text = transcribe_bytes(SELF_TEST_WEBM_FIXTURE.read_bytes(), suffix=".webm")
+            if SELF_TEST_SNIPPET not in webm_text.lower():
+                webm_ok = False
+                webm_message = f"WebM decode failed (got: {webm_text[:120]!r})"
+        except Exception as exc:
+            webm_ok = False
+            webm_message = str(exc)
+
+    if not webm_ok:
+        return {
+            "ok": False,
+            "stage": "webm",
+            "message": webm_message or "WebM transcription failed",
+            "text": text,
+        }
+
+    return {
+        "ok": True,
+        "model": settings.whisper_model,
+        "text": text,
+        "webm_ok": True,
+        "message": "Voice pipeline is working.",
+    }

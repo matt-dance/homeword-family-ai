@@ -121,10 +121,10 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
 
       recorder.onstop = async () => {
         setListening(false);
+        const recordedChunks = [...chunksRef.current];
         cleanupStream();
 
-        const blob = new Blob(chunksRef.current, { type: mimeType });
-        chunksRef.current = [];
+        const blob = new Blob(recordedChunks, { type: mimeType });
         if (!blob.size) {
           setSpeechError("I didn't hear anything — tap the mic and speak clearly.");
           return;
@@ -154,7 +154,7 @@ export function useVoiceChat({ onTranscript, readAloudEnabled = false }: UseVoic
         setSpeechError("Could not record audio. Try again.");
       };
 
-      recorder.start();
+      recorder.start(250);
       setListening(true);
 
       stopTimerRef.current = window.setTimeout(() => {
