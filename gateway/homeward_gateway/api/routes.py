@@ -323,6 +323,16 @@ BLOCKED_MESSAGE = (
     "I can't help with that question right now. "
     "Let's talk about something fun instead — like animals, space, or a hobby you enjoy!"
 )
+LLM_UNAVAILABLE_MESSAGE = (
+    "Homeward's AI isn't ready yet. Ask a parent to start Ollama "
+    "(run: ollama serve, then ollama pull llama3.2:3b)."
+)
+
+
+def user_facing_message(stage: str | None) -> str:
+    if stage and stage.startswith("llm"):
+        return LLM_UNAVAILABLE_MESSAGE
+    return BLOCKED_MESSAGE
 
 
 @router.post("/chat")
@@ -347,7 +357,7 @@ async def chat(
         )
         return {
             "blocked": True,
-            "message": BLOCKED_MESSAGE,
+            "message": user_facing_message(result.stage),
             "reason": result.block_reason,
             "stage": result.stage,
         }
@@ -392,7 +402,7 @@ async def chat_stream(
                         )
                         payload = json.dumps({
                             "type": "blocked",
-                            "message": BLOCKED_MESSAGE,
+                            "message": user_facing_message(result.stage),
                             "reason": item.block_reason,
                         })
                         yield f"data: {payload}\n\n"
