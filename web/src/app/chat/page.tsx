@@ -9,7 +9,7 @@ import { getAgeTheme, AGE_THEME_CONFIGS } from "@/lib/age-theme";
 import { HomewardLogo } from "@/components/homeward-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
-import { Sparkles, Home, ArrowRight, Lock, BookOpen } from "lucide-react";
+import { Sparkles, Home, ArrowRight, Lock, BookOpen, Globe } from "lucide-react";
 
 function ChatPickerContent() {
   const router = useRouter();
@@ -117,6 +117,11 @@ function ChatPickerContent() {
                         {child.homework_mode && (
                           <span className="font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
                             · <BookOpen className="h-3 w-3" /> Homework
+                          </span>
+                        )}
+                        {child.live_lookups && (
+                          <span className="font-semibold text-sky-600 dark:text-sky-400 flex items-center gap-1">
+                            · <Globe className="h-3 w-3" /> Lookups
                           </span>
                         )}
                       </div>

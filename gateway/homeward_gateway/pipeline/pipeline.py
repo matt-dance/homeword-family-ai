@@ -7,6 +7,7 @@ from homeward_gateway.pipeline.classifier import classify
 from homeward_gateway.pipeline.normalize import normalize, normalize_output
 from homeward_gateway.pipeline.policy import PolicyPreset, check_policy_match
 from homeward_gateway.pipeline.rules import check_rules
+from homeward_gateway.chat.lookups import detect_lookup_intent, fetch_lookup, lookup_card, lookup_prompt_notes
 from homeward_gateway.chat.tools import detect_intents, extract_model_tools, run_local_tools, tool_prompt_hint
 from homeward_gateway.models.router import generate_response, stream_response
 
@@ -127,6 +128,46 @@ async def filter_output(
     return PipelineResult(allowed=True, content=normalized)
 
 
+async def resolve_live_lookup(
+    user_message: str,
+    *,
+    live_lookups: bool,
+    preset: PolicyPreset,
+    strictness: int,
+    classifier_model: str | None = None,
+) -> tuple[str, list[dict]]:
+    """Fetch a named source only when the parent enabled it for this child.
+
+    Notes are safety-filtered before they reach the model. Unsafe notes are
+    dropped (fail closed) and the model is told not to invent current facts.
+    """
+    if not live_lookups:
+        return "", []
+
+    intent = detect_lookup_intent(user_message)
+    if not intent:
+        return "", []
+
+    result = await fetch_lookup(intent)
+    if not result:
+        return "", []
+
+    safety = await filter_output(result.notes, preset, strictness, classifier_model)
+    if not safety.allowed:
+        return (
+            "A live lookup was skipped because the notes were not kid-safe. "
+            "Do not invent weather, scores, or headlines. Say you could not check.",
+            [],
+        )
+
+    return lookup_prompt_notes(result), [lookup_card(result).to_dict()]
+
+
+def _combined_tool_hint(user_message: str, lookup_notes: str) -> str:
+    parts = [tool_prompt_hint(detect_intents(user_message)), lookup_notes]
+    return "\n\n".join(part for part in parts if part)
+
+
 async def process_chat(
     user_message: str,
     messages: list[dict],
@@ -137,13 +178,21 @@ async def process_chat(
     chat_model: str | None = None,
     classifier_model: str | None = None,
     homework_mode: bool = False,
+    live_lookups: bool = False,
 ) -> PipelineResult:
     """Full pipeline: filter input → LLM → filter output."""
     input_result = await filter_input(user_message, preset, strictness, classifier_model)
     if not input_result.allowed:
         return input_result
 
-    hint = tool_prompt_hint(detect_intents(user_message))
+    lookup_notes, _lookup_tools = await resolve_live_lookup(
+        user_message,
+        live_lookups=live_lookups,
+        preset=preset,
+        strictness=strictness,
+        classifier_model=classifier_model,
+    )
+    hint = _combined_tool_hint(user_message, lookup_notes)
     try:
         response = await generate_response(
             messages + [{"role": "user", "content": input_result.content}],
@@ -175,6 +224,7 @@ async def process_chat_stream(
     chat_model: str | None = None,
     classifier_model: str | None = None,
     homework_mode: bool = False,
+    live_lookups: bool = False,
 ) -> AsyncIterator[str | PipelineResult | ToolEvent]:
     """Stream pipeline: filter input first, then stream LLM, filter output at end."""
     input_result = await filter_input(user_message, preset, strictness, classifier_model)
@@ -186,7 +236,17 @@ async def process_chat_stream(
     if local_tools:
         yield ToolEvent(local_tools)
 
-    hint = tool_prompt_hint(detect_intents(user_message))
+    lookup_notes, lookup_tools = await resolve_live_lookup(
+        user_message,
+        live_lookups=live_lookups,
+        preset=preset,
+        strictness=strictness,
+        classifier_model=classifier_model,
+    )
+    if lookup_tools:
+        yield ToolEvent(lookup_tools)
+
+    hint = _combined_tool_hint(user_message, lookup_notes)
     collected = []
     try:
         async for token in stream_response(

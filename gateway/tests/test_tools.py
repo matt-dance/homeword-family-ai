@@ -51,3 +51,14 @@ def test_extract_model_tools():
     assert "homeward" not in cleaned
     assert cards[0].type == "facts"
     assert cards[0].data["topic"] == "dogs"
+
+
+def test_extract_model_tools_lookup():
+    text = (
+        '```homeward\n{"type":"lookup","kind":"weather","source":"open-meteo",'
+        '"source_label":"Open-Meteo weather","query":"Denver","summary":"70F"}\n```'
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert cards[0].type == "lookup"
+    assert cards[0].data["source"] == "open-meteo"
+    assert "homeward" not in cleaned

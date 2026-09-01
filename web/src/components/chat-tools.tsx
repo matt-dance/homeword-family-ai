@@ -6,6 +6,7 @@ import type {
   ChatTool,
   DefineTool,
   FactsTool,
+  LookupTool,
   MathTool,
   QuizTool,
   TimerTool,
@@ -15,13 +16,17 @@ import {
   Calculator,
   Check,
   CheckCircle2,
+  CloudSun,
+  Globe,
   HelpCircle,
   Lightbulb,
+  Newspaper,
   Pause,
   Play,
   RotateCcw,
   Sparkles,
   TimerReset,
+  Trophy,
   XCircle,
 } from "lucide-react";
 
@@ -36,6 +41,7 @@ export function ChatToolCards({ tools }: { tools: ChatTool[] }) {
           {tool.type === "define" && <DefineCard tool={tool} />}
           {tool.type === "quiz" && <QuizCard tool={tool} />}
           {tool.type === "facts" && <FactsCard tool={tool} />}
+          {tool.type === "lookup" && <LookupCard tool={tool} />}
         </div>
       ))}
     </div>
@@ -258,6 +264,44 @@ function FactsCard({ tool }: { tool: FactsTool }) {
           </li>
         ))}
       </ol>
+    </CardShell>
+  );
+}
+
+function lookupTitle(kind: string): string {
+  if (kind === "weather") return "Looked up the weather";
+  if (kind === "sports") return "Looked up the score";
+  if (kind === "news") return "Looked up current events";
+  return "Looked this up";
+}
+
+function lookupIcon(kind: string) {
+  if (kind === "weather") return <CloudSun className="h-4 w-4" />;
+  if (kind === "sports") return <Trophy className="h-4 w-4" />;
+  if (kind === "news") return <Newspaper className="h-4 w-4" />;
+  return <Globe className="h-4 w-4" />;
+}
+
+function LookupCard({ tool }: { tool: LookupTool }) {
+  return (
+    <CardShell
+      icon={lookupIcon(tool.kind)}
+      title={lookupTitle(tool.kind)}
+      badge={tool.source_label || "Named source"}
+    >
+      <div className="space-y-2.5">
+        {tool.query && (
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Asked about {tool.query}
+          </p>
+        )}
+        <p className="text-sm sm:text-base text-foreground leading-relaxed">
+          {tool.summary}
+        </p>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Checked a named source — not a generic web search.
+        </p>
+      </div>
     </CardShell>
   );
 }

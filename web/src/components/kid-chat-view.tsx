@@ -27,6 +27,7 @@ import {
   Moon,
   ShieldCheck,
   BookOpen,
+  Globe,
   ArrowRight,
   ShieldAlert,
   UserCheck,
@@ -480,6 +481,12 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
                   <span className="font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
                     <BookOpen className="h-3 w-3" />
                     Homework mode ·
+                  </span>
+                )}
+                {selectedChild.live_lookups && (
+                  <span className="font-semibold text-sky-600 dark:text-sky-400 flex items-center gap-1">
+                    <Globe className="h-3 w-3" />
+                    Live lookups ·
                   </span>
                 )}
                 <span className="flex items-center gap-1">

@@ -21,6 +21,7 @@ export interface Child {
   strictness?: number;
   has_pin?: boolean;
   homework_mode?: boolean;
+  live_lookups?: boolean;
   allow_resume?: boolean;
   quiet_hours_enabled?: boolean;
   quiet_hours_start?: string | null;
@@ -196,6 +197,7 @@ export const api = {
     strictness: number;
     pin?: string;
     homework_mode?: boolean;
+    live_lookups?: boolean;
   }) =>
     request<Child>("/children", {
       method: "POST",
@@ -211,6 +213,7 @@ export const api = {
       pin: string;
       clear_pin: boolean;
       homework_mode: boolean;
+      live_lookups: boolean;
       allow_resume: boolean;
       quiet_hours_enabled: boolean;
       quiet_hours_start: string;

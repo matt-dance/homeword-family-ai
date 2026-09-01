@@ -66,6 +66,24 @@ class TestChatFeaturesAPI:
         assert data["has_pin"] is True
 
     @pytest.mark.asyncio
+    async def test_live_lookups_default_off_and_can_enable(self, authenticated_client: AsyncClient):
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+        assert child["live_lookups"] is False
+
+        resp = await authenticated_client.patch(
+            f"/api/v1/children/{child['id']}",
+            json={"live_lookups": True},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["live_lookups"] is True
+
+        listed = await authenticated_client.get("/api/v1/children")
+        assert listed.json()[0]["live_lookups"] is True
+
+        public = await authenticated_client.get("/api/v1/children/public")
+        assert public.json()[0]["live_lookups"] is True
+
+    @pytest.mark.asyncio
     async def test_blocked_stats(self, authenticated_client: AsyncClient):
         resp = await authenticated_client.get("/api/v1/dashboard/blocked/stats")
         assert resp.status_code == 200

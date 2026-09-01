@@ -8,6 +8,7 @@ import { getAgeTheme, AGE_THEME_CONFIGS } from "@/lib/age-theme";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { LiveLookupsToggle } from "@/components/live-lookups-toggle";
 import {
   ExternalLink,
   Users,
@@ -38,6 +39,7 @@ export default function ProfilesPage() {
     strictness: 3,
     pin: "",
     homework_mode: false,
+    live_lookups: false,
   });
   const [addError, setAddError] = useState("");
   const [addSaving, setAddSaving] = useState(false);
@@ -68,6 +70,7 @@ export default function ProfilesPage() {
         pin: childDraft.pin || undefined,
         clear_pin: childDraft.clear_pin,
         homework_mode: childDraft.homework_mode,
+        live_lookups: childDraft.live_lookups,
         allow_resume: childDraft.allow_resume,
         quiet_hours_enabled: childDraft.quiet_hours_enabled,
         quiet_hours_start: childDraft.quiet_hours_start || undefined,
@@ -82,7 +85,14 @@ export default function ProfilesPage() {
   };
 
   const resetNewChild = () => {
-    setNewChild({ name: "", age: 8, strictness: 3, pin: "", homework_mode: false });
+    setNewChild({
+      name: "",
+      age: 8,
+      strictness: 3,
+      pin: "",
+      homework_mode: false,
+      live_lookups: false,
+    });
     setAddError("");
     setAddingChild(false);
   };
@@ -106,6 +116,7 @@ export default function ProfilesPage() {
         strictness: newChild.strictness,
         pin: newChild.pin.trim() || undefined,
         homework_mode: newChild.homework_mode,
+        live_lookups: newChild.live_lookups,
       });
       setChildren((prev) => [...prev, created]);
       resetNewChild();
@@ -283,6 +294,10 @@ export default function ProfilesPage() {
                   </p>
                 </div>
               </label>
+              <LiveLookupsToggle
+                checked={newChild.live_lookups}
+                onChange={(live_lookups) => setNewChild({ ...newChild, live_lookups })}
+              />
               {addError && (
                 <p className="text-xs font-semibold text-destructive">{addError}</p>
               )}
@@ -349,6 +364,7 @@ export default function ProfilesPage() {
                         <p className="text-xs text-muted-foreground mt-0.5">
                           Age {child.age} · Safety strictness {child.strictness ?? 3}/5
                           {child.homework_mode && " · 📚 Homework Mode"}
+                          {child.live_lookups && " · Live lookups on"}
                           {child.quiet_hours_enabled && " · 🌙 Quiet Hours"}
                         </p>
                       </div>
@@ -545,6 +561,13 @@ export default function ProfilesPage() {
                           </div>
                         </label>
                       </div>
+
+                      <LiveLookupsToggle
+                        checked={childDraft.live_lookups || false}
+                        onChange={(live_lookups) =>
+                          setChildDraft({ ...childDraft, live_lookups })
+                        }
+                      />
 
                       {/* Quiet Hours */}
                       <div className="rounded-xl border border-border/80 p-3.5 space-y-3">

@@ -4,9 +4,17 @@ export type DefineTool = { type: "define"; word: string; meaning: string; exampl
 export type QuizQuestion = { q: string; choices: string[]; answer: number; explain?: string };
 export type QuizTool = { type: "quiz"; title: string; questions: QuizQuestion[] };
 export type FactsTool = { type: "facts"; topic: string; facts: string[] };
-export type ChatTool = MathTool | TimerTool | DefineTool | QuizTool | FactsTool;
+export type LookupTool = {
+  type: "lookup";
+  kind: "weather" | "sports" | "news" | string;
+  source: string;
+  source_label: string;
+  query: string;
+  summary: string;
+};
+export type ChatTool = MathTool | TimerTool | DefineTool | QuizTool | FactsTool | LookupTool;
 
-const TOOL_TYPES = new Set(["math", "timer", "define", "quiz", "facts"]);
+const TOOL_TYPES = new Set(["math", "timer", "define", "quiz", "facts", "lookup"]);
 const FENCE_RE = /```homeward\s*(\{[\s\S]*?\})\s*```/gi;
 const INCOMPLETE_FENCE_RE = /```homeward[\s\S]*$/i;
 

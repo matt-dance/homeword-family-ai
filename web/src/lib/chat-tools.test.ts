@@ -29,4 +29,18 @@ describe("extractChatTools", () => {
     const { tools } = extractChatTools('```homeward\n{"type":"calendar"}\n```');
     expect(tools).toEqual([]);
   });
+
+  it("accepts a named-source lookup card", () => {
+    const lookup = {
+      type: "lookup" as const,
+      kind: "weather",
+      source: "open-meteo",
+      source_label: "Open-Meteo weather",
+      query: "Denver",
+      summary: "Denver — 70°F, clear skies",
+    };
+    expect(asChatTool(lookup)).toEqual(lookup);
+    const { tools } = extractChatTools("", [lookup]);
+    expect(tools).toEqual([lookup]);
+  });
 });

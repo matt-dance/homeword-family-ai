@@ -26,6 +26,7 @@ import {
   CheckCircle2,
   Clock,
   BookOpen,
+  Globe,
   ArrowRight,
   ShieldCheck,
   Zap,
@@ -429,6 +430,11 @@ function DashboardContent() {
                         {child.homework_mode && (
                           <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5">
                             <BookOpen className="h-3 w-3" /> Homework mode
+                          </span>
+                        )}
+                        {child.live_lookups && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-600 dark:text-sky-400 mt-0.5">
+                            <Globe className="h-3 w-3" /> Live lookups
                           </span>
                         )}
                       </div>

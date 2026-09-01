@@ -193,7 +193,7 @@ def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
         except json.JSONDecodeError:
             continue
         kind = payload.get("type")
-        if kind in {"define", "quiz", "facts", "math", "timer"}:
+        if kind in {"define", "quiz", "facts", "math", "timer", "lookup"}:
             cards.append(ToolCard(kind, {k: v for k, v in payload.items() if k != "type"}))
     cleaned = _FENCE_RE.sub("", text)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()

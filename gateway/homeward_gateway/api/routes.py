@@ -94,6 +94,7 @@ class ChildCreate(BaseModel):
     strictness: int = Field(default=3, ge=1, le=5)
     pin: str | None = None
     homework_mode: bool = False
+    live_lookups: bool = False
 
 
 class ChildUpdate(BaseModel):
@@ -104,6 +105,7 @@ class ChildUpdate(BaseModel):
     pin: str | None = None
     clear_pin: bool = False
     homework_mode: bool | None = None
+    live_lookups: bool | None = None
     allow_resume: bool | None = None
     quiet_hours_enabled: bool | None = None
     quiet_hours_start: str | None = None
@@ -375,6 +377,7 @@ def _serialize_child(c: ChildProfile) -> dict:
         "strictness": c.strictness,
         "has_pin": c.pin is not None,
         "homework_mode": c.homework_mode,
+        "live_lookups": c.live_lookups,
         "allow_resume": c.allow_resume,
         "quiet_hours_enabled": c.quiet_hours_enabled,
         "quiet_hours_start": c.quiet_hours_start,
@@ -401,6 +404,7 @@ def _serialize_child_public(c: ChildProfile) -> dict:
         "chat_available": available,
         "chat_unavailable_message": unavailable_message,
         "homework_mode": c.homework_mode,
+        "live_lookups": c.live_lookups,
     }
 
 
@@ -482,6 +486,7 @@ async def create_child(
         strictness=body.strictness,
         pin=body.pin,
         homework_mode=body.homework_mode,
+        live_lookups=body.live_lookups,
     )
     session.add(child)
     await session.flush()
@@ -530,6 +535,8 @@ async def update_child(
         child.pin = body.pin or None
     if body.homework_mode is not None:
         child.homework_mode = body.homework_mode
+    if body.live_lookups is not None:
+        child.live_lookups = body.live_lookups
     if body.allow_resume is not None:
         child.allow_resume = body.allow_resume
     if body.quiet_hours_enabled is not None:
@@ -891,6 +898,7 @@ async def chat(
         chat_model=chat_model,
         classifier_model=classifier_model,
         homework_mode=child.homework_mode,
+        live_lookups=child.live_lookups,
     )
 
     if not result.allowed:
@@ -960,6 +968,7 @@ async def chat_stream(
                 chat_model=chat_model,
                 classifier_model=classifier_model,
                 homework_mode=child.homework_mode,
+                live_lookups=child.live_lookups,
             ):
                 if await request.is_disconnected():
                     await persist_turn()
