@@ -61,7 +61,7 @@ export default function DashboardPage() {
           api.blocked(),
           api.children(),
           api.devices(),
-          api.blockedStats(),
+          api.blockedStats().catch(() => ({ today_count: 0, total_count: 0 })),
         ]);
         setSessions(sessionsData);
         setBlocked(blockedData);
