@@ -1,32 +1,34 @@
 "use client";
 
-import { splitTextForHighlight, activeWordStart } from "@/lib/read-aloud";
+import { splitTextForHighlight } from "@/lib/read-aloud";
 
 interface ReadAloudTextProps {
   text: string;
-  charIndex: number | null;
+  wordIndex: number | null;
   isActive: boolean;
   className?: string;
 }
 
-export function ReadAloudText({ text, charIndex, isActive, className }: ReadAloudTextProps) {
+export function ReadAloudText({ text, wordIndex, isActive, className }: ReadAloudTextProps) {
   const parts = splitTextForHighlight(text);
-  const activeStart = isActive && charIndex !== null ? activeWordStart(parts, charIndex) : null;
 
   return (
     <span className={className}>
       {parts.map((part, i) => {
-        if (!part.highlightable) {
+        if (part.wordIndex === null) {
           return <span key={i}>{part.text}</span>;
         }
-        const highlighted = isActive && activeStart === part.start;
+        const highlighted = isActive && wordIndex !== null && part.wordIndex === wordIndex;
+        const spoken = isActive && wordIndex !== null && part.wordIndex < wordIndex;
         return (
           <span
             key={i}
             className={
               highlighted
-                ? "rounded bg-primary/20 text-primary underline decoration-primary/60 decoration-2 underline-offset-4 transition-colors"
-                : undefined
+                ? "rounded bg-primary/25 text-primary underline decoration-primary decoration-2 underline-offset-4"
+                : spoken
+                  ? "text-foreground/80"
+                  : undefined
             }
           >
             {part.text}

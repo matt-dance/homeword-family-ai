@@ -1,15 +1,16 @@
-import { applyVoiceSettings, loadBestVoice, pickBestVoice } from "@/lib/speech-voice";
+import { applyVoiceSettings, loadBestVoice, pickBestVoice, tokenizeWords } from "@/lib/speech-voice";
 
 export interface ReadAloudState {
   messageKey: string | null;
-  charIndex: number;
+  wordIndex: number;
   isSpeaking: boolean;
 }
 
 export interface SpeakOptions {
   onStart?: () => void;
   onEnd?: () => void;
-  onBoundary?: (charIndex: number) => void;
+  onWordIndex?: (index: number) => void;
+  onError?: (message: string) => void;
 }
 
 function getSynth(): SpeechSynthesis | null {
@@ -17,7 +18,6 @@ function getSynth(): SpeechSynthesis | null {
   return window.speechSynthesis ?? null;
 }
 
-/** Chrome sometimes drops speak() unless synthesis is resumed after a user gesture. */
 function primeSynth(synth: SpeechSynthesis) {
   if (synth.paused) synth.resume();
   synth.getVoices();
@@ -26,13 +26,13 @@ function primeSynth(synth: SpeechSynthesis) {
 export function createReadAloudController() {
   let voice: SpeechSynthesisVoice | null = null;
   let utterance: SpeechSynthesisUtterance | null = null;
-  let fallbackTimer: number | null = null;
+  let progressTimer: number | null = null;
   let unsubscribeVoice: (() => void) | undefined;
 
-  const clearFallback = () => {
-    if (fallbackTimer !== null) {
-      window.clearInterval(fallbackTimer);
-      fallbackTimer = null;
+  const clearProgress = () => {
+    if (progressTimer !== null) {
+      window.clearInterval(progressTimer);
+      progressTimer = null;
     }
   };
 
@@ -49,11 +49,70 @@ export function createReadAloudController() {
   };
 
   const stop = () => {
-    const synth = getSynth();
-    clearFallback();
+    clearProgress();
     utterance = null;
+    const synth = getSynth();
     if (!synth) return;
     synth.cancel();
+  };
+
+  const startWordProgress = (text: string, options: SpeakOptions) => {
+    const words = tokenizeWords(text);
+    if (!words.length) return;
+
+    const startedAt = Date.now();
+    const msPerWord = 360;
+
+    clearProgress();
+    options.onWordIndex?.(0);
+
+    progressTimer = window.setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      const index = Math.min(words.length - 1, Math.floor(elapsed / msPerWord));
+      options.onWordIndex?.(index);
+    }, 80);
+  };
+
+  const speakOnce = (
+    text: string,
+    options: SpeakOptions,
+    selectedVoice: SpeechSynthesisVoice | null,
+    retried: boolean,
+  ) => {
+    const synth = getSynth();
+    if (!synth) return;
+
+    const next = new SpeechSynthesisUtterance(text);
+    applyVoiceSettings(next, selectedVoice);
+    utterance = next;
+
+    next.onstart = () => {
+      options.onStart?.();
+      startWordProgress(text, options);
+    };
+
+    next.onend = () => {
+      clearProgress();
+      utterance = null;
+      options.onEnd?.();
+    };
+
+    next.onerror = () => {
+      clearProgress();
+      utterance = null;
+      if (!retried) {
+        speakOnce(text, options, null, true);
+        return;
+      }
+      options.onError?.("Could not read aloud. Try clicking Listen again.");
+      options.onEnd?.();
+    };
+
+    primeSynth(synth);
+    window.setTimeout(() => {
+      if (synth.speaking || synth.pending) synth.cancel();
+      window.setTimeout(() => synth.speak(next), 50);
+    }, 50);
   };
 
   const speak = (text: string, options: SpeakOptions = {}) => {
@@ -65,57 +124,25 @@ export function createReadAloudController() {
     stop();
     primeSynth(synth);
 
-    const next = new SpeechSynthesisUtterance(trimmed);
-    applyVoiceSettings(next, voice);
-    utterance = next;
-
-    next.onboundary = (event) => {
-      if (event.charIndex >= 0) {
-        clearFallback();
-        options.onBoundary?.(event.charIndex);
-      }
-    };
-
-    next.onstart = () => {
-      options.onStart?.();
-      const fallbackStart = Date.now();
-      const estimatedMs = Math.max(1500, trimmed.split(/\s+/).length * 340);
-      clearFallback();
-      fallbackTimer = window.setInterval(() => {
-        const progress = Math.min(1, (Date.now() - fallbackStart) / estimatedMs);
-        options.onBoundary?.(Math.floor(trimmed.length * progress));
-      }, 80);
-    };
-
-    const finish = () => {
-      clearFallback();
-      utterance = null;
-      options.onEnd?.();
-    };
-
-    next.onend = finish;
-    next.onerror = finish;
-
-    const start = () => {
-      primeSynth(synth);
-      synth.speak(next);
-    };
-
-    if (synth.getVoices().length === 0) {
-      synth.addEventListener(
-        "voiceschanged",
-        () => {
-          voice = pickBestVoice(synth.getVoices());
-          if (voice) next.voice = voice;
-          start();
-        },
-        { once: true },
-      );
-      window.setTimeout(start, 120);
-    } else {
-      start();
+    const voices = synth.getVoices();
+    if (!voice && voices.length) {
+      voice = pickBestVoice(voices);
     }
 
+    if (!voices.length) {
+      let started = false;
+      const onVoices = () => {
+        if (started) return;
+        started = true;
+        voice = pickBestVoice(synth.getVoices());
+        speakOnce(trimmed, options, voice, false);
+      };
+      synth.addEventListener("voiceschanged", onVoices, { once: true });
+      window.setTimeout(onVoices, 250);
+      return true;
+    }
+
+    speakOnce(trimmed, options, voice, false);
     return true;
   };
 
@@ -138,30 +165,18 @@ export function isReadAloudSupported(): boolean {
   return typeof window !== "undefined" && Boolean(window.speechSynthesis);
 }
 
-/** Split visible text into word spans for follow-along highlighting. */
-export function splitTextForHighlight(text: string): Array<{ text: string; start: number; highlightable: boolean }> {
-  const parts: Array<{ text: string; start: number; highlightable: boolean }> = [];
+export function splitTextForHighlight(text: string): Array<{ text: string; start: number; wordIndex: number | null }> {
+  const parts: Array<{ text: string; start: number; wordIndex: number | null }> = [];
   const regex = /\S+|\s+/g;
+  let wordIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(text)) !== null) {
+    const highlightable = /\S/.test(match[0]);
     parts.push({
       text: match[0],
       start: match.index,
-      highlightable: /\S/.test(match[0]),
+      wordIndex: highlightable ? wordIndex++ : null,
     });
   }
   return parts;
-}
-
-export function activeWordStart(
-  parts: Array<{ start: number; highlightable: boolean }>,
-  charIndex: number,
-): number | null {
-  let current: number | null = null;
-  for (const part of parts) {
-    if (!part.highlightable) continue;
-    if (charIndex >= part.start) current = part.start;
-    else break;
-  }
-  return current;
 }

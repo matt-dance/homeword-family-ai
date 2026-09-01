@@ -11,9 +11,10 @@ import {
 export function useReadAloud() {
   const controllerRef = useRef(createReadAloudController());
   const [supported, setSupported] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<ReadAloudState>({
     messageKey: null,
-    charIndex: 0,
+    wordIndex: 0,
     isSpeaking: false,
   });
 
@@ -24,7 +25,8 @@ export function useReadAloud() {
 
   const stop = useCallback(() => {
     controllerRef.current.stop();
-    setState({ messageKey: null, charIndex: 0, isSpeaking: false });
+    setState({ messageKey: null, wordIndex: 0, isSpeaking: false });
+    setError(null);
   }, []);
 
   const speakMessage = useCallback(
@@ -32,21 +34,26 @@ export function useReadAloud() {
       if (!text.trim()) return;
 
       primeReadAloudFromGesture();
+      setError(null);
 
       if (state.isSpeaking && state.messageKey === messageKey) {
         stop();
         return;
       }
 
-      setState({ messageKey, charIndex: 0, isSpeaking: true });
+      stop();
 
       controllerRef.current.speak(text, {
-        onStart: () => setState((prev) => ({ ...prev, isSpeaking: true, charIndex: 0 })),
-        onBoundary: (charIndex) =>
+        onStart: () => setState({ messageKey, wordIndex: 0, isSpeaking: true }),
+        onWordIndex: (wordIndex) =>
           setState((prev) =>
-            prev.messageKey === messageKey ? { ...prev, charIndex, isSpeaking: true } : prev,
+            prev.messageKey === messageKey ? { ...prev, wordIndex, isSpeaking: true } : prev,
           ),
-        onEnd: () => setState({ messageKey: null, charIndex: 0, isSpeaking: false }),
+        onEnd: () => setState({ messageKey: null, wordIndex: 0, isSpeaking: false }),
+        onError: (message) => {
+          setError(message);
+          setState({ messageKey: null, wordIndex: 0, isSpeaking: false });
+        },
       });
     },
     [state.isSpeaking, state.messageKey, stop],
@@ -54,6 +61,7 @@ export function useReadAloud() {
 
   return {
     supported,
+    error,
     state,
     speakMessage,
     stop,

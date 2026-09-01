@@ -58,7 +58,7 @@ function ChatContent() {
   const sendRef = useRef<(text: string, fromVoice?: boolean) => Promise<void>>(async () => {});
   const autoReadNextRef = useRef(false);
 
-  const { supported: readAloudSupported, state: readAloudState, speakMessage, stop: stopReadAloud, isSpeakingMessage } =
+  const { supported: readAloudSupported, error: readAloudError, state: readAloudState, speakMessage, stop: stopReadAloud, isSpeakingMessage } =
     useReadAloud();
 
   const handleVoiceTranscript = useCallback((text: string) => {
@@ -523,7 +523,7 @@ function ChatContent() {
                     {isAssistant && readAloudSupported ? (
                       <ReadAloudText
                         text={msg.content}
-                        charIndex={isReading ? readAloudState.charIndex : null}
+                        wordIndex={isReading ? readAloudState.wordIndex : null}
                         isActive={isReading}
                       />
                     ) : (
@@ -577,8 +577,8 @@ function ChatContent() {
 
       <div className="border-t border-border bg-card/90 backdrop-blur p-4">
         <div className={`mx-auto space-y-2 ${simpleMode ? "max-w-xl" : "max-w-2xl"}`}>
-          {(speechError || pinError) && (
-            <p className="text-xs text-destructive text-center">{speechError || pinError}</p>
+          {(speechError || pinError || readAloudError) && (
+            <p className="text-xs text-destructive text-center">{speechError || pinError || readAloudError}</p>
           )}
           {listening && !speechError && (
             <VoiceListener
