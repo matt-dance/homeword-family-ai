@@ -1,33 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import {
-  createReadAloudController,
-  splitTextForHighlight,
-  wordIndexAtTime,
-  wordIndexFromProgress,
-} from "@/lib/read-aloud";
+import { createReadAloudController } from "@/lib/read-aloud";
 import { sanitizeForSpeech } from "@/lib/speech-voice";
-
-const sampleWords = [
-  { word: "Rock", start: 0.0, end: 0.4 },
-  { word: "and", start: 0.4, end: 0.55 },
-  { word: "roll", start: 0.55, end: 0.9 },
-];
-
-describe("wordIndexAtTime", () => {
-  it("returns the word being spoken at each timestamp", () => {
-    expect(wordIndexAtTime(sampleWords, 0.0)).toBe(0);
-    expect(wordIndexAtTime(sampleWords, 0.41)).toBe(1);
-    expect(wordIndexAtTime(sampleWords, 0.7)).toBe(2);
-    expect(wordIndexAtTime(sampleWords, 0.95)).toBe(2);
-  });
-});
-
-describe("wordIndexFromProgress", () => {
-  it("maps playback progress to word index as fallback", () => {
-    expect(wordIndexFromProgress(10, 0, 10)).toBe(0);
-    expect(wordIndexFromProgress(10, 5, 10)).toBe(5);
-  });
-});
 
 describe("createReadAloudController", () => {
   beforeEach(() => {
@@ -41,7 +14,6 @@ describe("createReadAloudController", () => {
         onplay: null,
         onended: null,
         onerror: null,
-        ontimeupdate: null,
       })),
     );
     vi.stubGlobal("URL", {
@@ -54,28 +26,47 @@ describe("createReadAloudController", () => {
     vi.unstubAllGlobals();
   });
 
-  it("uses server word timings during playback", async () => {
+  it("fetches audio and starts playback", async () => {
     const fetchSpeechPayload = vi.fn().mockResolvedValue({
       audio: new Blob(["RIFF"], { type: "audio/wav" }),
-      words: sampleWords,
-      duration: 0.9,
+      duration: 1,
     });
     const controller = createReadAloudController(fetchSpeechPayload);
-    const onWordIndex = vi.fn();
+    const onStart = vi.fn();
+    const onEnd = vi.fn();
 
-    await controller.speak("Rock and roll", { onWordIndex });
+    const started = await controller.speak("Hello stars", { onStart, onEnd });
+    expect(started).toBe(true);
+    expect(fetchSpeechPayload).toHaveBeenCalledWith("Hello stars");
+
     const audio = (Audio as unknown as ReturnType<typeof vi.fn>).mock.results[0].value;
+    audio.onplay?.();
+    expect(onStart).toHaveBeenCalled();
 
-    audio.currentTime = 0.5;
-    audio.ontimeupdate?.();
-    expect(onWordIndex).toHaveBeenCalledWith(1);
+    audio.onended?.();
+    expect(onEnd).toHaveBeenCalled();
   });
-});
 
-describe("splitTextForHighlight", () => {
-  it("assigns word indexes to tokens", () => {
-    const parts = splitTextForHighlight("Hello world");
-    expect(parts.filter((p) => p.wordIndex !== null).map((p) => p.text)).toEqual(["Hello", "world"]);
+  it("reports errors when fetch fails", async () => {
+    const fetchSpeechPayload = vi.fn().mockRejectedValue(new Error("network down"));
+    const controller = createReadAloudController(fetchSpeechPayload);
+    const onError = vi.fn();
+    const onEnd = vi.fn();
+
+    const started = await controller.speak("Hello", { onError, onEnd });
+    expect(started).toBe(false);
+    expect(onError).toHaveBeenCalledWith("network down");
+    expect(onEnd).toHaveBeenCalled();
+  });
+
+  it("rejects emoji-only text", async () => {
+    const fetchSpeechPayload = vi.fn();
+    const controller = createReadAloudController(fetchSpeechPayload);
+    const onError = vi.fn();
+
+    await controller.speak("🤘", { onError });
+    expect(fetchSpeechPayload).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith("Nothing to read aloud.");
   });
 });
 

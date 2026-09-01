@@ -7,7 +7,7 @@ import { api, streamChat, type Child, type ConversationStarter } from "@/lib/api
 import { useVoiceChat } from "@/hooks/use-voice-chat";
 import { useReadAloud } from "@/hooks/use-read-aloud";
 import { VoiceListener } from "@/components/voice-listener";
-import { ReadAloudText } from "@/components/read-aloud-text";
+import { SpeakingIndicator } from "@/components/speaking-indicator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -509,7 +509,7 @@ function ChatContent() {
               <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-[90%] ${isAssistant ? "space-y-2" : ""}`}>
                   <div
-                    className={`rounded-2xl px-4 py-3 ${
+                    className={`rounded-2xl px-4 py-3 transition-shadow ${
                       simpleMode ? "text-base sm:text-lg px-5 py-4" : "text-sm"
                     } ${
                       msg.role === "user"
@@ -517,18 +517,13 @@ function ChatContent() {
                         : msg.blocked
                           ? "bg-amber-50 border border-amber-200 text-amber-900 dark:bg-amber-900/20 dark:text-amber-100"
                           : "bg-card border border-border"
-                    } ${isReading ? "ring-2 ring-primary/30" : ""}`}
+                    } ${isReading && readAloudState.isSpeaking ? "ring-2 ring-primary/40 shadow-sm" : ""}`}
                   >
-                    {isAssistant && readAloudSupported ? (
-                      <ReadAloudText
-                        text={msg.content}
-                        wordIndex={isReading ? readAloudState.wordIndex : null}
-                        isActive={isReading}
-                      />
-                    ) : (
-                      msg.content
-                    )}
+                    {msg.content}
                   </div>
+                  {isReading && readAloudState.isSpeaking && (
+                    <SpeakingIndicator simpleMode={simpleMode} />
+                  )}
                   {isAssistant && readAloudSupported && !streaming && (
                     <Button
                       variant="outline"
@@ -570,14 +565,6 @@ function ChatContent() {
             </div>
           )}
 
-          {readAloudState.isSpeaking && !streaming && (
-            <div className="flex justify-center">
-              <p className="text-xs text-muted-foreground flex items-center gap-1">
-                <Volume2 className="h-3 w-3 animate-pulse" />
-                Reading answer…
-              </p>
-            </div>
-          )}
           <div ref={bottomRef} />
         </div>
       </div>

@@ -10,7 +10,6 @@ export function useReadAloud() {
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<ReadAloudState>({
     messageKey: null,
-    wordIndex: 0,
     isSpeaking: false,
     isLoading: false,
   });
@@ -25,7 +24,7 @@ export function useReadAloud() {
 
   const stop = useCallback(() => {
     controllerRef.current.stop();
-    setState({ messageKey: null, wordIndex: 0, isSpeaking: false, isLoading: false });
+    setState({ messageKey: null, isSpeaking: false, isLoading: false });
     setError(null);
   }, []);
 
@@ -41,20 +40,14 @@ export function useReadAloud() {
       }
 
       stop();
-      setState({ messageKey, wordIndex: 0, isSpeaking: false, isLoading: true });
+      setState({ messageKey, isSpeaking: false, isLoading: true });
 
       void controllerRef.current.speak(text, {
-        onStart: () => setState({ messageKey, wordIndex: 0, isSpeaking: true, isLoading: false }),
-        onWordIndex: (wordIndex) =>
-          setState((prev) =>
-            prev.messageKey === messageKey
-              ? { ...prev, wordIndex, isSpeaking: true, isLoading: false }
-              : prev,
-          ),
-        onEnd: () => setState({ messageKey: null, wordIndex: 0, isSpeaking: false, isLoading: false }),
+        onStart: () => setState({ messageKey, isSpeaking: true, isLoading: false }),
+        onEnd: () => setState({ messageKey: null, isSpeaking: false, isLoading: false }),
         onError: (message) => {
           setError(message);
-          setState({ messageKey: null, wordIndex: 0, isSpeaking: false, isLoading: false });
+          setState({ messageKey: null, isSpeaking: false, isLoading: false });
         },
       });
     },
