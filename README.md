@@ -110,12 +110,36 @@ Install [Ollama](https://ollama.com/) and run `ollama serve`. The setup wizard w
 
 ## Running Tests
 
+Homeward uses **pytest** with in-memory SQLite — no Docker or Ollama required for the test suite.
+
+```bash
+cd gateway
+./scripts/test.sh
+```
+
+Or manually:
+
 ```bash
 cd gateway
 export HOMEWARD_DATA_DIR=./data
 export HOMEWARD_POLICIES_DIR=../policies
 pytest -v
 ```
+
+### What is covered
+
+| Area | Tests |
+|------|-------|
+| **Safety pipeline** | Rules, policy, classifier fallback, input/output filtering |
+| **Auth** | Password hashing, session cookies, protected routes |
+| **Setup flow** | Create/resume/complete setup, validation |
+| **Chat** | Jailbreak blocking, dangerous content, session logging |
+| **Dashboard** | Session grouping, message drill-down, blocked attempts |
+| **Ollama** | Model catalog, recommendations, mocked HTTP service |
+| **Policies** | YAML presets load correctly for all age groups |
+| **Integration** | End-to-end setup, LLM-unavailable messaging (mocked) |
+
+External services (Ollama, LiteLLM) are **mocked or bypassed** in tests so CI stays fast and deterministic.
 
 ## Environment Variables
 

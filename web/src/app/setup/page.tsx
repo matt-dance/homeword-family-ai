@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { OllamaSetup } from "@/components/ollama-setup";
-import { Plus, Trash2, ChevronRight, Shield } from "lucide-react";
+import { Plus, Trash2, ChevronRight, Shield, KeyRound, Copy, Check } from "lucide-react";
 
 interface ChildForm {
   name: string;
@@ -18,12 +18,17 @@ interface ChildForm {
   strictness: number;
 }
 
-type Step = "password" | "children" | "model" | "review";
+type Step = "login" | "password" | "recovery" | "children" | "model" | "review" | "forgot";
 
 export default function SetupPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("password");
   const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [savedRecoveryCode, setSavedRecoveryCode] = useState("");
+  const [recoveryConfirmed, setRecoveryConfirmed] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [isResume, setIsResume] = useState(false);
@@ -35,11 +40,27 @@ export default function SetupPage() {
   const [ollamaReady, setOllamaReady] = useState(false);
 
   useEffect(() => {
-    api.setupStatus().then((s) => {
-      if (s.setup_complete) router.replace("/dashboard");
-      else if (s.has_parent) setIsResume(true);
-      setStatusLoaded(true);
-    });
+    const load = async () => {
+      try {
+        const s = await api.setupStatus();
+        if (s.setup_complete) {
+          try {
+            await api.me();
+            router.replace("/dashboard");
+            return;
+          } catch {
+            setStep("login");
+          }
+        } else if (s.has_parent) {
+          setIsResume(true);
+        }
+      } catch {
+        // fresh install
+      } finally {
+        setStatusLoaded(true);
+      }
+    };
+    load();
     api.presets().then(setPresets).catch(() => {});
   }, [router]);
 
@@ -65,24 +86,28 @@ export default function SetupPage() {
       const result = await api.login(password);
       if (result.setup_complete) {
         router.replace("/dashboard");
-        return false;
+        return { continueSetup: false };
       }
-      return true;
+      return { continueSetup: true };
     }
 
     try {
-      await api.setup(password);
-      return true;
+      const result = await api.setup(password);
+      if (result.recovery_code) {
+        setSavedRecoveryCode(result.recovery_code);
+        return { continueSetup: true, showRecovery: true };
+      }
+      return { continueSetup: true };
     } catch (e) {
       const message = e instanceof Error ? e.message : "";
       if (message === "Setup already completed") {
         const result = await api.login(password);
         if (result.setup_complete) {
           router.replace("/dashboard");
-          return false;
+          return { continueSetup: false };
         }
         setIsResume(true);
-        return true;
+        return { continueSetup: true };
       }
       throw e;
     }
@@ -101,12 +126,68 @@ export default function SetupPage() {
     setLoading(true);
     setError("");
     try {
-      const shouldContinue = await authenticateParent();
-      if (shouldContinue) await continueAfterAuth();
+      const result = await authenticateParent();
+      if (result.continueSetup) {
+        if (result.showRecovery) {
+          setStep("recovery");
+        } else {
+          await continueAfterAuth();
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Setup failed");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLogin = async () => {
+    if (password.length < 8) {
+      setError("Enter your parent password");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      await api.login(password);
+      router.replace("/dashboard");
+    } catch {
+      setError("Incorrect password. Try again or use your recovery code.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForgotSubmit = async () => {
+    if (recoveryCode.trim().length < 8) {
+      setError("Enter your recovery code");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError("New password must be at least 8 characters");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api.resetPassword(recoveryCode.trim(), newPassword);
+      setSavedRecoveryCode(result.recovery_code);
+      setRecoveryConfirmed(false);
+      setStep("recovery");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not reset password");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyRecoveryCode = async () => {
+    try {
+      await navigator.clipboard.writeText(savedRecoveryCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
     }
   };
 
@@ -171,6 +252,9 @@ export default function SetupPage() {
     return labels[n - 1] || "Balanced";
   };
 
+  const setupSteps: Step[] = ["password", "recovery", "children", "model", "review"];
+  const currentSetupIndex = setupSteps.indexOf(step);
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50/50 to-background dark:from-slate-900/50">
       <header className="border-b border-border bg-card/80 backdrop-blur p-4">
@@ -181,30 +265,114 @@ export default function SetupPage() {
         <div className="mb-8 text-center">
           <h1 className="text-2xl sm:text-3xl font-bold">Welcome to Homeward</h1>
           <p className="mt-2 text-muted-foreground">
-            Set up your family&apos;s AI safety gateway in a few minutes. Everything runs locally on your computer.
+            {step === "login" || step === "forgot"
+              ? "Sign in to your parent dashboard."
+              : "Set up your family\u2019s AI safety gateway in a few minutes. Everything runs locally on your computer."}
           </p>
         </div>
 
-        {/* Step indicator */}
-        <div className="mb-6 flex justify-center gap-2">
-          {(["password", "children", "model", "review"] as Step[]).map((s, i) => (
-            <div
-              key={s}
-              className={`h-2 w-12 sm:w-16 rounded-full transition-colors ${
-                step === s
-                  ? "bg-primary"
-                  : i < ["password", "children", "model", "review"].indexOf(step)
-                    ? "bg-accent"
-                    : "bg-muted"
-              }`}
-            />
-          ))}
-        </div>
+        {currentSetupIndex >= 0 && (
+          <div className="mb-6 flex justify-center gap-2">
+            {setupSteps.map((s, i) => (
+              <div
+                key={s}
+                className={`h-2 w-12 sm:w-16 rounded-full transition-colors ${
+                  step === s
+                    ? "bg-primary"
+                    : i < currentSetupIndex
+                      ? "bg-accent"
+                      : "bg-muted"
+                }`}
+              />
+            ))}
+          </div>
+        )}
 
         {error && (
           <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
             {error}
           </div>
+        )}
+
+        {step === "login" && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Shield className="h-5 w-5" />
+                Parent sign in
+              </CardTitle>
+              <CardDescription>
+                Enter the password you created during setup.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="login-password">Parent password</Label>
+                <Input
+                  id="login-password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                />
+              </div>
+              <Button onClick={handleLogin} disabled={loading || !statusLoaded} className="w-full">
+                Sign in
+                <ChevronRight className="ml-2 h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                className="w-full text-sm text-primary underline-offset-4 hover:underline"
+                onClick={() => {
+                  setError("");
+                  setStep("forgot");
+                }}
+              >
+                Forgot password? Use recovery code
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {step === "forgot" && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <KeyRound className="h-5 w-5" />
+                Reset parent password
+              </CardTitle>
+              <CardDescription>
+                Enter the recovery code you saved during setup, then choose a new password.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="recovery-code">Recovery code</Label>
+                <Input
+                  id="recovery-code"
+                  placeholder="HOME-ABCD-EFGH-JKMN"
+                  value={recoveryCode}
+                  onChange={(e) => setRecoveryCode(e.target.value.toUpperCase())}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="new-password">New password</Label>
+                <Input
+                  id="new-password"
+                  type="password"
+                  placeholder="At least 8 characters"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                />
+              </div>
+              <Button onClick={handleForgotSubmit} disabled={loading} className="w-full">
+                Reset password
+              </Button>
+              <Button variant="ghost" onClick={() => setStep("login")} className="w-full">
+                Back to sign in
+              </Button>
+            </CardContent>
+          </Card>
         )}
 
         {step === "password" && (
@@ -217,7 +385,7 @@ export default function SetupPage() {
               <CardDescription>
                 {isResume
                   ? "Enter the parent password you created earlier to finish setting up Homeward."
-                  : "This password protects your dashboard. Kids won&apos;t need it — they&apos;ll use their own profile."}
+                  : "This password protects your dashboard. Kids won\u2019t need it \u2014 they\u2019ll use their own profile."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -233,6 +401,46 @@ export default function SetupPage() {
               </div>
               <Button onClick={handlePasswordSubmit} disabled={loading || !statusLoaded} className="w-full">
                 {statusLoaded ? "Continue" : "Loading..."}
+                <ChevronRight className="ml-2 h-4 w-4" />
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {step === "recovery" && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <KeyRound className="h-5 w-5" />
+                Save your recovery code
+              </CardTitle>
+              <CardDescription>
+                Write this code down and keep it somewhere safe at home. It is the only way to reset your password if you forget it &mdash; Homeward runs locally, so there is no email reset.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg border-2 border-dashed border-primary/40 bg-primary/5 p-4 text-center">
+                <p className="font-mono text-lg sm:text-xl tracking-wider font-semibold">{savedRecoveryCode}</p>
+                <Button variant="outline" size="sm" className="mt-3" onClick={copyRecoveryCode}>
+                  {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+                  {copied ? "Copied" : "Copy code"}
+                </Button>
+              </div>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={recoveryConfirmed}
+                  onChange={(e) => setRecoveryConfirmed(e.target.checked)}
+                  className="mt-1 accent-primary"
+                />
+                I have saved this recovery code in a safe place
+              </label>
+              <Button
+                onClick={() => (isResume ? router.replace("/dashboard") : continueAfterAuth())}
+                disabled={!recoveryConfirmed}
+                className="w-full"
+              >
+                Continue
                 <ChevronRight className="ml-2 h-4 w-4" />
               </Button>
             </CardContent>

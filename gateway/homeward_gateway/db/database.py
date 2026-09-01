@@ -22,6 +22,7 @@ class ParentAccount(Base):
     cloud_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     ollama_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     classifier_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    recovery_code_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -118,6 +119,8 @@ def _migrate_parent_columns(connection) -> None:
         connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN ollama_model VARCHAR(100)"))
     if "classifier_model" not in columns:
         connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN classifier_model VARCHAR(100)"))
+    if "recovery_code_hash" not in columns:
+        connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN recovery_code_hash VARCHAR(255)"))
 
 
 def _migrate_session_columns(connection) -> None:

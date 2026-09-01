@@ -20,6 +20,7 @@ import {
   Server,
   ArrowLeft,
   MessageCircle,
+  KeyRound,
 } from "lucide-react";
 import { OllamaSetup } from "@/components/ollama-setup";
 
@@ -38,6 +39,12 @@ export default function DashboardPage() {
   const [openaiKey, setOpenaiKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"logs" | "blocked" | "devices">("logs");
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSaving, setPasswordSaving] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -70,6 +77,26 @@ export default function DashboardPage() {
 
   const handleCloudSave = async () => {
     await api.cloudSettings(cloudEnabled, openaiKey || undefined);
+  };
+
+  const handlePasswordChange = async () => {
+    if (newPassword.length < 8) {
+      setPasswordError("New password must be at least 8 characters");
+      return;
+    }
+    setPasswordSaving(true);
+    setPasswordError("");
+    setPasswordMessage("");
+    try {
+      await api.changePassword(currentPassword, newPassword);
+      setPasswordMessage("Password updated successfully.");
+      setCurrentPassword("");
+      setNewPassword("");
+    } catch (e) {
+      setPasswordError(e instanceof Error ? e.message : "Could not change password");
+    } finally {
+      setPasswordSaving(false);
+    }
   };
 
   const childName = (id: number) => children.find((c) => c.id === id)?.name || `Child #${id}`;
@@ -350,6 +377,54 @@ export default function DashboardPage() {
           {ollamaOpen && (
             <CardContent className="border-t border-border pt-4">
               <OllamaSetup />
+            </CardContent>
+          )}
+        </Card>
+
+        {/* Password section */}
+        <Card className="mt-6">
+          <button
+            onClick={() => setPasswordOpen(!passwordOpen)}
+            className="flex w-full items-center justify-between p-6 text-left"
+          >
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <p className="font-medium">Parent password</p>
+                <p className="text-sm text-muted-foreground">
+                  Change your dashboard password
+                </p>
+              </div>
+            </div>
+            {passwordOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+          </button>
+          {passwordOpen && (
+            <CardContent className="space-y-4 border-t border-border pt-4">
+              <p className="text-sm text-muted-foreground">
+                Forgot your password? Sign out and use your recovery code on the sign-in page.
+              </p>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Current password</label>
+                <Input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">New password</label>
+                <Input
+                  type="password"
+                  placeholder="At least 8 characters"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                />
+              </div>
+              {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
+              {passwordMessage && <p className="text-sm text-green-700 dark:text-green-400">{passwordMessage}</p>}
+              <Button onClick={handlePasswordChange} size="sm" disabled={passwordSaving}>
+                Update password
+              </Button>
             </CardContent>
           )}
         </Card>

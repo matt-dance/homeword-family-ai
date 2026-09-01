@@ -18,6 +18,12 @@ from homeward_gateway.auth.parent_auth import (
     set_session_cookie,
     verify_password,
 )
+from homeward_gateway.auth.rate_limit import check_rate_limit, record_attempt, reset_attempts
+from homeward_gateway.auth.recovery import (
+    generate_recovery_code,
+    hash_recovery_code,
+    verify_recovery_code,
+)
 from homeward_gateway.config import settings
 from homeward_gateway.db.database import (
     BlockedAttempt,
@@ -50,6 +56,16 @@ class SetupRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     password: str
+
+
+class ResetPasswordRequest(BaseModel):
+    recovery_code: str = Field(min_length=8)
+    new_password: str = Field(min_length=8)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
 
 
 class ChildCreate(BaseModel):
@@ -161,15 +177,22 @@ async def setup(
         set_session_cookie(response, existing.id)
         return {"ok": True, "parent_id": existing.id, "resumed": True}
 
+    recovery_code = generate_recovery_code()
     parent = ParentAccount(
         password_hash=hash_password(body.password),
+        recovery_code_hash=hash_recovery_code(recovery_code),
         setup_complete=False,
     )
     session.add(parent)
     await session.commit()
     await session.refresh(parent)
     set_session_cookie(response, parent.id)
-    return {"ok": True, "parent_id": parent.id, "resumed": False}
+    return {
+        "ok": True,
+        "parent_id": parent.id,
+        "resumed": False,
+        "recovery_code": recovery_code,
+    }
 
 
 @router.post("/setup/complete")
@@ -202,6 +225,51 @@ async def logout(response: Response):
     return {"ok": True}
 
 
+@router.post("/auth/reset-password")
+async def reset_password(
+    body: ResetPasswordRequest,
+    request: Request,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    client_key = request.client.host if request.client else "unknown"
+    check_rate_limit(f"reset:{client_key}")
+
+    result = await session.execute(select(ParentAccount).limit(1))
+    parent = result.scalar_one_or_none()
+    if not parent or not parent.recovery_code_hash:
+        record_attempt(f"reset:{client_key}")
+        raise HTTPException(status_code=400, detail="Invalid recovery code")
+
+    if not verify_recovery_code(body.recovery_code, parent.recovery_code_hash):
+        record_attempt(f"reset:{client_key}")
+        raise HTTPException(status_code=400, detail="Invalid recovery code")
+
+    new_recovery_code = generate_recovery_code()
+    parent.password_hash = hash_password(body.new_password)
+    parent.recovery_code_hash = hash_recovery_code(new_recovery_code)
+    await session.commit()
+    reset_attempts(f"reset:{client_key}")
+    set_session_cookie(response, parent.id)
+    return {"ok": True, "recovery_code": new_recovery_code}
+
+
+@router.post("/auth/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    if not verify_password(body.current_password, parent.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    if verify_password(body.new_password, parent.password_hash):
+        raise HTTPException(status_code=400, detail="New password must be different")
+
+    parent.password_hash = hash_password(body.new_password)
+    await session.commit()
+    return {"ok": True}
+
+
 @router.get("/auth/me")
 async def auth_me(parent: Annotated[ParentAccount, Depends(require_parent)]):
     return {
@@ -210,6 +278,7 @@ async def auth_me(parent: Annotated[ParentAccount, Depends(require_parent)]):
         "cloud_enabled": parent.cloud_enabled,
         "ollama_model": parent.ollama_model,
         "classifier_model": parent.classifier_model,
+        "has_recovery_code": parent.recovery_code_hash is not None,
     }
 
 

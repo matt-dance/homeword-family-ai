@@ -124,7 +124,7 @@ export const api = {
   health: () => request<{ status: string }>("/health"),
   setupStatus: () => request<SetupStatus>("/setup/status"),
   setup: (password: string) =>
-    request<{ ok: boolean; resumed?: boolean }>("/setup", {
+    request<{ ok: boolean; resumed?: boolean; recovery_code?: string }>("/setup", {
       method: "POST",
       body: JSON.stringify({ password }),
     }),
@@ -135,6 +135,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ password }),
     }),
+  resetPassword: (recovery_code: string, new_password: string) =>
+    request<{ ok: boolean; recovery_code: string }>("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ recovery_code, new_password }),
+    }),
+  changePassword: (current_password: string, new_password: string) =>
+    request<{ ok: boolean }>("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password, new_password }),
+    }),
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
   me: () =>
     request<{
@@ -143,6 +153,7 @@ export const api = {
       cloud_enabled: boolean;
       ollama_model: string | null;
       classifier_model: string | null;
+      has_recovery_code: boolean;
     }>("/auth/me"),
   presets: () => request<Preset[]>("/presets"),
   children: () => request<Child[]>("/children"),

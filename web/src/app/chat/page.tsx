@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useState, useRef, Suspense } from "react";
+import { useCallback, useEffect, useState, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, streamChat, type Child } from "@/lib/api";
+import { useVoiceChat } from "@/hooks/use-voice-chat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { HomewardLogo } from "@/components/homeward-logo";
-import { Send, Sparkles, Home } from "lucide-react";
+import { Send, Sparkles, Home, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
 
 interface Message {
   role: "user" | "assistant";
@@ -29,7 +30,20 @@ function ChatContent() {
   const [streaming, setStreaming] = useState(false);
   const [loading, setLoading] = useState(true);
   const [chatSessionId, setChatSessionId] = useState<number | null>(null);
+  const [readAloud, setReadAloud] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const sendRef = useRef<(text: string) => Promise<void>>(async () => {});
+
+  const handleVoiceTranscript = useCallback((text: string) => {
+    setInput(text);
+    void sendRef.current(text);
+  }, []);
+
+  const { listening, speaking, voiceSupported, speechError, toggleListening, speak, stopSpeaking } =
+    useVoiceChat({
+      onTranscript: handleVoiceTranscript,
+      readAloudEnabled: readAloud,
+    });
 
   useEffect(() => {
     api.childrenPublic()
@@ -63,6 +77,7 @@ function ChatContent() {
   }, [selectedChild, pinVerified, chatSessionId]);
 
   const handleSelectChild = (child: Child) => {
+    stopSpeaking();
     setSelectedChild(child);
     setPin("");
     setPinError("");
@@ -84,63 +99,74 @@ function ChatContent() {
     }
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || !selectedChild || streaming) return;
+  const handleSend = useCallback(
+    async (overrideText?: string) => {
+      const userMsg = (overrideText ?? input).trim();
+      if (!userMsg || !selectedChild || streaming) return;
 
-  // Verify pin first if needed
-    if (selectedChild.has_pin && !pinVerified) {
-      setPinError("Please enter your PIN first");
-      return;
-    }
-    if (!chatSessionId) {
-      setPinError("Chat session is not ready yet. Please wait a moment.");
-      return;
-    }
+      if (selectedChild.has_pin && !pinVerified) {
+        setPinError("Please enter your PIN first");
+        return;
+      }
+      if (!chatSessionId) {
+        setPinError("Chat session is not ready yet. Please wait a moment.");
+        return;
+      }
 
-    const userMsg = input.trim();
-    setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
-    setStreaming(true);
+      setInput("");
+      setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
+      setStreaming(true);
 
-    const history = messages.map((m) => ({ role: m.role, content: m.content }));
-    let assistantContent = "";
+      const history = messages.map((m) => ({ role: m.role, content: m.content }));
+      let assistantContent = "";
 
-    try {
-      await streamChat(
-        userMsg,
-        selectedChild.id,
-        history,
-        (token) => {
-          assistantContent += token;
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last?.role === "assistant" && !last.blocked) {
-              return [...prev.slice(0, -1), { role: "assistant", content: assistantContent }];
+      try {
+        await streamChat(
+          userMsg,
+          selectedChild.id,
+          history,
+          (token) => {
+            assistantContent += token;
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last?.role === "assistant" && !last.blocked) {
+                return [...prev.slice(0, -1), { role: "assistant", content: assistantContent }];
+              }
+              return [...prev, { role: "assistant", content: assistantContent }];
+            });
+          },
+          (blockedMsg) => {
+            assistantContent = blockedMsg;
+            setMessages((prev) => [
+              ...prev.filter((m) => m.role !== "assistant" || m.content !== assistantContent),
+              { role: "assistant", content: blockedMsg, blocked: true },
+            ]);
+            speak(blockedMsg);
+          },
+          () => {
+            setStreaming(false);
+            if (assistantContent && !assistantContent.includes("Something went wrong")) {
+              speak(assistantContent);
             }
-            return [...prev, { role: "assistant", content: assistantContent }];
-          });
-        },
-        (blockedMsg) => {
-          setMessages((prev) => [
-            ...prev.filter((m) => m.role !== "assistant" || m.content !== assistantContent),
-            { role: "assistant", content: blockedMsg, blocked: true },
-          ]);
-        },
-        () => setStreaming(false),
-        chatSessionId,
-      );
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Something went wrong. Please try again in a moment!",
-          blocked: true,
-        },
-      ]);
-      setStreaming(false);
-    }
-  };
+          },
+          chatSessionId,
+        );
+      } catch {
+        const fallback = "Something went wrong. Please try again in a moment!";
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: fallback, blocked: true },
+        ]);
+        speak(fallback);
+        setStreaming(false);
+      }
+    },
+    [input, selectedChild, streaming, pinVerified, chatSessionId, messages, speak],
+  );
+
+  useEffect(() => {
+    sendRef.current = handleSend;
+  }, [handleSend]);
 
   if (loading) {
     return (
@@ -164,7 +190,6 @@ function ChatContent() {
     );
   }
 
-  // Profile picker or PIN gate
   if (!selectedChild || (selectedChild.has_pin && !pinVerified)) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-emerald-50/50 to-background dark:from-slate-900/50">
@@ -221,17 +246,44 @@ function ChatContent() {
   return (
     <div className="flex min-h-screen flex-col bg-gradient-to-b from-blue-50/30 to-background dark:from-slate-900/30">
       <header className="border-b border-border bg-card/90 backdrop-blur px-4 py-3">
-        <div className="mx-auto flex max-w-2xl items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Sparkles className="h-6 w-6 text-primary" />
-            <div>
-              <p className="font-semibold">{selectedChild.name}&apos;s Chat</p>
+        <div className="mx-auto flex max-w-2xl items-center justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <Sparkles className="h-6 w-6 shrink-0 text-primary" />
+            <div className="min-w-0">
+              <p className="font-semibold truncate">{selectedChild.name}&apos;s Chat</p>
               <p className="text-xs text-muted-foreground">Homeward is keeping you safe</p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => { setSelectedChild(null); setMessages([]); setPin(""); setPinVerified(false); setChatSessionId(null); }}>
-            Switch profile
-          </Button>
+          <div className="flex items-center gap-1 shrink-0">
+            {voiceSupported && (
+              <Button
+                variant={readAloud ? "outline" : "ghost"}
+                size="sm"
+                onClick={() => {
+                  if (readAloud) stopSpeaking();
+                  setReadAloud((v) => !v);
+                }}
+                title={readAloud ? "Turn off read aloud" : "Read answers aloud"}
+              >
+                {readAloud ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                <span className="ml-1 hidden sm:inline text-xs">{readAloud ? "Speaking on" : "Read aloud"}</span>
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                stopSpeaking();
+                setSelectedChild(null);
+                setMessages([]);
+                setPin("");
+                setPinVerified(false);
+                setChatSessionId(null);
+              }}
+            >
+              Switch profile
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -242,8 +294,13 @@ function ChatContent() {
               <Sparkles className="mx-auto h-10 w-10 text-primary/60 mb-4" />
               <p className="text-lg font-medium">Hi {selectedChild.name}! 👋</p>
               <p className="text-muted-foreground mt-2">
-                Ask me anything — I love helping with homework, stories, and fun facts!
+                Ask me anything — type or tap the mic to talk!
               </p>
+              {voiceSupported && (
+                <p className="text-sm text-muted-foreground mt-2">
+                  Turn on &ldquo;Read aloud&rdquo; to hear my answers.
+                </p>
+              )}
             </div>
           )}
 
@@ -273,23 +330,49 @@ function ChatContent() {
               </div>
             </div>
           )}
+          {speaking && !streaming && (
+            <div className="flex justify-center">
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <Volume2 className="h-3 w-3 animate-pulse" />
+                Reading answer…
+              </p>
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
       </div>
 
       <div className="border-t border-border bg-card/90 backdrop-blur p-4">
-        <div className="mx-auto flex max-w-2xl gap-2">
-          <Input
-            placeholder="Ask me anything…"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
-            disabled={streaming}
-            className="flex-1"
-          />
-          <Button onClick={handleSend} disabled={streaming || !input.trim()} size="icon">
-            <Send className="h-4 w-4" />
-          </Button>
+        <div className="mx-auto max-w-2xl space-y-2">
+          {speechError && (
+            <p className="text-xs text-destructive text-center">{speechError}</p>
+          )}
+          <div className="flex gap-2">
+            {voiceSupported && (
+              <Button
+                type="button"
+                variant={listening ? "destructive" : "outline"}
+                size="icon"
+                onClick={toggleListening}
+                disabled={streaming}
+                title={listening ? "Stop listening" : "Tap to talk"}
+                className="shrink-0 h-10 w-10"
+              >
+                {listening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              </Button>
+            )}
+            <Input
+              placeholder={voiceSupported ? "Type or tap the mic…" : "Ask me anything…"}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
+              disabled={streaming || listening}
+              className="flex-1"
+            />
+            <Button onClick={() => handleSend()} disabled={streaming || !input.trim()} size="icon">
+              <Send className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
     </div>
