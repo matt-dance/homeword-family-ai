@@ -45,8 +45,14 @@ function ChatContent() {
       readAloudEnabled: readAloud,
     });
 
+  const handleMicClick = () => {
+    if (!listening) {
+      setReadAloud(true);
+    }
+    toggleListening();
+  };
+
   useEffect(() => {
-    api.childrenPublic()
       .then((kids) => {
         setChildren(kids);
         const childParam = searchParams.get("child");
@@ -353,7 +359,7 @@ function ChatContent() {
                 type="button"
                 variant={listening ? "destructive" : "outline"}
                 size="icon"
-                onClick={toggleListening}
+                onClick={handleMicClick}
                 disabled={streaming}
                 title={listening ? "Stop listening" : "Tap to talk"}
                 className="shrink-0 h-10 w-10"
