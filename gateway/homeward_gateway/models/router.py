@@ -22,9 +22,10 @@ async def generate_response(
     max_length: int = 800,
     model: str | None = None,
     homework_mode: bool = False,
+    tool_hint: str = "",
 ) -> str:
     """Generate a non-streaming LLM response via Ollama (default) or cloud if enabled."""
-    system = build_system_prompt(child_name, age, preset, homework_mode)
+    system = build_system_prompt(child_name, age, preset, homework_mode, tool_hint=tool_hint)
     full_messages = [{"role": "system", "content": system}] + messages
 
     if settings.cloud_enabled and settings.openai_api_key:
@@ -59,9 +60,10 @@ async def stream_response(
     max_length: int = 800,
     model: str | None = None,
     homework_mode: bool = False,
+    tool_hint: str = "",
 ) -> AsyncIterator[str]:
     """Stream LLM response tokens."""
-    system = build_system_prompt(child_name, age, preset, homework_mode)
+    system = build_system_prompt(child_name, age, preset, homework_mode, tool_hint=tool_hint)
     full_messages = [{"role": "system", "content": system}] + messages
 
     if settings.cloud_enabled and settings.openai_api_key:

@@ -54,7 +54,7 @@ from homeward_gateway.dashboard.sessions import find_legacy_session, group_legac
 from homeward_gateway.ollama import service as ollama_service
 from homeward_gateway.ollama.runtime import get_effective_models
 from homeward_gateway.models.response_limits import trim_response
-from homeward_gateway.pipeline.pipeline import PipelineResult, process_chat, process_chat_stream
+from homeward_gateway.pipeline.pipeline import PipelineResult, ToolEvent, process_chat, process_chat_stream
 from homeward_gateway.pipeline.policy import load_all_presets, preset_for_age
 
 logger = logging.getLogger(__name__)
@@ -925,6 +925,10 @@ async def chat_stream(
                 classifier_model=classifier_model,
                 homework_mode=child.homework_mode,
             ):
+                if isinstance(item, ToolEvent):
+                    payload = json.dumps({"type": "tools", "tools": item.tools})
+                    yield f"data: {payload}\n\n"
+                    continue
                 if isinstance(item, PipelineResult):
                     if not item.allowed:
                         blocked_early = True

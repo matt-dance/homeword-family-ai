@@ -41,11 +41,14 @@ def get_conversation_starters(preset: PolicyPreset, limit: int = 6) -> list[dict
     """Return tappable starter prompts for the kid chat empty state."""
     topics = preset.allowed_topics[:limit]
     starters = [{"label": topic.title(), "message": _prompt_for_topic(topic)} for topic in topics]
-    if len(starters) < 3:
-        starters.extend(
-            [
-                {"label": "Fun fact", "message": "Tell me a fun fact!"},
-                {"label": "Story time", "message": "Tell me a short story!"},
-            ][: 3 - len(starters)]
-        )
-    return starters[:limit]
+    extras = [
+        {"label": "Quiz me", "message": "Quiz me about animals!"},
+        {"label": "Fun facts", "message": "Give me 3 fun facts about space!"},
+        {"label": "Timer", "message": "Set a timer for 2 minutes."},
+        {"label": "Word help", "message": "What does photosynthesis mean?"},
+    ]
+    existing = {s["label"] for s in starters}
+    for extra in extras:
+        if extra["label"] not in existing:
+            starters.append(extra)
+    return starters

@@ -34,6 +34,7 @@ def build_system_prompt(
     age: int,
     preset: PolicyPreset,
     homework_mode: bool = False,
+    tool_hint: str = "",
 ) -> str:
     style = _PRESET_STYLE.get(
         preset.id,
@@ -47,4 +48,6 @@ def build_system_prompt(
     ]
     if homework_mode:
         parts.append(_HOMEWORK_MODE)
+    if tool_hint:
+        parts.append(tool_hint)
     return " ".join(parts)

@@ -6,6 +6,8 @@ import { useVoiceChat } from "@/hooks/use-voice-chat";
 import { useReadAloud } from "@/hooks/use-read-aloud";
 import { VoiceListener } from "@/components/voice-listener";
 import { SpeakingIndicator } from "@/components/speaking-indicator";
+import { ChatToolCards } from "@/components/chat-tools";
+import { extractChatTools, mergeChatTools, type ChatTool } from "@/lib/chat-tools";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,6 +28,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   blocked?: boolean;
+  tools?: ChatTool[];
 }
 
 function simpleModeKey(childId: number) {
@@ -210,7 +213,10 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
       setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
       setStreaming(true);
 
-      const history = messages.map((m) => ({ role: m.role, content: m.content }));
+      const history = messages.map((m) => ({
+        role: m.role,
+        content: extractChatTools(m.content).text || m.content,
+      }));
       let assistantContent = "";
 
       try {
@@ -223,7 +229,7 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
             setMessages((prev) => {
               const last = prev[prev.length - 1];
               if (last?.role === "assistant" && !last.blocked) {
-                return [...prev.slice(0, -1), { role: "assistant", content: assistantContent }];
+                return [...prev.slice(0, -1), { ...last, role: "assistant", content: assistantContent }];
               }
               return [...prev, { role: "assistant", content: assistantContent }];
             });
@@ -249,12 +255,24 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
                     break;
                   }
                 }
-                if (idx >= 0) speakMessage(`msg-${idx}`, prev[idx].content);
+                if (idx >= 0) {
+                  const spoken = extractChatTools(prev[idx].content).text;
+                  if (spoken) speakMessage(`msg-${idx}`, spoken);
+                }
                 return prev;
               });
             }, 0);
           },
           chatSessionId,
+          (tools) => {
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last?.role === "assistant" && !last.blocked) {
+                return [...prev.slice(0, -1), { ...last, tools: mergeChatTools(last.tools, tools) }];
+              }
+              return [...prev, { role: "assistant", content: "", tools: mergeChatTools([], tools) }];
+            });
+          },
         );
       } catch (e) {
         const fallback =
@@ -419,32 +437,38 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
             const messageKey = `msg-${i}`;
             const isAssistant = msg.role === "assistant";
             const isReading = isSpeakingMessage(messageKey);
+            const parsed = isAssistant && !msg.blocked ? extractChatTools(msg.content, msg.tools) : null;
+            const displayText = parsed?.text ?? msg.content;
+            const tools = parsed?.tools ?? [];
 
             return (
               <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-[90%] ${isAssistant ? "space-y-2" : ""}`}>
-                  <div
-                    className={`rounded-2xl px-4 py-3 transition-shadow ${
-                      simpleMode ? "text-base sm:text-lg px-5 py-4" : "text-sm"
-                    } ${
-                      msg.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : msg.blocked
-                          ? "bg-amber-50 border border-amber-200 text-amber-900 dark:bg-amber-900/20 dark:text-amber-100"
-                          : "bg-card border border-border"
-                    } ${isReading && readAloudState.isSpeaking ? "ring-2 ring-primary/40 shadow-sm" : ""}`}
-                  >
-                    {msg.content}
-                  </div>
+                  {displayText ? (
+                    <div
+                      className={`rounded-2xl px-4 py-3 transition-shadow ${
+                        simpleMode ? "text-base sm:text-lg px-5 py-4" : "text-sm"
+                      } ${
+                        msg.role === "user"
+                          ? "bg-primary text-primary-foreground"
+                          : msg.blocked
+                            ? "bg-amber-50 border border-amber-200 text-amber-900 dark:bg-amber-900/20 dark:text-amber-100"
+                            : "bg-card border border-border"
+                      } ${isReading && readAloudState.isSpeaking ? "ring-2 ring-primary/40 shadow-sm" : ""}`}
+                    >
+                      {displayText}
+                    </div>
+                  ) : null}
+                  {isAssistant && !msg.blocked && tools.length > 0 && <ChatToolCards tools={tools} />}
                   {isReading && readAloudState.isSpeaking && (
                     <SpeakingIndicator simpleMode={simpleMode} />
                   )}
-                  {isAssistant && readAloudSupported && !streaming && (
+                  {isAssistant && readAloudSupported && !streaming && displayText && (
                     <Button
                       variant="outline"
                       size="sm"
                       className="h-8 gap-2"
-                      onClick={() => speakMessage(messageKey, msg.content)}
+                      onClick={() => speakMessage(messageKey, displayText)}
                       disabled={readAloudState.isLoading && readAloudState.messageKey === messageKey}
                     >
                       {isReading ? (
@@ -472,7 +496,7 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
             );
           })}
 
-          {streaming && (
+          {streaming && messages[messages.length - 1]?.role !== "assistant" && (
             <div className="flex justify-start">
               <div className={`rounded-2xl bg-card border border-border px-5 py-4 ${simpleMode ? "text-lg" : "text-sm"}`}>
                 <span className="animate-pulse text-muted-foreground">Thinking…</span>
