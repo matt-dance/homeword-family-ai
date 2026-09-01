@@ -1,0 +1,61 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: homeward-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: homeward-ollama-init
+    depends_on:
+      - ollama
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      ollama pull llama3.2:3b || true;
+      "
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    network_mode: service:ollama
+    restart: "no"
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    container_name: homeward-gateway
+    depends_on:
+      - ollama
+    environment:
+      - HOMEWARD_OLLAMA_BASE_URL=http://ollama:11434
+      - HOMEWARD_OLLAMA_MODEL=llama3.2:3b
+      - HOMEWARD_CLASSIFIER_MODEL=llama3.2:3b
+      - HOMEWARD_DATA_DIR=/data
+      - HOMEWARD_SECRET_KEY=${HOMEWARD_SECRET_KEY:-change-me-in-production}
+      - HOMEWARD_POLICIES_DIR=/app/policies
+    volumes:
+      - homeward_data:/data
+      - ./policies:/app/policies:ro
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    container_name: homeward-web
+    depends_on:
+      - gateway
+    environment:
+      - GATEWAY_URL=http://gateway:8000
+    ports:
+      - "43123:43123"
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  homeward_data:

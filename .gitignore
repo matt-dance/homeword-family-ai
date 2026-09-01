@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.next/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Data
+*.db
+data/
+gateway/data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# Agent tools
+agent-tools/

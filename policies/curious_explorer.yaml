@@ -1,0 +1,49 @@
+id: curious_explorer
+name: Curious Explorer
+description: For ages 9–12. Balanced filters that allow more learning topics while blocking mature content.
+age_range:
+  min: 9
+  max: 12
+strictness:
+  default: 3
+  min: 2
+  max: 5
+rules:
+  blocked_topics:
+    - explicit sexual content
+    - graphic violence
+    - drugs
+    - self-harm
+    - gambling
+    - hate speech
+  blocked_keywords:
+    - porn
+    - pornography
+    - explicit sex
+    - suicide method
+    - how to make a bomb
+    - how to make drugs
+    - kill yourself
+  jailbreak_patterns:
+    - ignore previous
+    - ignore all rules
+    - pretend you are
+    - act as if
+    - no restrictions
+    - bypass filter
+    - developer mode
+    - DAN mode
+    - jailbreak
+    - do anything now
+  allowed_topics:
+    - science
+    - history
+    - geography
+    - technology
+    - coding
+    - sports
+    - books
+    - math
+    - nature
+    - space
+  max_response_length: 800

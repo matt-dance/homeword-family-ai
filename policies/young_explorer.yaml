@@ -1,0 +1,55 @@
+id: young_explorer
+name: Young Explorer
+description: For ages 5–8. Gentle guidance with strong filters on scary, violent, or adult topics.
+age_range:
+  min: 5
+  max: 8
+strictness:
+  default: 4
+  min: 3
+  max: 5
+rules:
+  blocked_topics:
+    - violence
+    - weapons
+    - drugs
+    - alcohol
+    - sexual content
+    - horror
+    - self-harm
+    - gambling
+    - politics
+  blocked_keywords:
+    - kill
+    - murder
+    - gun
+    - knife
+    - blood
+    - sex
+    - porn
+    - drug
+    - suicide
+    - naked
+    - nude
+    - horror
+    - scary monster
+  jailbreak_patterns:
+    - ignore previous
+    - ignore all rules
+    - pretend you are
+    - act as if
+    - no restrictions
+    - bypass filter
+    - developer mode
+    - DAN mode
+  allowed_topics:
+    - animals
+    - nature
+    - science
+    - art
+    - music
+    - friendship
+    - school
+    - hobbies
+    - stories
+  max_response_length: 500

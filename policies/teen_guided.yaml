@@ -1,0 +1,47 @@
+id: teen_guided
+name: Teen Guided
+description: For ages 13–17. Thoughtful guidance with filters on explicit content and dangerous instructions.
+age_range:
+  min: 13
+  max: 17
+strictness:
+  default: 2
+  min: 1
+  max: 4
+rules:
+  blocked_topics:
+    - explicit sexual content
+    - graphic violence instructions
+    - illegal drug manufacturing
+    - self-harm encouragement
+    - hate speech
+  blocked_keywords:
+    - porn
+    - pornography
+    - child porn
+    - how to make a bomb
+    - how to synthesize
+    - kill yourself
+    - suicide method
+  jailbreak_patterns:
+    - ignore previous
+    - ignore all rules
+    - no restrictions
+    - bypass filter
+    - developer mode
+    - DAN mode
+    - jailbreak
+    - do anything now
+    - unrestricted mode
+  allowed_topics:
+    - academics
+    - career
+    - relationships
+    - mental health
+    - news
+    - technology
+    - creative writing
+    - coding
+    - sports
+    - hobbies
+  max_response_length: 1200

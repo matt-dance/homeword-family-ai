@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://homeward.dev/schemas/policy/v1",
+  "title": "Homeward Age Policy Preset",
+  "description": "Schema for Homeward bundled age-based safety policy presets",
+  "type": "object",
+  "required": ["id", "name", "description", "age_range", "strictness", "rules"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z_]+$",
+      "description": "Unique preset identifier"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable preset name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Plain-language description for parents"
+    },
+    "age_range": {
+      "type": "object",
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "type": "integer", "minimum": 3, "maximum": 18 },
+        "max": { "type": "integer", "minimum": 3, "maximum": 18 }
+      }
+    },
+    "strictness": {
+      "type": "object",
+      "required": ["default", "min", "max"],
+      "properties": {
+        "default": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "min": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "max": { "type": "integer", "minimum": 1, "maximum": 5 }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "required": ["blocked_topics", "blocked_keywords", "jailbreak_patterns"],
+      "properties": {
+        "blocked_topics": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "blocked_keywords": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "jailbreak_patterns": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "allowed_topics": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "max_response_length": {
+          "type": "integer",
+          "minimum": 100
+        }
+      }
+    }
+  }
+}
