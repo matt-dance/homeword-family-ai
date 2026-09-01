@@ -17,11 +17,14 @@ build/
 *.db
 data/
 gateway/data/
+*.onnx
+*.onnx.json
 
 # IDE
 .idea/
 .vscode/
 *.swp
+web/tsconfig.tsbuildinfo
 
 # OS
 .DS_Store

@@ -25,16 +25,24 @@
 ### Mac / Linux
 
 ```bash
-git clone <your-repo-url> homeward
-cd homeward
+git clone https://origin.cursor.com/git/matt-code/homeword-family-ai.git
+cd homeword-family-ai
+./scripts/install.sh
+```
+
+Or from GitHub, once mirrored:
+
+```bash
+git clone https://github.com/matt-code/homeword-family-ai.git
+cd homeword-family-ai
 ./scripts/install.sh
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
-git clone <your-repo-url> homeward
-cd homeward
+git clone https://origin.cursor.com/git/matt-code/homeword-family-ai.git
+cd homeword-family-ai
 .\scripts\install.ps1
 ```
 
