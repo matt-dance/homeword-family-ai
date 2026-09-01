@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { clearParentUnlock, markParentUnlocked } from "@/lib/parent-lock";
+import { clearParentUnlock } from "@/lib/parent-lock";
 import { useParentLock } from "@/hooks/use-parent-lock";
 import { ParentNav } from "@/components/parent-nav";
 import { ParentLockOverlay } from "@/components/parent-lock-overlay";
@@ -23,7 +23,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           router.replace("/chat");
           return;
         }
-        markParentUnlocked();
         setReady(true);
       })
       .catch(() => router.replace("/setup"));

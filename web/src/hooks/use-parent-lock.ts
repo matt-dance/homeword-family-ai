@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { isParentLockExpired, markParentUnlocked } from "@/lib/parent-lock";
+import {
+  clearParentUnlock,
+  isParentLockExpired,
+  markParentUnlocked,
+  subscribeParentLock,
+} from "@/lib/parent-lock";
 
 const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll"] as const;
 
@@ -10,18 +15,24 @@ export function useParentLock() {
     typeof window !== "undefined" ? isParentLockExpired() : true,
   );
 
+  const syncFromStorage = useCallback(() => {
+    setLocked(isParentLockExpired());
+  }, []);
+
   const refreshActivity = useCallback(() => {
     markParentUnlocked();
-    setLocked(false);
   }, []);
 
   const lockNow = useCallback(() => {
-    setLocked(true);
+    clearParentUnlock();
   }, []);
 
   useEffect(() => {
-    setLocked(isParentLockExpired());
+    syncFromStorage();
+    return subscribeParentLock(syncFromStorage);
+  }, [syncFromStorage]);
 
+  useEffect(() => {
     const onActivity = () => {
       if (isParentLockExpired()) return;
       markParentUnlocked();
@@ -31,14 +42,10 @@ export function useParentLock() {
       window.addEventListener(event, onActivity, { passive: true });
     }
 
-    const interval = window.setInterval(() => {
-      if (isParentLockExpired()) setLocked(true);
-    }, 30_000);
+    const interval = window.setInterval(syncFromStorage, 30_000);
 
     const onVisibility = () => {
-      if (document.visibilityState === "visible" && isParentLockExpired()) {
-        setLocked(true);
-      }
+      if (document.visibilityState === "visible") syncFromStorage();
     };
     document.addEventListener("visibilitychange", onVisibility);
 
@@ -49,7 +56,7 @@ export function useParentLock() {
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, []);
+  }, [syncFromStorage]);
 
   return { locked, refreshActivity, lockNow };
 }

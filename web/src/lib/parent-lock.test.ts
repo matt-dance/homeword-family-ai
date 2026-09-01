@@ -4,6 +4,7 @@ import {
   isParentLockExpired,
   markParentUnlocked,
   clearParentUnlock,
+  subscribeParentLock,
   PARENT_LOCK_IDLE_MS,
 } from "./parent-lock";
 
@@ -33,5 +34,19 @@ describe("parent-lock", () => {
     markParentUnlocked();
     clearParentUnlock();
     expect(sessionStorage.getItem(PARENT_UNLOCK_KEY)).toBeNull();
+  });
+
+  it("notifies subscribers when unlock state changes", () => {
+    const seen: boolean[] = [];
+    const unsubscribe = subscribeParentLock(() => {
+      seen.push(isParentLockExpired());
+    });
+
+    markParentUnlocked();
+    clearParentUnlock();
+    unsubscribe();
+    markParentUnlocked();
+
+    expect(seen).toEqual([false, true]);
   });
 });

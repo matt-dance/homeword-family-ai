@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,8 @@ export function ParentLockOverlay({ onUnlock }: ParentLockOverlayProps) {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (event?: FormEvent) => {
+    event?.preventDefault();
     if (!password) return;
     setSubmitting(true);
     setError("");
@@ -24,8 +25,13 @@ export function ParentLockOverlay({ onUnlock }: ParentLockOverlayProps) {
       await api.login(password);
       onUnlock();
       setPassword("");
-    } catch {
-      setError("That password doesn't match. Please try again.");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "";
+      if (!message || message === "Invalid password" || message === "Request failed") {
+        setError("That password doesn't match. Please try again.");
+      } else {
+        setError(message);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -47,31 +53,30 @@ export function ParentLockOverlay({ onUnlock }: ParentLockOverlayProps) {
             </p>
           </div>
 
-          <div className="space-y-2 pt-1">
+          <form className="space-y-2 pt-1" onSubmit={handleSubmit}>
             <Input
               type="password"
               placeholder="Parent password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
               className="h-12 rounded-xl text-center text-base"
               autoFocus
+              autoComplete="current-password"
             />
             {error && (
               <p className="text-xs font-semibold text-destructive text-center animate-slide-down">
                 {error}
               </p>
             )}
-          </div>
-
-          <Button
-            className="w-full h-11 rounded-xl font-semibold shadow-sm shadow-primary/20"
-            onClick={handleSubmit}
-            disabled={submitting || !password}
-          >
-            {submitting ? "Unlocking…" : "Unlock Dashboard"}
-            {!submitting && <ArrowRight className="ml-2 h-4 w-4" />}
-          </Button>
+            <Button
+              type="submit"
+              className="w-full h-11 rounded-xl font-semibold shadow-sm shadow-primary/20"
+              disabled={submitting || !password}
+            >
+              {submitting ? "Unlocking…" : "Unlock Dashboard"}
+              {!submitting && <ArrowRight className="ml-2 h-4 w-4" />}
+            </Button>
+          </form>
 
           <div className="flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground pt-1">
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />

@@ -111,3 +111,19 @@ class TestDashboardLocalHost:
         for item in resp.json():
             assert item["child_id"] == first["id"]
         assert second["id"] not in {item["child_id"] for item in resp.json()}
+
+    @pytest.mark.asyncio
+    async def test_delete_session_rejects_remote(self, client: AsyncClient):
+        await setup_parent(client)
+        child = await create_child(client)
+        session_id = (
+            await client.post("/api/v1/chat/sessions", json={"child_id": child["id"]})
+        ).json()["session_id"]
+        resp = await client.delete(
+            f"/api/v1/dashboard/sessions/{session_id}",
+            headers={
+                "X-Homeward-Client-Host": "homeward.local",
+                "X-Homeward-Client-Ip": "192.168.1.99",
+            },
+        )
+        assert resp.status_code == 403

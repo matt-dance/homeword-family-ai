@@ -19,6 +19,8 @@ import {
   Check,
   Edit2,
   X,
+  Plus,
+  Trash2,
 } from "lucide-react";
 
 export default function ProfilesPage() {
@@ -29,6 +31,18 @@ export default function ProfilesPage() {
   >({});
   const [childSaveError, setChildSaveError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [addingChild, setAddingChild] = useState(false);
+  const [newChild, setNewChild] = useState({
+    name: "",
+    age: 8,
+    strictness: 3,
+    pin: "",
+    homework_mode: false,
+  });
+  const [addError, setAddError] = useState("");
+  const [addSaving, setAddSaving] = useState(false);
+  const [deletingChildId, setDeletingChildId] = useState<number | null>(null);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     api
@@ -67,6 +81,60 @@ export default function ProfilesPage() {
     }
   };
 
+  const resetNewChild = () => {
+    setNewChild({ name: "", age: 8, strictness: 3, pin: "", homework_mode: false });
+    setAddError("");
+    setAddingChild(false);
+  };
+
+  const saveNewChild = async () => {
+    const name = newChild.name.trim();
+    if (!name) {
+      setAddError("Please enter a name");
+      return;
+    }
+    if (newChild.age < 3 || newChild.age > 18) {
+      setAddError("Age must be between 3 and 18");
+      return;
+    }
+    setAddSaving(true);
+    setAddError("");
+    try {
+      const created = await api.createChild({
+        name,
+        age: newChild.age,
+        strictness: newChild.strictness,
+        pin: newChild.pin.trim() || undefined,
+        homework_mode: newChild.homework_mode,
+      });
+      setChildren((prev) => [...prev, created]);
+      resetNewChild();
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : "Could not add child");
+    } finally {
+      setAddSaving(false);
+    }
+  };
+
+  const deleteAllChats = async (child: Child) => {
+    if (
+      !window.confirm(
+        `Delete all chat sessions for ${child.name}? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingChildId(child.id);
+    setDeleteError("");
+    try {
+      await api.deleteChildSessions(child.id);
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : "Could not delete chats");
+    } finally {
+      setDeletingChildId(null);
+    }
+  };
+
   if (loading) {
     return (
       <main className="mx-auto max-w-5xl p-8 flex items-center justify-center min-h-[50vh]">
@@ -100,14 +168,147 @@ export default function ProfilesPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {children.length === 0 ? (
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              onClick={() => {
+                setAddingChild(true);
+                setAddError("");
+              }}
+              disabled={addingChild}
+              className="rounded-xl text-xs font-medium"
+            >
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Add a child
+            </Button>
+          </div>
+
+          {addingChild && (
+            <div className="rounded-2xl border border-primary/40 bg-primary/5 p-5 space-y-4 animate-slide-down">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="font-bold text-foreground">New child profile</h3>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={resetNewChild}
+                  className="rounded-xl text-xs text-muted-foreground"
+                >
+                  <X className="mr-1.5 h-3.5 w-3.5" />
+                  Cancel
+                </Button>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Name
+                  </label>
+                  <Input
+                    value={newChild.name}
+                    onChange={(e) => setNewChild({ ...newChild, name: e.target.value })}
+                    placeholder="Lincoln"
+                    className="rounded-xl"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Age
+                  </label>
+                  <Input
+                    type="number"
+                    min={3}
+                    max={18}
+                    value={newChild.age}
+                    onChange={(e) =>
+                      setNewChild({
+                        ...newChild,
+                        age: parseInt(e.target.value, 10) || 8,
+                      })
+                    }
+                    className="rounded-xl"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold uppercase tracking-wider text-muted-foreground">
+                    Safety Strictness
+                  </span>
+                  <span className="font-bold text-primary">
+                    Level {newChild.strictness} of 5
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={5}
+                  value={newChild.strictness}
+                  onChange={(e) =>
+                    setNewChild({
+                      ...newChild,
+                      strictness: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className="w-full accent-primary h-2 bg-muted rounded-lg cursor-pointer"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Secret Profile PIN (optional)
+                </label>
+                <Input
+                  type="password"
+                  placeholder="4–6 digits (optional)"
+                  value={newChild.pin}
+                  onChange={(e) => setNewChild({ ...newChild, pin: e.target.value })}
+                  maxLength={6}
+                  className="rounded-xl font-mono"
+                />
+              </div>
+              <label className="flex items-center gap-2.5 rounded-xl border border-border/80 p-3 text-sm cursor-pointer hover:bg-background/80 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={newChild.homework_mode}
+                  onChange={(e) =>
+                    setNewChild({ ...newChild, homework_mode: e.target.checked })
+                  }
+                  className="accent-primary rounded h-4 w-4"
+                />
+                <div>
+                  <p className="font-semibold text-foreground flex items-center gap-1.5">
+                    <BookOpen className="h-4 w-4 text-primary" />
+                    Homework Mode
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Gives helpful hints instead of copy-paste answers
+                  </p>
+                </div>
+              </label>
+              {addError && (
+                <p className="text-xs font-semibold text-destructive">{addError}</p>
+              )}
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  onClick={saveNewChild}
+                  disabled={addSaving}
+                  className="rounded-xl font-semibold shadow-xs"
+                >
+                  <Check className="mr-1.5 h-3.5 w-3.5" />
+                  {addSaving ? "Adding…" : "Add child"}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {deleteError && (
+            <p className="text-xs font-semibold text-destructive">{deleteError}</p>
+          )}
+
+          {children.length === 0 && !addingChild ? (
             <div className="py-12 text-center space-y-3">
               <p className="text-sm text-muted-foreground">
-                No child profiles found.
+                No child profiles yet. Add one to get a dedicated chat link.
               </p>
-              <Link href="/setup">
-                <Button className="rounded-xl">Complete Setup</Button>
-              </Link>
             </div>
           ) : (
             children.map((child) => {
@@ -154,6 +355,16 @@ export default function ProfilesPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => deleteAllChats(child)}
+                        disabled={deletingChildId === child.id}
+                        className="rounded-xl text-xs font-medium text-destructive border-destructive/30 hover:bg-destructive/5"
+                      >
+                        <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                        {deletingChildId === child.id ? "Deleting…" : "Delete chats"}
+                      </Button>
                       <Link href={chatPathForChild(child)}>
                         <Button
                           size="sm"

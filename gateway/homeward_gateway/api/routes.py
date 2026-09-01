@@ -9,7 +9,7 @@ from typing import Annotated, AsyncIterator
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from homeward_gateway.auth.local_host import is_local_request, require_local_request
@@ -920,6 +920,7 @@ async def chat(
 @router.post("/chat/stream")
 async def chat_stream(
     body: ChatRequest,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     child, preset = await _get_child_context(body.child_id, session)
@@ -933,6 +934,21 @@ async def chat_stream(
         async with async_session_factory() as log_session:
             collected = []
             blocked_early = False
+            persisted = False
+
+            async def persist_turn() -> None:
+                nonlocal persisted
+                if persisted or blocked_early:
+                    return
+                persisted = True
+                full = strip_thinking("".join(collected))
+                await _log_message(
+                    log_session, child.id, "input", body.message, chat_session_id=chat_session_id
+                )
+                if full:
+                    await _log_message(
+                        log_session, child.id, "output", full, chat_session_id=chat_session_id
+                    )
 
             async for item in process_chat_stream(
                 body.message,
@@ -945,6 +961,9 @@ async def chat_stream(
                 classifier_model=classifier_model,
                 homework_mode=child.homework_mode,
             ):
+                if await request.is_disconnected():
+                    await persist_turn()
+                    return
                 if isinstance(item, ToolEvent):
                     payload = json.dumps({"type": "tools", "tools": item.tools})
                     yield f"data: {payload}\n\n"
@@ -969,16 +988,7 @@ async def chat_stream(
                     payload = json.dumps({"type": "token", "content": item})
                     yield f"data: {payload}\n\n"
 
-            if not blocked_early:
-                full = strip_thinking("".join(collected))
-                await _log_message(
-                    log_session, child.id, "input", body.message, chat_session_id=chat_session_id
-                )
-                if full:
-                    await _log_message(
-                        log_session, child.id, "output", full, chat_session_id=chat_session_id
-                    )
-
+            await persist_turn()
             yield f"data: {json.dumps({'type': 'done', 'session_id': chat_session_id})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -1113,6 +1123,81 @@ async def dashboard_session_messages(
         .order_by(ConversationLog.created_at.asc())
     )
     return [_serialize_log(log) for log in logs_result.scalars().all()]
+
+
+async def _parent_child_ids(
+    parent: ParentAccount, session: AsyncSession
+) -> list[int]:
+    children_result = await session.execute(
+        select(ChildProfile).where(ChildProfile.parent_id == parent.id)
+    )
+    return [c.id for c in children_result.scalars().all()]
+
+
+@router.delete("/dashboard/sessions/{session_id}")
+async def delete_dashboard_session(
+    session_id: str,
+    request: Request,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    require_local_request(request)
+    child_ids = await _parent_child_ids(parent, session)
+    if not child_ids:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if session_id.startswith("legacy-"):
+        orphan_result = await session.execute(
+            select(ConversationLog)
+            .where(ConversationLog.child_id.in_(child_ids))
+            .where(ConversationLog.session_id.is_(None))
+        )
+        logs = find_legacy_session(list(orphan_result.scalars().all()), session_id)
+        if not logs:
+            raise HTTPException(status_code=404, detail="Session not found")
+        log_ids = [log.id for log in logs]
+        await session.execute(delete(ConversationLog).where(ConversationLog.id.in_(log_ids)))
+        await session.commit()
+        return {"ok": True, "deleted": len(log_ids)}
+
+    try:
+        numeric_id = int(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Session not found") from exc
+
+    session_result = await session.execute(
+        select(ChatSession).where(
+            ChatSession.id == numeric_id,
+            ChatSession.child_id.in_(child_ids),
+        )
+    )
+    if not session_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await session.execute(
+        delete(ConversationLog).where(ConversationLog.session_id == numeric_id)
+    )
+    await session.execute(delete(ChatSession).where(ChatSession.id == numeric_id))
+    await session.commit()
+    return {"ok": True, "deleted": 1}
+
+
+@router.delete("/dashboard/sessions")
+async def delete_dashboard_child_sessions(
+    request: Request,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    child_id: int,
+):
+    require_local_request(request)
+    child_ids = await _parent_child_ids(parent, session)
+    if child_id not in child_ids:
+        raise HTTPException(status_code=404, detail="Child not found")
+
+    await session.execute(delete(ConversationLog).where(ConversationLog.child_id == child_id))
+    await session.execute(delete(ChatSession).where(ChatSession.child_id == child_id))
+    await session.commit()
+    return {"ok": True}
 
 
 @router.get("/dashboard/logs")

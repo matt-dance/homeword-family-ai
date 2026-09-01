@@ -29,6 +29,7 @@ import {
   ArrowRight,
   ShieldCheck,
   Zap,
+  Trash2,
 } from "lucide-react";
 
 function DashboardContent() {
@@ -47,6 +48,9 @@ function DashboardContent() {
   const [aiReady, setAiReady] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"logs" | "blocked">("logs");
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+  const [deletingAll, setDeletingAll] = useState(false);
+  const [sessionActionError, setSessionActionError] = useState("");
 
   useEffect(() => {
     const load = async () => {
@@ -104,6 +108,53 @@ function DashboardContent() {
       setSessionMessages([]);
     } finally {
       setSessionLoading(false);
+    }
+  };
+
+  const deleteSession = async (session: ChatSessionSummary) => {
+    if (
+      !window.confirm(
+        `Delete this conversation with ${childName(session.child_id)}? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingSessionId(session.id);
+    setSessionActionError("");
+    try {
+      await api.deleteSession(session.id);
+      setSessions((prev) => prev.filter((s) => s.id !== session.id));
+      if (selectedSession?.id === session.id) {
+        setSelectedSession(null);
+        setSessionMessages([]);
+      }
+    } catch (e) {
+      setSessionActionError(e instanceof Error ? e.message : "Could not delete session");
+    } finally {
+      setDeletingSessionId(null);
+    }
+  };
+
+  const deleteAllSessionsForChild = async () => {
+    if (!filteredChild) return;
+    if (
+      !window.confirm(
+        `Delete all conversations for ${filteredChild.name}? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingAll(true);
+    setSessionActionError("");
+    try {
+      await api.deleteChildSessions(filteredChild.id);
+      setSessions([]);
+      setSelectedSession(null);
+      setSessionMessages([]);
+    } catch (e) {
+      setSessionActionError(e instanceof Error ? e.message : "Could not delete chats");
+    } finally {
+      setDeletingAll(false);
     }
   };
 
@@ -442,26 +493,57 @@ function DashboardContent() {
         {tab === "logs" && (
           <Card className="border-border/80 shadow-xs">
             <CardHeader className="pb-4">
-              <CardTitle className="text-lg font-bold">Recent Chat Sessions</CardTitle>
-              <CardDescription>
-                Select any conversation session to inspect the full kid & assistant dialogue.
-              </CardDescription>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-lg font-bold">Recent Chat Sessions</CardTitle>
+                  <CardDescription>
+                    Select any conversation session to inspect the full kid & assistant dialogue.
+                  </CardDescription>
+                </div>
+                {filteredChild && sessions.length > 0 && !selectedSession && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={deleteAllSessionsForChild}
+                    disabled={deletingAll}
+                    className="rounded-xl text-xs font-medium text-destructive border-destructive/30 hover:bg-destructive/5"
+                  >
+                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                    {deletingAll ? "Deleting…" : `Delete all for ${filteredChild.name}`}
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
+              {sessionActionError && (
+                <p className="mb-3 text-xs font-semibold text-destructive">{sessionActionError}</p>
+              )}
               {selectedSession ? (
                 <div className="space-y-4 animate-fade-in">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setSelectedSession(null);
-                      setSessionMessages([]);
-                    }}
-                    className="rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground"
-                  >
-                    <ArrowLeft className="mr-1.5 h-4 w-4" />
-                    Back to all sessions
-                  </Button>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedSession(null);
+                        setSessionMessages([]);
+                      }}
+                      className="rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground"
+                    >
+                      <ArrowLeft className="mr-1.5 h-4 w-4" />
+                      Back to all sessions
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => deleteSession(selectedSession)}
+                      disabled={deletingSessionId === selectedSession.id}
+                      className="rounded-xl text-xs font-medium text-destructive border-destructive/30 hover:bg-destructive/5"
+                    >
+                      <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                      {deletingSessionId === selectedSession.id ? "Deleting…" : "Delete session"}
+                    </Button>
+                  </div>
 
                   <div className="rounded-2xl border border-border/80 bg-muted/30 p-4 space-y-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -555,34 +637,50 @@ function DashboardContent() {
               ) : (
                 <div className="space-y-2.5">
                   {sessions.map((session) => (
-                    <button
+                    <div
                       key={session.id}
-                      onClick={() => openSession(session)}
-                      className="flex w-full items-start gap-3.5 rounded-2xl border border-border/70 bg-card p-4 text-left shadow-2xs transition-all hover:border-primary/50 hover:bg-muted/30 active:scale-[0.99]"
+                      className="flex w-full items-start gap-2 rounded-2xl border border-border/70 bg-card p-4 shadow-2xs transition-all hover:border-primary/50 hover:bg-muted/30"
                     >
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary mt-0.5">
-                        <MessageCircle className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="font-bold text-foreground text-sm sm:text-base">
-                            {childName(session.child_id)}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(session.last_at).toLocaleString()}
-                          </span>
+                      <button
+                        type="button"
+                        onClick={() => openSession(session)}
+                        className="flex min-w-0 flex-1 items-start gap-3.5 text-left"
+                      >
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary mt-0.5">
+                          <MessageCircle className="h-4 w-4" />
                         </div>
-                        <p className="mt-1 truncate text-xs sm:text-sm text-muted-foreground">
-                          {session.summary || session.preview}
-                        </p>
-                        <div className="mt-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
-                          <span className="rounded-full bg-muted px-2 py-0.5">
-                            {session.message_count} message{session.message_count !== 1 ? "s" : ""}
-                          </span>
-                          {session.legacy && <span>· legacy session</span>}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-bold text-foreground text-sm sm:text-base">
+                              {childName(session.child_id)}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(session.last_at).toLocaleString()}
+                            </span>
+                          </div>
+                          <p className="mt-1 truncate text-xs sm:text-sm text-muted-foreground">
+                            {session.summary || session.preview}
+                          </p>
+                          <div className="mt-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+                            <span className="rounded-full bg-muted px-2 py-0.5">
+                              {session.message_count} message{session.message_count !== 1 ? "s" : ""}
+                            </span>
+                            {session.legacy && <span>· legacy session</span>}
+                          </div>
                         </div>
-                      </div>
-                    </button>
+                      </button>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        title="Delete this conversation"
+                        onClick={() => deleteSession(session)}
+                        disabled={deletingSessionId === session.id}
+                        className="mt-0.5 h-9 w-9 shrink-0 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   ))}
                 </div>
               )}

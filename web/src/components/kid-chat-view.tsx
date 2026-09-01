@@ -67,6 +67,7 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
   const bottomRef = useRef<HTMLDivElement>(null);
   const sendRef = useRef<(text: string, fromVoice?: boolean) => Promise<void>>(async () => {});
   const autoReadNextRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   const {
     supported: readAloudSupported,
@@ -236,6 +237,8 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
         content: extractChatTools(m.content).text || m.content,
       }));
       let assistantContent = "";
+      const controller = new AbortController();
+      abortRef.current = controller;
 
       try {
         await streamChat(
@@ -261,6 +264,7 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
           },
           () => {
             setStreaming(false);
+            if (controller.signal.aborted) return;
             if (!assistantContent || assistantContent.includes("Something went wrong")) return;
             if (!autoReadNextRef.current) return;
             autoReadNextRef.current = false;
@@ -291,16 +295,32 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
               return [...prev, { role: "assistant", content: "", tools: mergeChatTools([], tools) }];
             });
           },
+          controller.signal,
         );
       } catch (e) {
+        if (controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) {
+          setStreaming(false);
+          return;
+        }
         const fallback =
           e instanceof Error ? e.message : "Something went wrong. Please try again in a moment!";
         setMessages((prev) => [...prev, { role: "assistant", content: fallback, blocked: true }]);
         setStreaming(false);
+      } finally {
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+        }
       }
     },
     [input, selectedChild, streaming, pinVerified, chatSessionId, sessionReady, messages, speakMessage, stopReadAloud],
   );
+
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreaming(false);
+    stopReadAloud();
+  }, [stopReadAloud]);
 
   useEffect(() => {
     sendRef.current = handleSend;
@@ -679,6 +699,13 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
                 <span className="text-xs text-muted-foreground font-medium pl-1">
                   Thinking…
                 </span>
+                <button
+                  type="button"
+                  onClick={handleStop}
+                  className="ml-2 rounded-lg px-2 py-0.5 text-xs font-semibold text-destructive hover:bg-destructive/10"
+                >
+                  Stop
+                </button>
               </div>
             </div>
           )}
@@ -745,17 +772,32 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
                 simpleMode ? "h-14 text-base" : "h-11 text-sm"
               }`}
             />
-            <Button
-              onClick={() => handleSend()}
-              disabled={streaming || !input.trim() || !sessionReady || transcribing}
-              size="icon"
-              title="Send message"
-              className={`shrink-0 rounded-2xl shadow-sm shadow-primary/20 transition-transform active:scale-95 ${
-                simpleMode ? "h-14 w-14" : "h-11 w-11"
-              }`}
-            >
-              <Send className="h-4 w-4" />
-            </Button>
+            {streaming ? (
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={handleStop}
+                title="Stop the reply"
+                className={`shrink-0 rounded-2xl shadow-sm transition-transform active:scale-95 ${
+                  simpleMode ? "h-14 px-5 text-base" : "h-11 px-4 text-sm"
+                }`}
+              >
+                <Square className="h-4 w-4 fill-current" />
+                <span>Stop</span>
+              </Button>
+            ) : (
+              <Button
+                onClick={() => handleSend()}
+                disabled={!input.trim() || !sessionReady || transcribing}
+                size="icon"
+                title="Send message"
+                className={`shrink-0 rounded-2xl shadow-sm shadow-primary/20 transition-transform active:scale-95 ${
+                  simpleMode ? "h-14 w-14" : "h-11 w-11"
+                }`}
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            )}
           </div>
         </div>
       </div>

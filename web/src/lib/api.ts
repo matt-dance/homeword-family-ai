@@ -246,6 +246,10 @@ export const api = {
     ),
   sessionMessages: (sessionId: string) =>
     request<ConversationLog[]>(`/dashboard/sessions/${sessionId}/messages`),
+  deleteSession: (sessionId: string) =>
+    request<{ ok: boolean }>(`/dashboard/sessions/${sessionId}`, { method: "DELETE" }),
+  deleteChildSessions: (childId: number) =>
+    request<{ ok: boolean }>(`/dashboard/sessions?child_id=${childId}`, { method: "DELETE" }),
   createChatSession: (childId: number, endSessionId?: number) =>
     request<{ session_id: number; started_at: string }>("/chat/sessions", {
       method: "POST",
@@ -335,12 +339,14 @@ export async function streamChat(
   onDone: () => void,
   sessionId?: number,
   onTools?: (tools: ChatTool[]) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/chat/stream`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, child_id: childId, history, session_id: sessionId }),
+    signal,
   });
 
   if (!res.ok) {
@@ -365,26 +371,35 @@ export async function streamChat(
     onDone();
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
+  try {
+    while (true) {
+      if (signal?.aborted) break;
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
 
-    for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        try {
-          const data = JSON.parse(line.slice(6));
-          if (data.type === "token") onToken(data.content);
-          else if (data.type === "blocked") onBlocked(data.message);
-          else if (data.type === "tools" && Array.isArray(data.tools)) onTools?.(data.tools);
-          else if (data.type === "done") finish();
-        } catch {
-          // skip malformed
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.type === "token") onToken(data.content);
+            else if (data.type === "blocked") onBlocked(data.message);
+            else if (data.type === "tools" && Array.isArray(data.tools)) onTools?.(data.tools);
+            else if (data.type === "done") finish();
+          } catch {
+            // skip malformed
+          }
         }
       }
     }
+    finish();
+  } catch (error) {
+    if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+      finish();
+      return;
+    }
+    throw error;
   }
-  finish();
 }
