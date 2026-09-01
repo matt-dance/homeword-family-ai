@@ -141,7 +141,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => request<{ status: string }>("/health"),
+  health: () =>
+    request<{ status: string; ollama?: { ready: boolean } }>("/health"),
   setupStatus: () => request<SetupStatus>("/setup/status"),
   setup: (password: string) =>
     request<{ ok: boolean; resumed?: boolean; recovery_code?: string }>("/setup", {
