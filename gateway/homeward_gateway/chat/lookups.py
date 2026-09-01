@@ -40,6 +40,9 @@ _PLACE_STOP = {
     "fahrenheit",
     "fall",
     "here",
+    "how",
+    "is",
+    "it",
     "my",
     "our",
     "spring",
@@ -51,6 +54,9 @@ _PLACE_STOP = {
     "today",
     "tomorrow",
     "tonight",
+    "what",
+    "whats",
+    "what's",
     "winter",
 }
 
@@ -176,14 +182,14 @@ def _is_place(value: str) -> bool:
 
 
 def _extract_place(text: str) -> str:
-    prefixed = PLACE_PREFIX_RE.search(text)
-    if prefixed:
-        candidate = prefixed.group(1).strip()
-        if _is_place(candidate):
-            return candidate
     found = PLACE_IN_RE.search(text)
     if found:
         candidate = found.group(1).strip()
+        if _is_place(candidate):
+            return candidate
+    prefixed = PLACE_PREFIX_RE.search(text)
+    if prefixed:
+        candidate = prefixed.group(1).strip()
         if _is_place(candidate):
             return candidate
     return ""
