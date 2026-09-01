@@ -1,3 +1,5 @@
+import { decodeSpeechPayload } from "@/lib/read-aloud";
+
 const API_BASE = "/api/v1";
 
 export interface Preset {
@@ -268,7 +270,12 @@ export const api = {
       const detail = err.detail;
       throw new Error(typeof detail === "string" ? detail : "Could not read text aloud");
     }
-    return res.blob();
+    const data = (await res.json()) as {
+      audio_base64: string;
+      words: Array<{ word: string; start: number; end: number }>;
+      duration: number;
+    };
+    return decodeSpeechPayload(data);
   },
   blockedStats: () =>
     request<{ today_count: number; total_count: number }>("/dashboard/blocked/stats"),

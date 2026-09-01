@@ -33,7 +33,7 @@ from homeward_gateway.voice.speak import (
     piper_available,
     run_speak_self_test,
     sanitize_for_speech,
-    synthesize_wav_bytes,
+    synthesize_speech_payload,
 )
 from homeward_gateway.voice.transcribe import (
     get_whisper_status,
@@ -673,7 +673,7 @@ async def speak_text(body: SpeakRequest, request: Request):
         raise HTTPException(status_code=400, detail="Text is too long to read aloud")
 
     try:
-        audio = await asyncio.to_thread(synthesize_wav_bytes, cleaned)
+        payload = await asyncio.to_thread(synthesize_speech_payload, cleaned)
     except ValueError as exc:
         record_attempt(f"speak:{client_key}")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -685,7 +685,7 @@ async def speak_text(body: SpeakRequest, request: Request):
         raise HTTPException(status_code=500, detail="Could not read text aloud") from exc
 
     reset_attempts(f"speak:{client_key}")
-    return Response(content=audio, media_type="audio/wav")
+    return payload
 
 
 @router.post("/chat/sessions")

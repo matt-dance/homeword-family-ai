@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import logging
-import shutil
 import subprocess
 import sys
 import threading
 import wave
 from pathlib import Path
+from typing import Any
+
+import numpy as np
 
 from homeward_gateway.config import settings
 
@@ -32,6 +35,15 @@ def piper_available() -> bool:
         return False
 
 
+def alignment_available() -> bool:
+    try:
+        import onnx  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 def _model_path() -> Path:
     return PIPER_DIR / f"{settings.piper_voice}.onnx"
 
@@ -42,6 +54,7 @@ def get_speak_status() -> dict:
             "available": False,
             "ready": False,
             "voice": settings.piper_voice,
+            "synced_highlighting": False,
             "message": "Local read-aloud is not installed on this Homeward server.",
         }
     if _load_error:
@@ -49,6 +62,7 @@ def get_speak_status() -> dict:
             "available": True,
             "ready": False,
             "voice": settings.piper_voice,
+            "synced_highlighting": alignment_available(),
             "message": _load_error,
         }
     ready = _model is not None or _model_path().is_file()
@@ -56,6 +70,7 @@ def get_speak_status() -> dict:
         "available": True,
         "ready": ready,
         "voice": settings.piper_voice,
+        "synced_highlighting": alignment_available(),
         "message": None if ready else "Read-aloud voice will download on first use.",
     }
 
@@ -89,8 +104,8 @@ def _load_model():
         raise RuntimeError(f"Piper voice not found at {path}")
 
     logger.info("Loading Piper voice %s", settings.piper_voice)
-    _model = PiperVoice.load(str(path))
-    logger.info("Piper voice ready")
+    _model = PiperVoice.load(str(path), include_alignments=alignment_available())
+    logger.info("Piper voice ready (alignments=%s)", alignment_available())
 
 
 def ensure_model() -> None:
@@ -121,7 +136,44 @@ def sanitize_for_speech(text: str) -> str:
     return cleaned
 
 
-def synthesize_wav_bytes(text: str) -> bytes:
+def build_word_timings(text: str, chunks) -> list[dict[str, Any]]:
+    """Map Piper phoneme alignments to per-word start/end times in seconds."""
+    words = text.split()
+    if not words:
+        return []
+
+    timeline: list[tuple[str, float, float]] = []
+    elapsed = 0.0
+    for chunk in chunks:
+        if not chunk.phoneme_alignments:
+            continue
+        sample_rate = chunk.sample_rate
+        for alignment in chunk.phoneme_alignments:
+            duration = alignment.num_samples / sample_rate
+            timeline.append((alignment.phoneme, elapsed, elapsed + duration))
+            elapsed += duration
+
+    if not timeline:
+        return []
+
+    timings: list[dict[str, Any]] = []
+    word_idx = 0
+    word_start = 0.0
+
+    for phoneme, start, end in timeline:
+        if phoneme == " " and word_idx < len(words):
+            timings.append({"word": words[word_idx], "start": word_start, "end": start})
+            word_idx += 1
+            word_start = end
+
+    while word_idx < len(words):
+        timings.append({"word": words[word_idx], "start": word_start, "end": elapsed})
+        word_idx += 1
+
+    return timings
+
+
+def synthesize_speech(text: str) -> dict[str, Any]:
     cleaned = sanitize_for_speech(text)
     if not cleaned:
         raise ValueError("Nothing to read aloud")
@@ -129,14 +181,44 @@ def synthesize_wav_bytes(text: str) -> bytes:
     ensure_model()
     assert _model is not None
 
+    chunks = list(_model.synthesize(cleaned, include_alignments=True))
+    if not chunks:
+        raise RuntimeError("Read-aloud produced no audio")
+
+    audio = np.concatenate([chunk.audio_int16_array for chunk in chunks])
+    sample_rate = chunks[0].sample_rate
+    words = build_word_timings(cleaned, chunks)
+    duration = len(audio) / sample_rate
+
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as wav_file:
-        _model.synthesize_wav(cleaned, wav_file)
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(audio.tobytes())
 
-    data = buffer.getvalue()
-    if not data:
+    wav_bytes = buffer.getvalue()
+    if not wav_bytes:
         raise RuntimeError("Read-aloud produced empty audio")
-    return data
+
+    return {
+        "audio_wav": wav_bytes,
+        "words": words,
+        "duration": duration,
+    }
+
+
+def synthesize_wav_bytes(text: str) -> bytes:
+    return synthesize_speech(text)["audio_wav"]
+
+
+def synthesize_speech_payload(text: str) -> dict[str, Any]:
+    result = synthesize_speech(text)
+    return {
+        "audio_base64": base64.b64encode(result["audio_wav"]).decode("ascii"),
+        "words": result["words"],
+        "duration": result["duration"],
+    }
 
 
 def run_speak_self_test() -> dict:
@@ -144,11 +226,12 @@ def run_speak_self_test() -> dict:
         return {"ok": False, "stage": "import", "message": "piper-tts is not installed"}
 
     try:
-        audio = synthesize_wav_bytes(SELF_TEST_PHRASE)
+        result = synthesize_speech(SELF_TEST_PHRASE)
     except Exception as exc:
         logger.exception("Speak self-test failed")
         return {"ok": False, "stage": "synthesize", "message": str(exc)}
 
+    audio = result["audio_wav"]
     if len(audio) < 1000:
         return {
             "ok": False,
@@ -156,9 +239,19 @@ def run_speak_self_test() -> dict:
             "message": f"Audio too small ({len(audio)} bytes)",
         }
 
+    words = result["words"]
+    if not words:
+        return {
+            "ok": False,
+            "stage": "alignments",
+            "message": "Word timings missing — install onnx for synced highlighting",
+        }
+
     return {
         "ok": True,
         "voice": settings.piper_voice,
         "bytes": len(audio),
+        "word_count": len(words),
+        "synced_highlighting": True,
         "message": "Read-aloud pipeline is working.",
     }

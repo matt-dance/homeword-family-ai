@@ -24,26 +24,33 @@ import json, sys
 data = json.load(open("/tmp/homeward-speak-self-test.json"))
 if not data.get("ok"):
     sys.exit("Read-aloud self-test reported ok=false")
+if data.get("word_count", 0) < 1:
+    sys.exit("Read-aloud self-test missing word timings")
 print("Read-aloud self-test PASSED")
-print("Audio bytes:", data.get("bytes"))
+print("Word timings:", data.get("word_count"))
 PY
 
 echo
-echo "== Speak endpoint returns WAV =="
-curl -s -o /tmp/homeward-speak-sample.wav -w "HTTP:%{http_code} SIZE:%{size_download}\n" \
+echo "== Speak endpoint returns synced payload =="
+curl -s -o /tmp/homeward-speak-sample.json -w "HTTP:%{http_code}\n" \
   -X POST "$GATEWAY_URL/api/v1/chat/speak" \
   -H "Content-Type: application/json" \
-  -d '{"text":"Hello from Homeward read aloud."}'
+  -d '{"text":"Rock and roll is great."}'
 
 python3 - <<'PY'
-import os, sys
-path = "/tmp/homeward-speak-sample.wav"
-size = os.path.getsize(path)
-if size < 1000:
-    sys.exit(f"Speak sample too small: {size} bytes")
-if open(path, "rb").read(4) != b"RIFF":
+import base64, json, os, sys
+data = json.load(open("/tmp/homeward-speak-sample.json"))
+words = data.get("words") or []
+audio = base64.b64decode(data.get("audio_base64") or "")
+if len(audio) < 1000:
+    sys.exit(f"Speak sample too small: {len(audio)} bytes")
+if audio[:4] != b"RIFF":
     sys.exit("Speak sample is not a WAV file")
-print("Speak endpoint PASSED")
+if len(words) < 3:
+    sys.exit(f"Expected word timings, got {len(words)}")
+if words[0].get("start") != 0:
+    sys.exit("First word should start at 0")
+print("Speak endpoint PASSED with", len(words), "synced words")
 PY
 
 echo
