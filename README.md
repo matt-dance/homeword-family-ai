@@ -22,27 +22,24 @@
 
 **Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or Docker + Compose (Linux)
 
+### Get the code
+
+```bash
+git clone https://github.com/YOUR_GITHUB_USERNAME/homeword-family-ai.git
+cd homeword-family-ai
+```
+
+Replace `YOUR_GITHUB_USERNAME` with your GitHub account after you create or clone the repo.
+
 ### Mac / Linux
 
 ```bash
-git clone https://origin.cursor.com/git/matt-code/homeword-family-ai.git
-cd homeword-family-ai
-./scripts/install.sh
-```
-
-Or from GitHub, once mirrored:
-
-```bash
-git clone https://github.com/matt-code/homeword-family-ai.git
-cd homeword-family-ai
 ./scripts/install.sh
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
-git clone https://origin.cursor.com/git/matt-code/homeword-family-ai.git
-cd homeword-family-ai
 .\scripts\install.ps1
 ```
 
