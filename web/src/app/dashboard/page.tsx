@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { chatPathForChild } from "@/lib/slug";
 import { useRouter } from "next/navigation";
 import { api, type ChatSessionSummary, type ConversationLog, type BlockedAttempt, type Child } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -178,7 +179,7 @@ export default function DashboardPage() {
                       {child.quiet_hours_enabled && " · Quiet hours"}
                     </p>
                   </div>
-                  <Link href={`/chat?child=${child.id}`}>
+                  <Link href={chatPathForChild(child)}>
                     <Button size="sm" variant="outline">Chat</Button>
                   </Link>
                 </CardContent>

@@ -323,6 +323,28 @@ async def auth_me(parent: Annotated[ParentAccount, Depends(require_parent)]):
 # --- Children helpers ---
 
 
+async def _child_slugs_for_parent(
+    session: AsyncSession,
+    parent_id: int,
+    *,
+    exclude_child_id: int | None = None,
+) -> set[str]:
+    query = select(ChildProfile.slug).where(ChildProfile.parent_id == parent_id)
+    if exclude_child_id is not None:
+        query = query.where(ChildProfile.id != exclude_child_id)
+    result = await session.execute(query)
+    return {slug for (slug,) in result.all() if slug}
+
+
+async def _assign_child_slug(session: AsyncSession, child: ChildProfile) -> None:
+    from homeward_gateway.util.slug import slugify_name, unique_slug
+
+    taken = await _child_slugs_for_parent(
+        session, child.parent_id, exclude_child_id=child.id
+    )
+    child.slug = unique_slug(slugify_name(child.name), taken)
+
+
 def _serialize_child(c: ChildProfile) -> dict:
     available, unavailable_message = is_chat_available(
         enabled=c.quiet_hours_enabled,
@@ -333,6 +355,7 @@ def _serialize_child(c: ChildProfile) -> dict:
     return {
         "id": c.id,
         "name": c.name,
+        "slug": c.slug,
         "age": c.age,
         "preset_id": c.preset_id,
         "strictness": c.strictness,
@@ -358,6 +381,7 @@ def _serialize_child_public(c: ChildProfile) -> dict:
     return {
         "id": c.id,
         "name": c.name,
+        "slug": c.slug,
         "has_pin": c.pin is not None,
         "allow_resume": c.allow_resume,
         "chat_available": available,
@@ -446,6 +470,8 @@ async def create_child(
         homework_mode=body.homework_mode,
     )
     session.add(child)
+    await session.flush()
+    await _assign_child_slug(session, child)
     await session.commit()
     await session.refresh(child)
     return _serialize_child(child)
@@ -468,8 +494,10 @@ async def update_child(
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
 
+    name_changed = False
     if body.name is not None:
         child.name = body.name
+        name_changed = True
     if body.age is not None:
         child.age = body.age
         if body.preset_id is None:
@@ -498,6 +526,9 @@ async def update_child(
         child.quiet_hours_end = body.quiet_hours_end or None
     if body.quiet_hours_days is not None:
         child.quiet_hours_days = body.quiet_hours_days or None
+
+    if name_changed:
+        await _assign_child_slug(session, child)
 
     await session.commit()
     await session.refresh(child)

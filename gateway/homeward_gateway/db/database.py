@@ -46,6 +46,7 @@ class ChildProfile(Base):
     quiet_hours_start: Mapped[str | None] = mapped_column(String(5), nullable=True)
     quiet_hours_end: Mapped[str | None] = mapped_column(String(5), nullable=True)
     quiet_hours_days: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    slug: Mapped[str] = mapped_column(String(100), nullable=False, default="child")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -146,10 +147,41 @@ def _migrate_child_columns(connection) -> None:
         ("quiet_hours_start", "VARCHAR(5)"),
         ("quiet_hours_end", "VARCHAR(5)"),
         ("quiet_hours_days", "VARCHAR(20)"),
+        ("slug", "VARCHAR(100)"),
     ]
     for name, col_type in additions:
         if name not in columns:
             connection.execute(sa.text(f"ALTER TABLE child_profiles ADD COLUMN {name} {col_type}"))
+
+    _backfill_child_slugs(connection)
+
+
+def _backfill_child_slugs(connection) -> None:
+    import sqlalchemy as sa
+
+    from homeward_gateway.util.slug import slugify_name, unique_slug
+
+    inspector = sa.inspect(connection)
+    if "child_profiles" not in inspector.get_table_names():
+        return
+    if "slug" not in {col["name"] for col in inspector.get_columns("child_profiles")}:
+        return
+
+    rows = connection.execute(
+        sa.text("SELECT id, parent_id, name, slug FROM child_profiles ORDER BY id")
+    ).fetchall()
+    taken_by_parent: dict[int, set[str]] = {}
+    for row in rows:
+        parent_id = row.parent_id
+        taken = taken_by_parent.setdefault(parent_id, set())
+        base = slugify_name(row.name)
+        slug = unique_slug(base, taken)
+        taken.add(slug)
+        if row.slug != slug:
+            connection.execute(
+                sa.text("UPDATE child_profiles SET slug = :slug WHERE id = :id"),
+                {"slug": slug, "id": row.id},
+            )
 
 
 def _migrate_chat_session_columns(connection) -> None:

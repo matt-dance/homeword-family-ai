@@ -22,6 +22,7 @@ export type FetchSpeechPayload = (text: string) => Promise<SpeechPayload>;
 export function createReadAloudController(fetchSpeechPayload: FetchSpeechPayload) {
   let audio: HTMLAudioElement | null = null;
   let objectUrl: string | null = null;
+  let speakGeneration = 0;
 
   const revokeUrl = () => {
     if (objectUrl) {
@@ -31,6 +32,7 @@ export function createReadAloudController(fetchSpeechPayload: FetchSpeechPayload
   };
 
   const stop = () => {
+    speakGeneration += 1;
     if (audio) {
       audio.onplay = null;
       audio.onended = null;
@@ -50,30 +52,38 @@ export function createReadAloudController(fetchSpeechPayload: FetchSpeechPayload
     }
 
     stop();
+    const generation = speakGeneration;
 
     try {
       const payload = await fetchSpeechPayload(trimmed);
+      if (generation !== speakGeneration) return false;
       if (!payload.audio.size) throw new Error("Empty audio response");
 
       objectUrl = URL.createObjectURL(payload.audio);
       audio = new Audio(objectUrl);
 
-      audio.onplay = () => options.onStart?.();
+      audio.onplay = () => {
+        if (generation !== speakGeneration) return;
+        options.onStart?.();
+      };
 
       audio.onended = () => {
+        if (generation !== speakGeneration) return;
         stop();
         options.onEnd?.();
       };
 
       audio.onerror = () => {
+        if (generation !== speakGeneration) return;
         stop();
         options.onError?.("Could not play read-aloud audio.");
         options.onEnd?.();
       };
 
       await audio.play();
-      return true;
+      return generation === speakGeneration;
     } catch (error) {
+      if (generation !== speakGeneration) return false;
       stop();
       const message =
         error instanceof Error ? error.message : "Could not read aloud. Try clicking Listen again.";

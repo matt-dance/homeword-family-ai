@@ -14,6 +14,7 @@ export interface Preset {
 export interface Child {
   id: number;
   name: string;
+  slug?: string;
   age?: number;
   preset_id?: string;
   strictness?: number;
@@ -338,6 +339,12 @@ export async function streamChat(
 
   const decoder = new TextDecoder();
   let buffer = "";
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    onDone();
+  };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -352,12 +359,12 @@ export async function streamChat(
           const data = JSON.parse(line.slice(6));
           if (data.type === "token") onToken(data.content);
           else if (data.type === "blocked") onBlocked(data.message);
-          else if (data.type === "done") onDone();
+          else if (data.type === "done") finish();
         } catch {
           // skip malformed
         }
       }
     }
   }
-  onDone();
+  finish();
 }

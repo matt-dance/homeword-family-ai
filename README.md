@@ -193,6 +193,40 @@ pytest tests/test_speak.py -v -m slow
 | `HOMEWARD_POLICIES_DIR` | `../policies` | Age preset YAML directory |
 | `GATEWAY_URL` | `http://localhost:8000` | Web app proxy target |
 
+## Local data & starting fresh
+
+Homeward is **local-first**: nothing in git stores your family data or model choices. Everything lives on the machine where Homeward runs:
+
+| What | Where |
+|------|--------|
+| Parent password, child profiles, model picks | `homeward.db` (SQLite) |
+| Chat history & blocked logs | same database |
+| Docker install | named volume `homeward_data` |
+| Native dev install | `gateway/data/homeward.db` (when `HOMEWARD_DATA_DIR=./gateway/data`) |
+| Ollama models | Docker volume `ollama_data`, or `~/.ollama` if Ollama is installed separately |
+
+**Cloud Agent preview vs your clone:** If you open Preview in Cursor while an agent is running, you see that **dev VM's** database — e.g. test profiles like Lincoln and whatever model was picked during development. That data is **not** in the GitHub repo and does **not** travel to your machine when you clone.
+
+**After cloning locally**, you should get the setup wizard unless old data already exists on that computer (e.g. a previous Docker volume or dev `homeward.db`).
+
+### Reset to a clean install
+
+```bash
+./scripts/reset-data.sh
+```
+
+Or manually:
+
+```bash
+# Docker
+docker compose down -v   # -v removes homeward_data (not ollama models)
+
+# Native dev
+rm -f gateway/data/homeward.db
+```
+
+Then start Homeward again and walk through the setup wizard.
+
 ## Architecture
 
 ```
