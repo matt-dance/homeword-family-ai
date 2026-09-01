@@ -130,7 +130,16 @@ def ensure_model() -> None:
 def sanitize_for_speech(text: str) -> str:
     import re
 
-    cleaned = re.sub(r"[\U00010000-\U0010ffff]", "", text)
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", " ", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"```[\s\S]*?```", " ", cleaned)
+    cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+    cleaned = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", cleaned)
+    cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
+    cleaned = re.sub(r"^#{1,6}\s+", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"[*_~>]{1,3}", "", cleaned)
+    cleaned = re.sub(r"^\s*[-*+]\s+", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"^\s*\d+\.\s+", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"[\U00010000-\U0010ffff]", "", cleaned)
     cleaned = re.sub(r"[\u2600-\u27BF]", "", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
@@ -181,11 +190,18 @@ def synthesize_speech(text: str) -> dict[str, Any]:
     ensure_model()
     assert _model is not None
 
-    chunks = list(_model.synthesize(cleaned, include_alignments=True))
+    try:
+        chunks = list(_model.synthesize(cleaned, include_alignments=True))
+    except Exception:
+        logger.exception("Piper alignments failed; retrying without them")
+        chunks = list(_model.synthesize(cleaned, include_alignments=False))
     if not chunks:
         raise RuntimeError("Read-aloud produced no audio")
 
-    audio = np.concatenate([chunk.audio_int16_array for chunk in chunks])
+    arrays = [np.asarray(chunk.audio_int16_array, dtype=np.int16) for chunk in chunks if len(chunk.audio_int16_array)]
+    if not arrays:
+        raise RuntimeError("Read-aloud produced no audio")
+    audio = np.concatenate(arrays)
     sample_rate = chunks[0].sample_rate
     words = build_word_timings(cleaned, chunks)
     duration = len(audio) / sample_rate

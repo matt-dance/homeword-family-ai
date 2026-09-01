@@ -43,7 +43,29 @@ Replace `YOUR_GITHUB_USERNAME` with your GitHub account after you create or clon
 .\scripts\install.ps1
 ```
 
-Then open **http://localhost:43123** in your browser.
+Then open **http://homeward.local:43123** from any device on your Wi‑Fi.
+
+### Local URL (`homeward.local`)
+
+Run once on the Homeward computer:
+
+```bash
+./scripts/setup-local-url.sh
+```
+
+This does two things:
+
+1. **On this computer** — adds `127.0.0.1 homeward.local` to `/etc/hosts` so the parent dashboard stays on the host machine.
+2. **On your network** — broadcasts `homeward.local` via mDNS (Bonjour) so phones, tablets, and other computers can open kid chat at the same URL.
+
+| Who | URL | What works |
+|-----|-----|------------|
+| Parent on the Homeward computer | http://homeward.local:43123 | Dashboard, settings, kid chat |
+| Kids on other devices (same Wi‑Fi) | http://homeward.local:43123/chat | Kid chat only |
+
+Keep the mDNS broadcaster running while kids use other devices (`scripts/publish-mdns.py`, or re-run `setup-local-url.sh`).
+
+You can still use `http://localhost:43123` on the host if you prefer.
 
 That's it — Homeward starts **Ollama automatically** and begins downloading a recommended AI model on first launch.
 

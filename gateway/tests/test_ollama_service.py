@@ -67,10 +67,26 @@ class TestOllamaService:
     @pytest.mark.asyncio
     async def test_recommendations_marks_too_large_models(self):
         with patch.object(ollama_service, "is_ollama_reachable", return_value=False), patch.object(
-            ollama_service, "get_system_ram_gb", return_value=4.0
+            ollama_service, "get_system_ram_gb", return_value=(4.0, "test")
         ):
             data = await ollama_service.get_recommendations("llama3.2:3b", "llama3.2:3b")
             llama3 = next(m for m in data["models"] if m["id"] == "llama3.2:3b")
             llama1 = next(m for m in data["models"] if m["id"] == "llama3.2:1b")
             assert llama1["fits_machine"] is True
             assert llama3["fits_machine"] is False
+
+    @pytest.mark.asyncio
+    async def test_recommendations_lists_other_installed_models(self):
+        with patch.object(ollama_service, "is_ollama_reachable", return_value=True), patch.object(
+            ollama_service, "list_installed_models", return_value=["llama3.2:3b", "qwen3.8:27b-mlx"]
+        ), patch.object(ollama_service, "get_system_ram_gb", return_value=(36.0, "macos-sysctl")):
+            data = await ollama_service.get_recommendations("llama3.2:3b", "llama3.2:3b")
+            assert any(item["id"] == "qwen3.8:27b-mlx" for item in data["other_installed"])
+            assert data["ram_detection"] == "macos-sysctl"
+
+    @pytest.mark.asyncio
+    async def test_validate_model_choice_accepts_installed(self):
+        with patch.object(ollama_service, "is_ollama_reachable", return_value=True), patch.object(
+            ollama_service, "list_installed_models", return_value=["qwen3.8:27b-mlx"]
+        ):
+            await ollama_service.validate_model_choice("qwen3.8:27b-mlx")

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from homeward_gateway.auth.local_host import is_local_request, require_local_request
 from homeward_gateway.auth.parent_auth import (
     clear_session_cookie,
     get_parent_from_request,
@@ -52,8 +53,9 @@ from homeward_gateway.db.database import (
 )
 from homeward_gateway.dashboard.sessions import find_legacy_session, group_legacy_logs
 from homeward_gateway.ollama import service as ollama_service
+from homeward_gateway.ollama.catalog import pick_classifier_model
 from homeward_gateway.ollama.runtime import get_effective_models
-from homeward_gateway.models.response_limits import trim_response
+from homeward_gateway.models.router import strip_thinking
 from homeward_gateway.pipeline.pipeline import PipelineResult, ToolEvent, process_chat, process_chat_stream
 from homeward_gateway.pipeline.policy import load_all_presets, preset_for_age
 
@@ -309,7 +311,10 @@ async def change_password(
 
 
 @router.get("/auth/me")
-async def auth_me(parent: Annotated[ParentAccount, Depends(require_parent)]):
+async def auth_me(
+    request: Request,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+):
     return {
         "parent_id": parent.id,
         "setup_complete": parent.setup_complete,
@@ -317,10 +322,19 @@ async def auth_me(parent: Annotated[ParentAccount, Depends(require_parent)]):
         "ollama_model": parent.ollama_model,
         "classifier_model": parent.classifier_model,
         "has_recovery_code": parent.recovery_code_hash is not None,
+        "is_local_host": is_local_request(request),
     }
 
 
 # --- Children helpers ---
+
+
+def _filter_child_ids(child_ids: list[int], child_id: int | None) -> list[int]:
+    if child_id is None:
+        return child_ids
+    if child_id not in child_ids:
+        raise HTTPException(status_code=404, detail="Child not found")
+    return [child_id]
 
 
 async def _child_slugs_for_parent(
@@ -658,7 +672,13 @@ async def transcribe_audio(
         record_attempt(f"transcribe:{client_key}")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        detail = str(exc)
+        if "load" in detail.lower() or "download" in detail.lower():
+            raise HTTPException(
+                status_code=503,
+                detail="Voice model is still loading. Wait a few seconds and try again.",
+            ) from exc
+        raise HTTPException(status_code=503, detail=detail) from exc
     except Exception as exc:
         logger.exception("Transcription failed")
         record_attempt(f"transcribe:{client_key}")
@@ -950,7 +970,7 @@ async def chat_stream(
                     yield f"data: {payload}\n\n"
 
             if not blocked_early:
-                full = trim_response("".join(collected), preset.max_response_length)
+                full = strip_thinking("".join(collected))
                 await _log_message(
                     log_session, child.id, "input", body.message, chat_session_id=chat_session_id
                 )
@@ -982,15 +1002,18 @@ def _serialize_log(log: ConversationLog) -> dict:
 
 @router.get("/dashboard/sessions")
 async def dashboard_sessions(
+    request: Request,
     parent: Annotated[ParentAccount, Depends(require_parent)],
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: int = 30,
+    child_id: int | None = None,
 ):
+    require_local_request(request)
     children_result = await session.execute(
         select(ChildProfile).where(ChildProfile.parent_id == parent.id)
     )
     children = children_result.scalars().all()
-    child_ids = [c.id for c in children]
+    child_ids = _filter_child_ids([c.id for c in children], child_id)
     if not child_ids:
         return []
 
@@ -1046,9 +1069,11 @@ async def dashboard_sessions(
 @router.get("/dashboard/sessions/{session_id}/messages")
 async def dashboard_session_messages(
     session_id: str,
+    request: Request,
     parent: Annotated[ParentAccount, Depends(require_parent)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
+    require_local_request(request)
     children_result = await session.execute(
         select(ChildProfile).where(ChildProfile.parent_id == parent.id)
     )
@@ -1092,14 +1117,17 @@ async def dashboard_session_messages(
 
 @router.get("/dashboard/logs")
 async def dashboard_logs(
+    request: Request,
     parent: Annotated[ParentAccount, Depends(require_parent)],
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: int = 50,
+    child_id: int | None = None,
 ):
+    require_local_request(request)
     children_result = await session.execute(
         select(ChildProfile).where(ChildProfile.parent_id == parent.id)
     )
-    child_ids = [c.id for c in children_result.scalars().all()]
+    child_ids = _filter_child_ids([c.id for c in children_result.scalars().all()], child_id)
     if not child_ids:
         return []
 
@@ -1126,13 +1154,16 @@ async def dashboard_logs(
 
 @router.get("/dashboard/blocked/stats")
 async def dashboard_blocked_stats(
+    request: Request,
     parent: Annotated[ParentAccount, Depends(require_parent)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    child_id: int | None = None,
 ):
+    require_local_request(request)
     children_result = await session.execute(
         select(ChildProfile).where(ChildProfile.parent_id == parent.id)
     )
-    child_ids = [c.id for c in children_result.scalars().all()]
+    child_ids = _filter_child_ids([c.id for c in children_result.scalars().all()], child_id)
     if not child_ids:
         return {"today_count": 0, "total_count": 0}
 
@@ -1153,14 +1184,17 @@ async def dashboard_blocked_stats(
 
 @router.get("/dashboard/blocked")
 async def dashboard_blocked(
+    request: Request,
     parent: Annotated[ParentAccount, Depends(require_parent)],
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: int = 50,
+    child_id: int | None = None,
 ):
+    require_local_request(request)
     children_result = await session.execute(
         select(ChildProfile).where(ChildProfile.parent_id == parent.id)
     )
-    child_ids = [c.id for c in children_result.scalars().all()]
+    child_ids = _filter_child_ids([c.id for c in children_result.scalars().all()], child_id)
     if not child_ids:
         return []
 
@@ -1267,17 +1301,20 @@ async def update_ollama_settings(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     try:
-        ollama_service.validate_model_id(body.chat_model)
-        classifier = body.classifier_model or body.chat_model
+        await ollama_service.validate_model_choice(body.chat_model)
         if body.classifier_model:
-            ollama_service.validate_model_id(body.classifier_model)
+            await ollama_service.validate_model_choice(body.classifier_model)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     parent.ollama_model = body.chat_model
-    parent.classifier_model = classifier
+    if body.classifier_model:
+        parent.classifier_model = body.classifier_model
+    else:
+        installed = await ollama_service.list_installed_models()
+        parent.classifier_model = pick_classifier_model(body.chat_model, installed)
     await session.commit()
-    status = await ollama_service.get_status(body.chat_model, classifier)
+    status = await ollama_service.get_status(parent.ollama_model, parent.classifier_model)
     return {"ok": True, "ollama": status}
 
 

@@ -67,6 +67,9 @@ class TestSpeakHelpers:
     def test_sanitize_for_speech_strips_emoji(self):
         assert sanitize_for_speech("Rock and roll 🤘 yeah") == "Rock and roll yeah"
 
+    def test_sanitize_for_speech_strips_markdown(self):
+        assert sanitize_for_speech("## Dogs\nThey are **loyal**.") == "Dogs They are loyal."
+
     def test_sanitize_for_speech_empty(self):
         assert sanitize_for_speech("🤘✨") == ""
 

@@ -1,4 +1,4 @@
-"""Slug helpers shared with the gateway."""
+/** Slug helpers shared with the gateway. */
 
 export function slugifyName(name: string): string {
   const slug = name

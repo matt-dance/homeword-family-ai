@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { HomewardLogo } from "@/components/homeward-logo";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, LayoutDashboard, LogOut, Settings } from "lucide-react";
+import { ExternalLink, LayoutDashboard, LogOut, Settings, Users } from "lucide-react";
 
 interface ParentNavProps {
   onLogout: () => void;
@@ -13,17 +13,24 @@ interface ParentNavProps {
 export function ParentNav({ onLogout }: ParentNavProps) {
   const pathname = usePathname();
   const onDashboard = pathname === "/dashboard";
+  const onProfiles = pathname.startsWith("/dashboard/profiles");
   const onSettings = pathname.startsWith("/dashboard/settings");
 
   return (
     <header className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
       <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 p-4">
         <HomewardLogo />
-        <nav className="flex items-center gap-1">
+        <nav className="flex items-center gap-1 flex-wrap">
           <Link href="/dashboard">
             <Button variant={onDashboard ? "default" : "ghost"} size="sm">
               <LayoutDashboard className="mr-2 h-4 w-4" />
               Dashboard
+            </Button>
+          </Link>
+          <Link href="/dashboard/profiles">
+            <Button variant={onProfiles ? "default" : "ghost"} size="sm">
+              <Users className="mr-2 h-4 w-4" />
+              Profiles
             </Button>
           </Link>
           <Link href="/dashboard/settings">

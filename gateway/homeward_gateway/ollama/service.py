@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import platform
 import subprocess
 import uuid
 from typing import Any
@@ -13,30 +14,104 @@ from typing import Any
 import httpx
 
 from homeward_gateway.config import settings
-from homeward_gateway.ollama.catalog import MODEL_CATALOG, catalog_by_id, pick_recommended_model
+from homeward_gateway.ollama.catalog import (
+    MODEL_CATALOG,
+    catalog_by_id,
+    estimate_min_ram_gb,
+    pick_classifier_model,
+    pick_recommended_model,
+)
 
 logger = logging.getLogger(__name__)
 
 _pull_jobs: dict[str, dict[str, Any]] = {}
 
 
-def get_system_ram_gb() -> float:
-    """Detect available system RAM in GB (best effort)."""
+def get_system_ram_gb() -> tuple[float, str]:
+    """Detect physical system RAM in GB and how it was detected."""
     try:
         if os.path.exists("/proc/meminfo"):
             with open("/proc/meminfo", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("MemTotal:"):
                         kb = int(line.split()[1])
-                        return round(kb / 1024 / 1024, 1)
+                        return round(kb / 1024 / 1024, 1), "linux-meminfo"
     except OSError:
         pass
+
+    if platform.system() == "Darwin":
+        try:
+            out = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True, timeout=2)
+            return round(int(out.strip()) / 1024**3, 1), "macos-sysctl"
+        except (subprocess.SubprocessError, OSError, ValueError):
+            pass
+
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return round(stat.ullTotalPhys / 1024**3, 1), "windows-globalmemory"
+        except (OSError, AttributeError, ValueError):
+            pass
+
     try:
-        out = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True, timeout=2)
-        return round(int(out.strip()) / 1024**3, 1)
-    except (subprocess.SubprocessError, OSError, ValueError):
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        if pages > 0 and page_size > 0:
+            return round(pages * page_size / 1024**3, 1), "unix-sysconf"
+    except (AttributeError, OSError, ValueError):
         pass
-    return 8.0
+
+    return 8.0, "fallback-default"
+
+
+def _catalog_installed(model_id: str, installed: list[str]) -> bool:
+    if model_id in installed:
+        return True
+    base = model_id.split(":")[0] if ":" in model_id else model_id
+    return any(name == model_id or name.startswith(f"{base}:") for name in installed)
+
+
+def _other_installed_models(installed: list[str], ram_gb: float) -> list[dict[str, Any]]:
+    catalog_ids = catalog_by_id()
+    extras: list[dict[str, Any]] = []
+    for name in installed:
+        if any(_catalog_installed(catalog_id, [name]) for catalog_id in catalog_ids):
+            continue
+        min_ram = estimate_min_ram_gb(name)
+        extras.append(
+            {
+                "id": name,
+                "name": name,
+                "description": "Already installed in Ollama on this computer.",
+                "min_ram_gb": min_ram,
+                "size_gb": 0,
+                "tier": "installed",
+                "fits_machine": min_ram <= ram_gb,
+                "installed": True,
+                "recommended": False,
+                "selected_chat": False,
+                "selected_classifier": False,
+                "from_ollama": True,
+            }
+        )
+    return sorted(extras, key=lambda item: item["id"])
 
 
 async def is_ollama_reachable() -> bool:
@@ -61,24 +136,18 @@ async def list_installed_models() -> list[str]:
         return []
 
 
-def _model_installed(model_id: str, installed: list[str]) -> bool:
-    if model_id in installed:
-        return True
-    base = model_id.split(":")[0] if ":" in model_id else model_id
-    return any(i == model_id or i.startswith(f"{base}:") for i in installed)
-
-
 async def get_status(chat_model: str, classifier_model: str) -> dict[str, Any]:
     reachable = await is_ollama_reachable()
     installed = await list_installed_models() if reachable else []
-    ram_gb = get_system_ram_gb()
-    chat_ready = reachable and _model_installed(chat_model, installed)
-    classifier_ready = reachable and _model_installed(classifier_model, installed)
+    ram_gb, ram_source = get_system_ram_gb()
+    chat_ready = reachable and _catalog_installed(chat_model, installed)
+    classifier_ready = reachable and _catalog_installed(classifier_model, installed)
     return {
         "reachable": reachable,
         "managed": settings.docker_mode,
         "ollama_url": settings.ollama_base_url,
         "system_ram_gb": ram_gb,
+        "ram_detection": ram_source,
         "installed_models": installed,
         "chat_model": chat_model,
         "classifier_model": classifier_model,
@@ -94,11 +163,12 @@ async def get_status(chat_model: str, classifier_model: str) -> dict[str, Any]:
 
 
 async def get_recommendations(chat_model: str, classifier_model: str) -> dict[str, Any]:
-    ram_gb = get_system_ram_gb()
+    ram_gb, ram_source = get_system_ram_gb()
     reachable = await is_ollama_reachable()
     installed = await list_installed_models() if reachable else []
     installed_set = set(installed)
     recommended_id = pick_recommended_model(ram_gb, installed_set)
+
     models = []
     for option in MODEL_CATALOG:
         fits = option.min_ram_gb <= ram_gb
@@ -111,23 +181,41 @@ async def get_recommendations(chat_model: str, classifier_model: str) -> dict[st
                 "size_gb": option.size_gb,
                 "tier": option.tier,
                 "fits_machine": fits,
-                "installed": _model_installed(option.id, installed),
+                "installed": _catalog_installed(option.id, installed),
                 "recommended": option.id == recommended_id,
                 "selected_chat": option.id == chat_model,
                 "selected_classifier": option.id == classifier_model,
+                "from_ollama": False,
             }
         )
+
+    other_installed = _other_installed_models(installed, ram_gb)
+    for item in other_installed:
+        item["selected_chat"] = item["id"] == chat_model
+        item["selected_classifier"] = item["id"] == classifier_model
+
     return {
         "system_ram_gb": ram_gb,
+        "ram_detection": ram_source,
         "ollama_reachable": reachable,
         "recommended_model": recommended_id,
         "models": models,
+        "other_installed": other_installed,
+        "installed_models": installed,
     }
 
 
-def validate_model_id(model_id: str) -> None:
-    if model_id not in catalog_by_id():
-        raise ValueError(f"Unknown model: {model_id}")
+def validate_model_id(model_id: str, installed: list[str] | None = None) -> None:
+    if model_id in catalog_by_id():
+        return
+    if installed and _catalog_installed(model_id, installed):
+        return
+    raise ValueError(f"Unknown model: {model_id}")
+
+
+async def validate_model_choice(model_id: str) -> None:
+    installed = await list_installed_models() if await is_ollama_reachable() else []
+    validate_model_id(model_id, installed)
 
 
 async def _run_pull(job_id: str, model: str) -> None:

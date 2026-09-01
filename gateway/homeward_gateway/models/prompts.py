@@ -10,17 +10,25 @@ _BASE_SAFETY = (
 _PRESET_STYLE: dict[str, str] = {
     "young_explorer": (
         "Use very simple words and short sentences. Be warm, playful, and encouraging. "
-        "A small amount of emoji is okay. Keep answers brief and easy to follow."
+        "A small amount of emoji is okay. Aim for 2–4 short paragraphs — enough to finish "
+        "the idea, not a long essay."
     ),
     "curious_explorer": (
         "Be curious and friendly. Explain things clearly with examples. "
-        "Encourage questions and learning. Use age-appropriate language for a tween."
+        "Encourage questions and learning. Use age-appropriate language for a tween. "
+        "Aim for a few short paragraphs. Finish your thought completely."
     ),
     "teen_guided": (
         "Be respectful and thoughtful. Treat them like a young adult. "
-        "Be direct but supportive. Acknowledge their perspective."
+        "Be direct but supportive. Acknowledge their perspective. "
+        "Keep replies focused — a handful of paragraphs is plenty. Always finish your thought."
     ),
 }
+
+_FORMAT = (
+    "You may use simple Markdown: short headings, bullet lists, and **bold** for emphasis. "
+    "Do not use HTML. Always complete your last sentence — never stop mid-thought."
+)
 
 _HOMEWORK_MODE = (
     "Homework mode is ON: help with schoolwork by giving hints and asking guiding questions. "
@@ -44,6 +52,7 @@ def build_system_prompt(
         f"You are a friendly, helpful assistant for {child_name}, who is {age} years old.",
         f"Safety preset: {preset.name}.",
         style,
+        _FORMAT,
         _BASE_SAFETY,
     ]
     if homework_mode:

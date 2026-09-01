@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -28,7 +29,24 @@ async def lifespan(app: FastAPI):
             "Ollama not reachable at %s — install from https://ollama.com and run: ollama serve",
             settings.ollama_base_url,
         )
+
+    from homeward_gateway.voice.transcribe import whisper_available
+
+    if whisper_available():
+        asyncio.create_task(asyncio.to_thread(_preload_whisper))
+
     yield
+
+
+def _preload_whisper() -> None:
+    from homeward_gateway.voice.transcribe import ensure_model, whisper_available as _whisper_ok
+
+    if not _whisper_ok():
+        return
+    try:
+        ensure_model()
+    except Exception as exc:
+        logger.warning("Whisper preload skipped: %s", exc)
 
 
 app = FastAPI(

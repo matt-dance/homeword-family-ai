@@ -6,6 +6,7 @@ import { useVoiceChat } from "@/hooks/use-voice-chat";
 import { useReadAloud } from "@/hooks/use-read-aloud";
 import { VoiceListener } from "@/components/voice-listener";
 import { SpeakingIndicator } from "@/components/speaking-indicator";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import { ChatToolCards } from "@/components/chat-tools";
 import { extractChatTools, mergeChatTools, type ChatTool } from "@/lib/chat-tools";
 import { Button } from "@/components/ui/button";
@@ -456,7 +457,11 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
                             : "bg-card border border-border"
                       } ${isReading && readAloudState.isSpeaking ? "ring-2 ring-primary/40 shadow-sm" : ""}`}
                     >
-                      {displayText}
+                      {msg.role === "assistant" && !msg.blocked ? (
+                        <ChatMarkdown text={displayText} simpleMode={simpleMode} />
+                      ) : (
+                        <span className="whitespace-pre-wrap">{displayText}</span>
+                      )}
                     </div>
                   ) : null}
                   {isAssistant && !msg.blocked && tools.length > 0 && <ChatToolCards tools={tools} />}

@@ -38,9 +38,10 @@ export function OllamaSetup({
       setStatus(s);
       setRecommendations(r);
       if (!initializedSelection) {
+        const allModels = [...r.models, ...(r.other_installed ?? [])];
         const preselected =
-          r.models.find((m) => m.selected_chat)?.id ||
-          r.models.find((m) => m.recommended && m.fits_machine)?.id ||
+          allModels.find((m) => m.selected_chat)?.id ||
+          allModels.find((m) => m.recommended && m.fits_machine)?.id ||
           r.recommended_model;
         setSelectedModel(preselected);
         setInitializedSelection(true);
@@ -135,10 +136,15 @@ export function OllamaSetup({
     }
   };
 
-  const selected = recommendations?.models.find((m) => m.id === selectedModel);
+  const catalogModels = recommendations?.models ?? [];
+  const otherModels = recommendations?.other_installed ?? [];
+  const allModels = [...catalogModels, ...otherModels];
+  const selected = allModels.find((m) => m.id === selectedModel);
   const managed = status?.managed;
-  const canDownload = status?.reachable && selected && !selected.installed && selected.fits_machine;
-  const isReady = status?.ready && selected?.installed;
+  const canDownload =
+    status?.reachable && selected && !selected.installed && selected.fits_machine && !selected.from_ollama;
+  const isInstalled = selected?.installed || status?.installed_models?.includes(selectedModel);
+  const isReady = status?.reachable && !!selectedModel && isInstalled;
 
   const statusTitle = !status
     ? "Checking AI status…"
@@ -191,9 +197,23 @@ export function OllamaSetup({
           </div>
 
           {recommendations && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Cpu className="h-4 w-4" />
-              This computer has about {recommendations.system_ram_gb} GB of memory
+            <div className="space-y-1 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <Cpu className="h-4 w-4 shrink-0" />
+                Detected {recommendations.system_ram_gb} GB RAM on this computer
+              </div>
+              {recommendations.ram_detection === "fallback-default" ? (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  Could not read your system memory — showing conservative defaults.
+                </p>
+              ) : (
+                <p className="text-xs">
+                  Checked via Ollama on this machine
+                  {status?.installed_models?.length
+                    ? ` · ${status.installed_models.length} model${status.installed_models.length !== 1 ? "s" : ""} already installed`
+                    : ""}
+                </p>
+              )}
             </div>
           )}
 
@@ -227,11 +247,12 @@ export function OllamaSetup({
           <CardHeader>
             <CardTitle>Choose an AI model</CardTitle>
             <CardDescription>
-              Pick one that fits your computer. We recommend the highlighted option — just click Download.
+              Models are filtered by your {recommendations.system_ram_gb} GB RAM. Download curated picks, or use
+              something you already pulled with Ollama.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {recommendations.models.map((model) => (
+            {catalogModels.map((model) => (
               <label
                 key={model.id}
                 className={`flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors ${
@@ -274,6 +295,44 @@ export function OllamaSetup({
               </label>
             ))}
 
+            {otherModels.length > 0 && (
+              <div className="space-y-3 border-t border-border pt-4">
+                <p className="text-sm font-medium">Already installed in Ollama</p>
+                {otherModels.map((model) => (
+                  <label
+                    key={model.id}
+                    className={`flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50 ${
+                      selectedModel === model.id ? "border-primary bg-primary/5" : "border-border"
+                    } ${!model.fits_machine ? "opacity-50" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name="ollama-model"
+                      value={model.id}
+                      checked={selectedModel === model.id}
+                      disabled={!model.fits_machine}
+                      onChange={() => setSelectedModel(model.id)}
+                      className="mt-1 accent-primary"
+                    />
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{model.name}</span>
+                        <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-xs text-green-700 dark:text-green-400">
+                          Installed
+                        </span>
+                        {!model.fits_machine && (
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                            May need {model.min_ram_gb}+ GB RAM
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-sm text-muted-foreground">{model.description}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+
             {pullJobId && (
               <div className="space-y-2 rounded-lg border p-3">
                 <div className="flex items-center justify-between text-sm">
@@ -306,7 +365,7 @@ export function OllamaSetup({
 
             {isReady && (
               <p className="text-sm text-green-700 dark:text-green-400">
-                AI is ready — {status.chat_model} is downloaded and selected.
+                AI is ready — {selectedModel} is selected.
               </p>
             )}
           </CardContent>

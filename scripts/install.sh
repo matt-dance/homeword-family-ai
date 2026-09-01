@@ -15,7 +15,8 @@ docker compose up -d --build
 
 echo ""
 echo "Homeward is starting up."
-echo "Open http://localhost:43123 in your browser."
+echo "Run ./scripts/setup-local-url.sh once, then open http://homeward.local:43123"
+echo "(or http://localhost:43123)"
 echo ""
 echo "On first launch, the setup wizard will help you:"
 echo "  1. Create a parent password"

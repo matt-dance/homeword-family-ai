@@ -7,11 +7,20 @@ import litellm
 
 from homeward_gateway.config import settings
 from homeward_gateway.models.prompts import build_system_prompt
-from homeward_gateway.models.response_limits import chars_to_max_tokens, trim_response
+from homeward_gateway.models.response_limits import GENERATION_MAX_TOKENS
 from homeward_gateway.pipeline.policy import PolicyPreset
 
 logger = logging.getLogger(__name__)
 litellm.set_verbose = False
+
+
+def strip_thinking(text: str) -> str:
+    """Drop hidden reasoning blocks some models leak into the reply."""
+    import re
+
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<\|?think\|?>[\s\S]*?<\|?/think\|?>", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
 
 
 async def generate_response(
@@ -42,11 +51,11 @@ async def generate_response(
             api_key=api_key,
             api_base=settings.ollama_base_url if not settings.cloud_enabled else None,
             timeout=settings.llm_timeout,
-            max_tokens=chars_to_max_tokens(max_length),
+            max_tokens=GENERATION_MAX_TOKENS,
             temperature=0.7,
         )
         content = response.choices[0].message.content or ""
-        return trim_response(content, max_length)
+        return strip_thinking(content)
     except Exception as e:
         logger.error("LLM error: %s", e)
         raise
@@ -81,7 +90,7 @@ async def stream_response(
             api_key=api_key,
             api_base=settings.ollama_base_url if not settings.cloud_enabled else None,
             timeout=settings.llm_timeout,
-            max_tokens=chars_to_max_tokens(max_length),
+            max_tokens=GENERATION_MAX_TOKENS,
             temperature=0.7,
             stream=True,
         )

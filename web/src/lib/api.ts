@@ -82,6 +82,7 @@ export interface OllamaStatus {
   managed?: boolean;
   ollama_url: string;
   system_ram_gb: number;
+  ram_detection?: string;
   installed_models: string[];
   chat_model: string;
   classifier_model: string;
@@ -103,13 +104,17 @@ export interface OllamaModelOption {
   recommended: boolean;
   selected_chat: boolean;
   selected_classifier: boolean;
+  from_ollama?: boolean;
 }
 
 export interface OllamaRecommendation {
   system_ram_gb: number;
+  ram_detection: string;
   ollama_reachable: boolean;
   recommended_model: string;
   models: OllamaModelOption[];
+  other_installed: OllamaModelOption[];
+  installed_models: string[];
 }
 
 export interface OllamaPullJob {
@@ -179,6 +184,7 @@ export const api = {
       ollama_model: string | null;
       classifier_model: string | null;
       has_recovery_code: boolean;
+      is_local_host: boolean;
     }>("/auth/me"),
   presets: () => request<Preset[]>("/presets"),
   children: () => request<Child[]>("/children"),
@@ -230,8 +236,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message, child_id: childId, history }),
     }),
-  logs: () => request<ConversationLog[]>("/dashboard/logs"),
-  sessions: () => request<ChatSessionSummary[]>("/dashboard/sessions"),
+  logs: (childId?: number) =>
+    request<ConversationLog[]>(
+      `/dashboard/logs${childId != null ? `?child_id=${childId}` : ""}`,
+    ),
+  sessions: (childId?: number) =>
+    request<ChatSessionSummary[]>(
+      `/dashboard/sessions${childId != null ? `?child_id=${childId}` : ""}`,
+    ),
   sessionMessages: (sessionId: string) =>
     request<ConversationLog[]>(`/dashboard/sessions/${sessionId}/messages`),
   createChatSession: (childId: number, endSessionId?: number) =>
@@ -279,9 +291,14 @@ export const api = {
     };
     return decodeSpeechPayload(data);
   },
-  blockedStats: () =>
-    request<{ today_count: number; total_count: number }>("/dashboard/blocked/stats"),
-  blocked: () => request<BlockedAttempt[]>("/dashboard/blocked"),
+  blockedStats: (childId?: number) =>
+    request<{ today_count: number; total_count: number }>(
+      `/dashboard/blocked/stats${childId != null ? `?child_id=${childId}` : ""}`,
+    ),
+  blocked: (childId?: number) =>
+    request<BlockedAttempt[]>(
+      `/dashboard/blocked${childId != null ? `?child_id=${childId}` : ""}`,
+    ),
   devices: () =>
     request<{ devices: unknown[]; message: string }>("/dashboard/devices"),
   cloudSettings: (cloud_enabled: boolean, openai_api_key?: string) =>

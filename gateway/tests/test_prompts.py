@@ -9,6 +9,8 @@ def test_young_explorer_prompt_is_playful():
     prompt = build_system_prompt("Emma", 7, preset)
     assert "playful" in prompt.lower()
     assert "Emma" in prompt
+    assert "finish" in prompt.lower()
+    assert "Markdown" in prompt
 
 
 def test_homework_mode_adds_hint_instructions():

@@ -56,7 +56,8 @@ async def classify_with_ollama(text: str, model: str | None = None) -> Classifie
             if resp.status_code != 200:
                 raise RuntimeError(f"Ollama returned {resp.status_code}")
 
-            result = resp.json().get("response", "").strip().upper()
+            data = resp.json()
+            result = (data.get("response") or data.get("thinking") or "").strip().upper()
             if "UNSAFE" in result:
                 return ClassifierResult(allowed=False, reason="classifier: unsafe content")
             if "SAFE" in result:

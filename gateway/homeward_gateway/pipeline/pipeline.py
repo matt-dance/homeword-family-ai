@@ -4,12 +4,11 @@ from dataclasses import dataclass
 from typing import AsyncIterator
 
 from homeward_gateway.pipeline.classifier import classify
-from homeward_gateway.pipeline.normalize import normalize
+from homeward_gateway.pipeline.normalize import normalize, normalize_output
 from homeward_gateway.pipeline.policy import PolicyPreset, check_policy_match
 from homeward_gateway.pipeline.rules import check_rules
 from homeward_gateway.chat.tools import detect_intents, extract_model_tools, run_local_tools, tool_prompt_hint
 from homeward_gateway.models.router import generate_response, stream_response
-from homeward_gateway.models.response_limits import trim_response
 
 
 @dataclass
@@ -88,7 +87,7 @@ async def filter_output(
 ) -> PipelineResult:
     """Run output through safety stages before delivering to child."""
     try:
-        normalized = normalize(text, max_length=preset.max_response_length)
+        normalized = normalize_output(text)
     except Exception:
         return PipelineResult(allowed=False, block_reason="output normalize error", stage="normalize")
 
@@ -206,7 +205,7 @@ async def process_chat_stream(
         yield PipelineResult(allowed=False, block_reason="llm stream error", stage="llm")
         return
 
-    full_response = trim_response("".join(collected), preset.max_response_length)
+    full_response = "".join(collected)
     _visible, model_cards = extract_model_tools(full_response)
     extra = [card.to_dict() for card in model_cards]
     if extra:

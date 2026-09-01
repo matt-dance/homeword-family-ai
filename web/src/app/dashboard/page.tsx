@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { chatPathForChild } from "@/lib/slug";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, type ChatSessionSummary, type ConversationLog, type BlockedAttempt, type Child } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,11 +15,14 @@ import {
   Users,
   Sparkles,
   AlertTriangle,
-  Settings,
+  Filter,
 } from "lucide-react";
 
-export default function DashboardPage() {
+function DashboardContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const filterParam = searchParams.get("child");
+  const filterChildId = filterParam ? parseInt(filterParam, 10) : null;
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
   const [selectedSession, setSelectedSession] = useState<ChatSessionSummary | null>(null);
   const [sessionMessages, setSessionMessages] = useState<ConversationLog[]>([]);
@@ -35,11 +38,12 @@ export default function DashboardPage() {
   useEffect(() => {
     const load = async () => {
       try {
+        const childFilter = filterChildId && !Number.isNaN(filterChildId) ? filterChildId : undefined;
         const [sessionsData, blockedData, childrenData, blockedStats, health] = await Promise.all([
-          api.sessions(),
-          api.blocked(),
+          api.sessions(childFilter),
+          api.blocked(childFilter),
           api.children(),
-          api.blockedStats().catch(() => ({ today_count: 0, total_count: 0 })),
+          api.blockedStats(childFilter).catch(() => ({ today_count: 0, total_count: 0 })),
           api.health().catch(() => ({ status: "degraded", ollama: { ready: false } })),
         ]);
         setSessions(sessionsData);
@@ -48,14 +52,30 @@ export default function DashboardPage() {
         setBlockedToday(blockedStats.today_count);
         setBlockedTotal(blockedStats.total_count);
         setAiReady(health.ollama?.ready ?? health.status === "ok");
+        setSelectedSession(null);
+        setSessionMessages([]);
       } catch {
         router.replace("/setup");
       } finally {
         setLoading(false);
       }
     };
+    setLoading(true);
     load();
-  }, [router]);
+  }, [router, filterChildId]);
+
+  const setChildFilter = (childId: number | null) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (childId == null) {
+      params.delete("child");
+    } else {
+      params.set("child", String(childId));
+    }
+    const query = params.toString();
+    router.replace(query ? `/dashboard?${query}` : "/dashboard");
+  };
+
+  const filteredChild = filterChildId ? children.find((c) => c.id === filterChildId) : null;
 
   const childName = (id: number) => children.find((c) => c.id === id)?.name || `Child #${id}`;
 
@@ -96,8 +116,38 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold">Parent Dashboard</h1>
         <p className="text-muted-foreground">
           See what your kids have been chatting about and anything Homeward blocked.
+          {filteredChild && (
+            <span className="block mt-1 text-sm">
+              Showing activity for <span className="font-medium text-foreground">{filteredChild.name}</span>
+            </span>
+          )}
         </p>
       </div>
+
+      {children.length > 0 && (
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant={filterChildId == null ? "default" : "outline"}
+              onClick={() => setChildFilter(null)}
+            >
+              All children
+            </Button>
+            {children.map((child) => (
+              <Button
+                key={child.id}
+                size="sm"
+                variant={filterChildId === child.id ? "default" : "outline"}
+                onClick={() => setChildFilter(child.id)}
+              >
+                {child.name}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Overview */}
       <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -160,25 +210,32 @@ export default function DashboardPage() {
         <div className="mb-6">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Your children</h2>
-            <Link href="/dashboard/settings">
+            <Link href="/dashboard/profiles">
               <Button variant="ghost" size="sm">
-                <Settings className="mr-2 h-4 w-4" />
+                <Users className="mr-2 h-4 w-4" />
                 Manage profiles
               </Button>
             </Link>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {children.map((child) => (
-              <Card key={child.id}>
+              <Card
+                key={child.id}
+                className={filterChildId === child.id ? "ring-2 ring-primary/40" : ""}
+              >
                 <CardContent className="flex items-center justify-between gap-2 pt-6">
-                  <div className="min-w-0">
+                  <button
+                    type="button"
+                    className="min-w-0 text-left"
+                    onClick={() => setChildFilter(child.id)}
+                  >
                     <p className="font-medium truncate">{child.name}</p>
                     <p className="text-xs text-muted-foreground">
                       Age {child.age} · Safety {child.strictness}/5
                       {child.homework_mode && " · Homework"}
                       {child.quiet_hours_enabled && " · Quiet hours"}
                     </p>
-                  </div>
+                  </button>
                   <Link href={chatPathForChild(child)}>
                     <Button size="sm" variant="outline">Chat</Button>
                   </Link>
@@ -370,5 +427,17 @@ export default function DashboardPage() {
         </Card>
       )}
     </main>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={
+      <main className="mx-auto max-w-5xl p-8">
+        <p className="text-muted-foreground">Loading dashboard…</p>
+      </main>
+    }>
+      <DashboardContent />
+    </Suspense>
   );
 }
