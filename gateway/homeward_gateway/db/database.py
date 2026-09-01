@@ -20,6 +20,8 @@ class ParentAccount(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     setup_complete: Mapped[bool] = mapped_column(Boolean, default=False)
     cloud_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    ollama_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    classifier_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -80,6 +82,21 @@ async def init_db() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_migrate_parent_columns)
+
+
+def _migrate_parent_columns(connection) -> None:
+    """Add new columns to existing SQLite databases."""
+    import sqlalchemy as sa
+
+    inspector = sa.inspect(connection)
+    if "parent_accounts" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("parent_accounts")}
+    if "ollama_model" not in columns:
+        connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN ollama_model VARCHAR(100)"))
+    if "classifier_model" not in columns:
+        connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN classifier_model VARCHAR(100)"))
 
 
 async def get_session() -> AsyncSession:

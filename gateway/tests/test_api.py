@@ -37,8 +37,9 @@ class TestHealth:
         resp = await client.get("/api/v1/health")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "ok"
+        assert data["status"] in ("ok", "degraded")
         assert data["service"] == "homeward-gateway"
+        assert "ollama" in data
 
 
 class TestSetupFlow:
@@ -92,6 +93,37 @@ class TestSetupFlow:
         resp = await client.post("/api/v1/setup", json={"password": "testpass123"})
         assert resp.status_code == 400
         assert resp.json()["detail"] == "Setup already completed"
+
+
+class TestOllama:
+    @pytest.mark.asyncio
+    async def test_ollama_status(self, client):
+        resp = await client.get("/api/v1/ollama/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "reachable" in data
+        assert "system_ram_gb" in data
+        assert "chat_model" in data
+
+    @pytest.mark.asyncio
+    async def test_ollama_recommendations(self, client):
+        resp = await client.get("/api/v1/ollama/recommendations")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["models"]) >= 3
+        assert data["recommended_model"]
+
+    @pytest.mark.asyncio
+    async def test_ollama_settings(self, client):
+        await client.post("/api/v1/setup", json={"password": "testpass123"})
+        resp = await client.post(
+            "/api/v1/settings/ollama",
+            json={"chat_model": "llama3.2:3b"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["ollama"]["chat_model"] == "llama3.2:3b"
 
 
 class TestPresets:

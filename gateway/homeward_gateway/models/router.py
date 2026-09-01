@@ -28,21 +28,22 @@ async def generate_response(
     age: int,
     preset_name: str,
     max_length: int = 800,
+    model: str | None = None,
 ) -> str:
     """Generate a non-streaming LLM response via Ollama (default) or cloud if enabled."""
     system = _build_system_prompt(child_name, age, preset_name)
     full_messages = [{"role": "system", "content": system}] + messages
 
     if settings.cloud_enabled and settings.openai_api_key:
-        model = "gpt-4o-mini"
+        llm_model = "gpt-4o-mini"
         api_key = settings.openai_api_key
     else:
-        model = f"ollama/{settings.ollama_model}"
+        llm_model = f"ollama/{model or settings.ollama_model}"
         api_key = "ollama"
 
     try:
         response = await litellm.acompletion(
-            model=model,
+            model=llm_model,
             messages=full_messages,
             api_key=api_key,
             api_base=settings.ollama_base_url if not settings.cloud_enabled else None,
@@ -63,22 +64,23 @@ async def stream_response(
     age: int,
     preset_name: str,
     max_length: int = 800,
+    model: str | None = None,
 ) -> AsyncIterator[str]:
     """Stream LLM response tokens."""
     system = _build_system_prompt(child_name, age, preset_name)
     full_messages = [{"role": "system", "content": system}] + messages
 
     if settings.cloud_enabled and settings.openai_api_key:
-        model = "gpt-4o-mini"
+        llm_model = "gpt-4o-mini"
         api_key = settings.openai_api_key
     else:
-        model = f"ollama/{settings.ollama_model}"
+        llm_model = f"ollama/{model or settings.ollama_model}"
         api_key = "ollama"
 
     total = 0
     try:
         response = await litellm.acompletion(
-            model=model,
+            model=llm_model,
             messages=full_messages,
             api_key=api_key,
             api_base=settings.ollama_base_url if not settings.cloud_enabled else None,

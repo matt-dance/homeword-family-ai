@@ -22,6 +22,7 @@ async def filter_input(
     text: str,
     preset: PolicyPreset,
     strictness: int,
+    classifier_model: str | None = None,
 ) -> PipelineResult:
     """Run input through all safety stages. Fail-closed on any error."""
     # Stage 1: Normalize
@@ -51,7 +52,7 @@ async def filter_input(
 
     # Stage 3: Classifier
     try:
-        classifier_result = await classify(normalized, strictness)
+        classifier_result = await classify(normalized, strictness, model=classifier_model)
         if not classifier_result.allowed:
             return PipelineResult(
                 allowed=False,
@@ -76,6 +77,7 @@ async def filter_output(
     text: str,
     preset: PolicyPreset,
     strictness: int,
+    classifier_model: str | None = None,
 ) -> PipelineResult:
     """Run output through safety stages before delivering to child."""
     try:
@@ -99,7 +101,7 @@ async def filter_output(
         return PipelineResult(allowed=False, block_reason="output rules error", stage="rules")
 
     try:
-        classifier_result = await classify(normalized, strictness)
+        classifier_result = await classify(normalized, strictness, model=classifier_model)
         if not classifier_result.allowed:
             return PipelineResult(
                 allowed=False,
@@ -126,9 +128,11 @@ async def process_chat(
     strictness: int,
     child_name: str,
     age: int,
+    chat_model: str | None = None,
+    classifier_model: str | None = None,
 ) -> PipelineResult:
     """Full pipeline: filter input → LLM → filter output."""
-    input_result = await filter_input(user_message, preset, strictness)
+    input_result = await filter_input(user_message, preset, strictness, classifier_model)
     if not input_result.allowed:
         return input_result
 
@@ -139,11 +143,12 @@ async def process_chat(
             age,
             preset.name,
             preset.max_response_length,
+            model=chat_model,
         )
     except Exception:
         return PipelineResult(allowed=False, block_reason="llm error", stage="llm")
 
-    output_result = await filter_output(response, preset, strictness)
+    output_result = await filter_output(response, preset, strictness, classifier_model)
     if not output_result.allowed:
         return output_result
 
@@ -157,9 +162,11 @@ async def process_chat_stream(
     strictness: int,
     child_name: str,
     age: int,
+    chat_model: str | None = None,
+    classifier_model: str | None = None,
 ) -> AsyncIterator[str | PipelineResult]:
     """Stream pipeline: filter input first, then stream LLM, filter output at end."""
-    input_result = await filter_input(user_message, preset, strictness)
+    input_result = await filter_input(user_message, preset, strictness, classifier_model)
     if not input_result.allowed:
         yield input_result
         return
@@ -172,6 +179,7 @@ async def process_chat_stream(
             age,
             preset.name,
             preset.max_response_length,
+            model=chat_model,
         ):
             collected.append(token)
             yield token
@@ -180,6 +188,6 @@ async def process_chat_stream(
         return
 
     full_response = "".join(collected)
-    output_result = await filter_output(full_response, preset, strictness)
+    output_result = await filter_output(full_response, preset, strictness, classifier_model)
     if not output_result.allowed:
         yield PipelineResult(allowed=False, block_reason=output_result.block_reason, stage=output_result.stage)

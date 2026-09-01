@@ -26,6 +26,8 @@ from homeward_gateway.db.database import (
     ParentAccount,
     get_session,
 )
+from homeward_gateway.ollama import service as ollama_service
+from homeward_gateway.ollama.runtime import get_effective_models
 from homeward_gateway.pipeline.pipeline import PipelineResult, process_chat, process_chat_stream
 from homeward_gateway.pipeline.policy import load_all_presets, preset_for_age
 
@@ -66,6 +68,15 @@ class CloudSettingsRequest(BaseModel):
     openai_api_key: str | None = None
 
 
+class OllamaPullRequest(BaseModel):
+    model: str = Field(min_length=1, max_length=100)
+
+
+class OllamaSettingsRequest(BaseModel):
+    chat_model: str = Field(min_length=1, max_length=100)
+    classifier_model: str | None = None
+
+
 # --- Dependencies ---
 
 
@@ -83,13 +94,16 @@ async def require_parent(
 
 
 @router.get("/health")
-async def health():
+async def health(session: Annotated[AsyncSession, Depends(get_session)]):
+    chat_model, classifier_model = await get_effective_models(session)
+    ollama = await ollama_service.get_status(chat_model, classifier_model)
     return {
-        "status": "ok",
+        "status": "ok" if ollama["ready"] or settings.cloud_enabled else "degraded",
         "service": "homeward-gateway",
         "version": "0.1.0",
         "ollama_url": settings.ollama_base_url,
         "cloud_enabled": settings.cloud_enabled,
+        "ollama": ollama,
     }
 
 
@@ -186,6 +200,8 @@ async def auth_me(parent: Annotated[ParentAccount, Depends(require_parent)]):
         "parent_id": parent.id,
         "setup_complete": parent.setup_complete,
         "cloud_enabled": parent.cloud_enabled,
+        "ollama_model": parent.ollama_model,
+        "classifier_model": parent.classifier_model,
     }
 
 
@@ -341,6 +357,7 @@ async def chat(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     child, preset = await _get_child_context(body.child_id, session)
+    chat_model, classifier_model = await get_effective_models(session)
     result = await process_chat(
         body.message,
         body.history,
@@ -348,6 +365,8 @@ async def chat(
         child.strictness,
         child.name,
         child.age,
+        chat_model=chat_model,
+        classifier_model=classifier_model,
     )
 
     if not result.allowed:
@@ -377,6 +396,7 @@ async def chat_stream(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     child, preset = await _get_child_context(body.child_id, session)
+    chat_model, classifier_model = await get_effective_models(session)
 
     async def event_stream() -> AsyncIterator[str]:
         from homeward_gateway.db.database import async_session_factory
@@ -392,6 +412,8 @@ async def chat_stream(
                 child.strictness,
                 child.name,
                 child.age,
+                chat_model=chat_model,
+                classifier_model=classifier_model,
             ):
                 if isinstance(item, PipelineResult):
                     if not item.allowed:
@@ -402,7 +424,7 @@ async def chat_stream(
                         )
                         payload = json.dumps({
                             "type": "blocked",
-                            "message": user_facing_message(result.stage),
+                            "message": user_facing_message(item.stage),
                             "reason": item.block_reason,
                         })
                         yield f"data: {payload}\n\n"
@@ -501,6 +523,71 @@ async def dashboard_devices():
         "message": "Device pairing will be available in a future update. "
         "For now, kids can use the chat in this browser.",
     }
+
+
+# --- Ollama ---
+
+
+@router.get("/ollama/status")
+async def ollama_status(session: Annotated[AsyncSession, Depends(get_session)]):
+    chat_model, classifier_model = await get_effective_models(session)
+    return await ollama_service.get_status(chat_model, classifier_model)
+
+
+@router.get("/ollama/recommendations")
+async def ollama_recommendations(session: Annotated[AsyncSession, Depends(get_session)]):
+    chat_model, classifier_model = await get_effective_models(session)
+    return await ollama_service.get_recommendations(chat_model, classifier_model)
+
+
+@router.post("/ollama/pull")
+async def ollama_pull(
+    body: OllamaPullRequest,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+):
+    if not await ollama_service.is_ollama_reachable():
+        raise HTTPException(
+            status_code=503,
+            detail="Ollama is not running. Start it with: ollama serve",
+        )
+    try:
+        ollama_service.validate_model_id(body.model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    job_id = ollama_service.start_pull(body.model)
+    return {"ok": True, "job_id": job_id, "model": body.model}
+
+
+@router.get("/ollama/pull/{job_id}")
+async def ollama_pull_status(
+    job_id: str,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+):
+    job = ollama_service.get_pull_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Pull job not found")
+    return job
+
+
+@router.post("/settings/ollama")
+async def update_ollama_settings(
+    body: OllamaSettingsRequest,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    try:
+        ollama_service.validate_model_id(body.chat_model)
+        classifier = body.classifier_model or body.chat_model
+        if body.classifier_model:
+            ollama_service.validate_model_id(body.classifier_model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    parent.ollama_model = body.chat_model
+    parent.classifier_model = classifier
+    await session.commit()
+    status = await ollama_service.get_status(body.chat_model, classifier)
+    return {"ok": True, "ollama": status}
 
 
 # --- Cloud settings ---

@@ -42,6 +42,48 @@ export interface BlockedAttempt {
   created_at: string;
 }
 
+export interface OllamaStatus {
+  reachable: boolean;
+  ollama_url: string;
+  system_ram_gb: number;
+  installed_models: string[];
+  chat_model: string;
+  classifier_model: string;
+  chat_model_ready: boolean;
+  classifier_model_ready: boolean;
+  ready: boolean;
+}
+
+export interface OllamaModelOption {
+  id: string;
+  name: string;
+  description: string;
+  min_ram_gb: number;
+  size_gb: number;
+  tier: string;
+  fits_machine: boolean;
+  installed: boolean;
+  recommended: boolean;
+  selected_chat: boolean;
+  selected_classifier: boolean;
+}
+
+export interface OllamaRecommendation {
+  system_ram_gb: number;
+  ollama_reachable: boolean;
+  recommended_model: string;
+  models: OllamaModelOption[];
+}
+
+export interface OllamaPullJob {
+  job_id: string;
+  model: string;
+  status: string;
+  progress: number;
+  message: string;
+  error: string | null;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -82,9 +124,13 @@ export const api = {
     }),
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
   me: () =>
-    request<{ parent_id: number; setup_complete: boolean; cloud_enabled: boolean }>(
-      "/auth/me"
-    ),
+    request<{
+      parent_id: number;
+      setup_complete: boolean;
+      cloud_enabled: boolean;
+      ollama_model: string | null;
+      classifier_model: string | null;
+    }>("/auth/me"),
   presets: () => request<Preset[]>("/presets"),
   children: () => request<Child[]>("/children"),
   childrenPublic: () => request<Child[]>("/children/public"),
@@ -117,6 +163,19 @@ export const api = {
     request<{ ok: boolean }>("/settings/cloud", {
       method: "POST",
       body: JSON.stringify({ cloud_enabled, openai_api_key }),
+    }),
+  ollamaStatus: () => request<OllamaStatus>("/ollama/status"),
+  ollamaRecommendations: () => request<OllamaRecommendation>("/ollama/recommendations"),
+  ollamaPull: (model: string) =>
+    request<{ ok: boolean; job_id: string; model: string }>("/ollama/pull", {
+      method: "POST",
+      body: JSON.stringify({ model }),
+    }),
+  ollamaPullStatus: (jobId: string) => request<OllamaPullJob>(`/ollama/pull/${jobId}`),
+  ollamaSettings: (chat_model: string, classifier_model?: string) =>
+    request<{ ok: boolean; ollama: OllamaStatus }>("/settings/ollama", {
+      method: "POST",
+      body: JSON.stringify({ chat_model, classifier_model }),
     }),
 };
 

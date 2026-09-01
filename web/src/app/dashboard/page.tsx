@@ -17,7 +17,9 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronUp,
+  Server,
 } from "lucide-react";
+import { OllamaSetup } from "@/components/ollama-setup";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -26,6 +28,7 @@ export default function DashboardPage() {
   const [children, setChildren] = useState<Child[]>([]);
   const [devicesMessage, setDevicesMessage] = useState("");
   const [cloudOpen, setCloudOpen] = useState(false);
+  const [ollamaOpen, setOllamaOpen] = useState(true);
   const [cloudEnabled, setCloudEnabled] = useState(false);
   const [openaiKey, setOpenaiKey] = useState("");
   const [loading, setLoading] = useState(true);
@@ -227,6 +230,30 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         )}
+
+        {/* Ollama section */}
+        <Card className="mt-6">
+          <button
+            onClick={() => setOllamaOpen(!ollamaOpen)}
+            className="flex w-full items-center justify-between p-6 text-left"
+          >
+            <div className="flex items-center gap-2">
+              <Server className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <p className="font-medium">Local AI (Ollama)</p>
+                <p className="text-sm text-muted-foreground">
+                  Model status and installation for this computer
+                </p>
+              </div>
+            </div>
+            {ollamaOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+          </button>
+          {ollamaOpen && (
+            <CardContent className="border-t border-border pt-4">
+              <OllamaSetup />
+            </CardContent>
+          )}
+        </Card>
 
         {/* Cloud section - collapsed by default */}
         <Card className="mt-6">

@@ -18,6 +18,16 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Homeward gateway started on %s:%s", settings.host, settings.port)
+    from homeward_gateway.ollama import service as ollama_service
+
+    if await ollama_service.is_ollama_reachable():
+        models = await ollama_service.list_installed_models()
+        logger.info("Ollama reachable at %s — models: %s", settings.ollama_base_url, models or "none")
+    else:
+        logger.warning(
+            "Ollama not reachable at %s — install from https://ollama.com and run: ollama serve",
+            settings.ollama_base_url,
+        )
     yield
 
 

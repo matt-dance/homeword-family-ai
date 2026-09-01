@@ -70,11 +70,15 @@ Set `GATEWAY_URL=http://localhost:8000` if the gateway runs elsewhere.
 
 ### Ollama (local AI)
 
-Install [Ollama](https://ollama.com/) and pull a model:
+Install [Ollama](https://ollama.com/) and start it:
 
 ```bash
-ollama pull llama3.2:3b
+ollama serve
 ```
+
+During setup (and in the parent dashboard), Homeward detects your computer's RAM and recommends models that fit. You can install and select a model from the UI — no terminal required after Ollama is running.
+
+Default model if none is selected: `llama3.2:3b`
 
 ## Running Tests
 

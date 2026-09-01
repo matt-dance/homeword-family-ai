@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { OllamaSetup } from "@/components/ollama-setup";
 import { Plus, Trash2, ChevronRight, Shield } from "lucide-react";
 
 interface ChildForm {
@@ -17,7 +18,7 @@ interface ChildForm {
   strictness: number;
 }
 
-type Step = "password" | "children" | "review";
+type Step = "password" | "children" | "model" | "review";
 
 export default function SetupPage() {
   const router = useRouter();
@@ -31,6 +32,7 @@ export default function SetupPage() {
   const [children, setChildren] = useState<ChildForm[]>([
     { name: "", age: 8, preset_id: "young_explorer", strictness: 4 },
   ]);
+  const [ollamaReady, setOllamaReady] = useState(false);
 
   useEffect(() => {
     api.setupStatus().then((s) => {
@@ -52,7 +54,7 @@ export default function SetupPage() {
           strictness: c.strictness ?? 3,
         }))
       );
-      setStep("review");
+      setStep("model");
     } else {
       setStep("children");
     }
@@ -144,7 +146,7 @@ export default function SetupPage() {
           strictness: child.strictness,
         });
       }
-      setStep("review");
+      setStep("model");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add children");
     } finally {
@@ -185,11 +187,15 @@ export default function SetupPage() {
 
         {/* Step indicator */}
         <div className="mb-6 flex justify-center gap-2">
-          {(["password", "children", "review"] as Step[]).map((s, i) => (
+          {(["password", "children", "model", "review"] as Step[]).map((s, i) => (
             <div
               key={s}
-              className={`h-2 w-16 rounded-full transition-colors ${
-                step === s ? "bg-primary" : i < ["password", "children", "review"].indexOf(step) ? "bg-accent" : "bg-muted"
+              className={`h-2 w-12 sm:w-16 rounded-full transition-colors ${
+                step === s
+                  ? "bg-primary"
+                  : i < ["password", "children", "model", "review"].indexOf(step)
+                    ? "bg-accent"
+                    : "bg-muted"
               }`}
             />
           ))}
@@ -307,6 +313,16 @@ export default function SetupPage() {
           </div>
         )}
 
+        {step === "model" && (
+          <OllamaSetup
+            onReadyChange={setOllamaReady}
+            showContinue
+            continueLabel="Continue to review"
+            onContinue={() => setStep("review")}
+            loading={loading}
+          />
+        )}
+
         {step === "review" && (
           <Card>
             <CardHeader>
@@ -323,14 +339,14 @@ export default function SetupPage() {
                 </li>
                 <li className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-accent" />
-                  Local AI via Ollama (no cloud required)
+                  Local AI via Ollama {ollamaReady ? "(ready)" : "(checking…)"}
                 </li>
                 <li className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-accent" />
                   All conversations logged for your review
                 </li>
               </ul>
-              <Button onClick={handleComplete} disabled={loading} className="w-full" size="lg">
+              <Button onClick={handleComplete} disabled={loading || !ollamaReady} className="w-full" size="lg">
                 Go to Dashboard
                 <ChevronRight className="ml-2 h-4 w-4" />
               </Button>

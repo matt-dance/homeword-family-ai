@@ -38,15 +38,16 @@ async def _check_ollama_available() -> bool:
         return False
 
 
-async def classify_with_ollama(text: str) -> ClassifierResult:
+async def classify_with_ollama(text: str, model: str | None = None) -> ClassifierResult:
     """Use a small Ollama model to classify content safety."""
+    model_name = model or settings.classifier_model
     prompt = CLASSIFIER_PROMPT.format(message=text[:500])
     try:
         async with httpx.AsyncClient(timeout=settings.classifier_timeout) as client:
             resp = await client.post(
                 f"{settings.ollama_base_url}/api/generate",
                 json={
-                    "model": settings.classifier_model,
+                    "model": model_name,
                     "prompt": prompt,
                     "stream": False,
                     "options": {"temperature": 0, "num_predict": 10},
@@ -86,7 +87,11 @@ def classify_rules_fallback(text: str) -> ClassifierResult:
     return ClassifierResult(allowed=True, used_fallback=True)
 
 
-async def classify(text: str, strictness: int = 3) -> ClassifierResult:
+async def classify(
+    text: str,
+    strictness: int = 3,
+    model: str | None = None,
+) -> ClassifierResult:
     """Classify content. Fail-closed on errors. Uses fallback if Ollama unavailable."""
     # At low strictness, skip classifier for speed
     if strictness <= 1:
@@ -97,4 +102,4 @@ async def classify(text: str, strictness: int = 3) -> ClassifierResult:
         result = classify_rules_fallback(text)
         return result
 
-    return await classify_with_ollama(text)
+    return await classify_with_ollama(text, model=model)
