@@ -73,10 +73,6 @@ _VERBOSITY_HINTS: dict[int, str] = {
 }
 
 
-def _verbosity_length_factor(level: int) -> float:
-    clamped = max(1, min(5, level))
-    return 0.6 + (clamped - 1) * 0.2
-
 _HOMEWORK_MODE = (
     "Homework mode is ON: help with schoolwork by giving hints and asking guiding questions. "
     "Do NOT write complete essays, do entire assignments, or give copy-paste answers. "
@@ -135,6 +131,3 @@ def build_system_prompt(
         parts.append(tool_hint)
     return " ".join(parts)
 
-
-def effective_max_response_length(preset: PolicyPreset, ai_verbosity: int = 3) -> int:
-    return max(120, int(preset.max_response_length * _verbosity_length_factor(ai_verbosity)))

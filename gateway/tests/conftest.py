@@ -36,6 +36,16 @@ async def fresh_db():
     await engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def clear_rate_limits():
+    """Login/PIN limiters are process-global; keep tests independent."""
+    from homeward_gateway.auth import rate_limit
+
+    rate_limit._attempts.clear()
+    yield
+    rate_limit._attempts.clear()
+
+
 @pytest.fixture
 async def client():
     transport = ASGITransport(app=app)

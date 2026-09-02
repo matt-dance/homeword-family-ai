@@ -6,7 +6,7 @@ from typing import AsyncIterator
 import litellm
 
 from homeward_gateway.config import settings
-from homeward_gateway.models.prompts import build_system_prompt, effective_max_response_length
+from homeward_gateway.models.prompts import build_system_prompt
 from homeward_gateway.models.response_limits import GENERATION_MAX_TOKENS
 from homeward_gateway.pipeline.policy import PolicyPreset
 
@@ -28,7 +28,6 @@ async def generate_response(
     child_name: str,
     age: int,
     preset: PolicyPreset,
-    max_length: int = 800,
     model: str | None = None,
     homework_mode: bool = False,
     tool_hint: str = "",
@@ -38,7 +37,6 @@ async def generate_response(
     quick_chat: bool = False,
 ) -> str:
     """Generate a non-streaming LLM response via Ollama (default) or cloud if enabled."""
-    max_length = effective_max_response_length(preset, ai_verbosity)
     system = build_system_prompt(
         child_name, age, preset, homework_mode, tool_hint=tool_hint,
         continue_conversation=len(messages) > 1,
@@ -78,7 +76,6 @@ async def stream_response(
     child_name: str,
     age: int,
     preset: PolicyPreset,
-    max_length: int = 800,
     model: str | None = None,
     homework_mode: bool = False,
     tool_hint: str = "",
@@ -88,7 +85,6 @@ async def stream_response(
     quick_chat: bool = False,
 ) -> AsyncIterator[str]:
     """Stream LLM response tokens."""
-    max_length = effective_max_response_length(preset, ai_verbosity)
     system = build_system_prompt(
         child_name, age, preset, homework_mode, tool_hint=tool_hint,
         continue_conversation=len(messages) > 1,

@@ -18,9 +18,9 @@ def test_pick_recommended_light_for_low_ram():
     assert model in {"llama3.2:1b", "gemma2:2b", "phi3:mini"}
 
 
-def test_pick_recommended_prefers_installed():
-    model = pick_recommended_model(36.0, {"llama3.2:1b"})
-    assert model == "qwen2.5:14b"
+def test_pick_recommended_ignores_installed_models():
+    """The Recommended badge is about the machine, not what happens to be installed."""
+    assert pick_recommended_model(36.0, {"llama3.2:1b"}) == pick_recommended_model(36.0, set())
 
 
 def test_pick_classifier_model_prefers_small():

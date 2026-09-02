@@ -43,9 +43,7 @@ packages = ["homeward_gateway"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
-    "unit: fast tests with no external services",
-    "integration: API-level tests using the app test client",
-    "slow: downloads or runs Whisper model (skip in quick CI with -m 'not slow')",
+    "slow: downloads or runs a Whisper/Piper model (excluded by scripts/test.sh; run with -m slow)",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

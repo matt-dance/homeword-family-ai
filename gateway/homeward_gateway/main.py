@@ -65,11 +65,17 @@ app = FastAPI(
     description="Family AI safety gateway — local-first, privacy-focused",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if settings.api_docs else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if settings.api_docs else None,
 )
 
+# The web app proxies /api/v1 same-origin, so browsers never need CORS. Only
+# the local hostnames are allowed for direct dev access; wildcard + credentials
+# would let any page on the LAN ride the parent session cookie.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\]|homeward\.local)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -5,6 +5,7 @@ from httpx import AsyncClient
 
 from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.chat.starters import get_conversation_starters
+from homeward_gateway.pipeline.pipeline import PipelineResult
 from homeward_gateway.pipeline.policy import load_all_presets
 from tests.conftest import create_child, setup_parent
 
@@ -92,8 +93,14 @@ class TestChatFeaturesAPI:
         assert "total_count" in data
 
     @pytest.mark.asyncio
-    async def test_resume_session(self, authenticated_client: AsyncClient):
+    async def test_resume_session(self, authenticated_client: AsyncClient, monkeypatch):
         child = authenticated_client.test_child  # type: ignore[attr-defined]
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Stars are giant glowing balls of gas.")
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+
         session = await authenticated_client.post(
             "/api/v1/chat/sessions",
             json={"child_id": child["id"]},
@@ -102,37 +109,35 @@ class TestChatFeaturesAPI:
 
         await authenticated_client.post(
             "/api/v1/chat",
-            json={
-                "message": "Hello stars",
-                "child_id": child["id"],
-                "session_id": session_id,
-                "history": [],
-            },
+            json={"message": "Hello stars", "child_id": child["id"], "session_id": session_id},
         )
 
         resume = await authenticated_client.get(f"/api/v1/children/{child['id']}/sessions/resume")
         assert resume.status_code == 200
         data = resume.json()
         assert data["session_id"] == session_id
-        assert len(data["messages"]) >= 1
+        assert [m["role"] for m in data["messages"]] == ["user", "assistant"]
 
     @pytest.mark.asyncio
-    async def test_chat_blocked_during_quiet_hours(self, authenticated_client: AsyncClient):
+    async def test_resume_disabled_when_parent_turns_it_off(self, authenticated_client: AsyncClient):
         child = authenticated_client.test_child  # type: ignore[attr-defined]
-        await authenticated_client.patch(
-            f"/api/v1/children/{child['id']}",
-            json={
-                "quiet_hours_enabled": True,
-                "quiet_hours_start": "00:00",
-                "quiet_hours_end": "00:01",
-                "quiet_hours_days": "0,1,2,3,4,5,6",
-            },
+        await authenticated_client.patch(f"/api/v1/children/{child['id']}", json={"allow_resume": False})
+        resume = await authenticated_client.get(f"/api/v1/children/{child['id']}/sessions/resume")
+        assert resume.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_chat_blocked_during_quiet_hours(self, authenticated_client: AsyncClient, monkeypatch):
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+        monkeypatch.setattr(
+            "homeward_gateway.api.routes.is_chat_available",
+            lambda **_kwargs: (False, "Chat is taking a break until morning."),
         )
         resp = await authenticated_client.post(
             "/api/v1/chat",
-            json={"message": "Hi", "child_id": child["id"], "history": []},
+            json={"message": "Hi", "child_id": child["id"]},
         )
         assert resp.status_code == 403
+        assert "break" in resp.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_public_children_includes_chat_available(self, authenticated_client: AsyncClient):

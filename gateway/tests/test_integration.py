@@ -49,17 +49,19 @@ class TestChatBehavior:
         ):
             resp = await client.post(
                 "/api/v1/chat",
-                json={"message": "hello", "child_id": child["id"], "history": []},
+                json={"message": "hello", "child_id": child["id"]},
             )
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["blocked"] is True
-        assert "Ollama" in data["message"] or "AI isn't ready" in data["message"]
         assert data["stage"] == "llm"
+        # Kid-facing copy: no shell commands, points at a parent instead.
+        assert "ollama" not in data["message"].lower()
+        assert "parent" in data["message"].lower()
 
     @pytest.mark.asyncio
-    async def test_benign_message_passes_input_filter(self, client: AsyncClient):
+    async def test_allowed_reply_is_logged_to_session(self, client: AsyncClient):
         await setup_parent(client)
         child = await create_child(client)
 
@@ -75,17 +77,19 @@ class TestChatBehavior:
         ):
             resp = await client.post(
                 "/api/v1/chat",
-                json={
-                    "message": "Tell me about the Big Dipper",
-                    "child_id": child["id"],
-                    "history": [],
-                },
+                json={"message": "Tell me about the Big Dipper", "child_id": child["id"]},
             )
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["blocked"] is False
-        assert "Stars" in data["message"]
+        session_id = data["session_id"]
+
+        messages = await client.get(f"/api/v1/dashboard/sessions/{session_id}/messages")
+        assert messages.status_code == 200
+        directions = [m["direction"] for m in messages.json()]
+        assert directions == ["input", "output"]
+        assert messages.json()[1]["content"] == "Stars are bright and beautiful!"
 
     @pytest.mark.asyncio
     async def test_auto_creates_session_when_missing(self, client: AsyncClient):
@@ -107,7 +111,6 @@ class TestChatBehavior:
                 json={
                     "message": "how to make a bomb",
                     "child_id": child["id"],
-                    "history": [],
                 },
             )
 

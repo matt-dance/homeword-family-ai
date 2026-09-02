@@ -1,30 +1,43 @@
 """Authentication unit and API tests."""
 
+import hashlib
+
 import pytest
 from httpx import AsyncClient
 
+from homeward_gateway.auth import rate_limit
 from homeward_gateway.auth.parent_auth import (
     create_session_token,
     decode_session_token,
     hash_password,
+    password_needs_rehash,
     verify_password,
 )
+from homeward_gateway.config import settings
 from tests.conftest import DEFAULT_PASSWORD, setup_parent
 
 
 class TestPasswordHashing:
     def test_hash_and_verify_success(self):
         stored = hash_password("secret-password")
+        assert stored.startswith("pbkdf2_sha256$")
         assert verify_password("secret-password", stored)
         assert not verify_password("wrong-password", stored)
 
     def test_verify_rejects_malformed_hash(self):
         assert not verify_password("secret-password", "not-a-valid-hash")
+        assert not verify_password("secret-password", "pbkdf2_sha256$oops")
 
     def test_hashes_are_unique(self):
-        a = hash_password("same-password")
-        b = hash_password("same-password")
-        assert a != b
+        assert hash_password("same-password") != hash_password("same-password")
+
+    def test_legacy_sha256_hash_still_verifies_and_is_flagged(self):
+        salt = "abcd" * 8
+        legacy = f"{salt}:{hashlib.sha256((salt + 'old-pass').encode()).hexdigest()}"
+        assert verify_password("old-pass", legacy)
+        assert not verify_password("nope", legacy)
+        assert password_needs_rehash(legacy)
+        assert not password_needs_rehash(hash_password("old-pass"))
 
 
 class TestSessionTokens:
@@ -50,7 +63,15 @@ class TestAuthAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["setup_complete"] is False
-        assert data["cloud_enabled"] is False
+        assert data["has_recovery_code"] is True
+
+    @pytest.mark.asyncio
+    async def test_session_cookie_is_httponly(self, client: AsyncClient):
+        resp = await client.post("/api/v1/setup", json={"password": DEFAULT_PASSWORD})
+        cookie = resp.headers.get("set-cookie", "")
+        assert settings.session_cookie_name in cookie
+        assert "httponly" in cookie.lower()
+        assert "samesite=lax" in cookie.lower()
 
     @pytest.mark.asyncio
     async def test_logout_clears_session(self, client: AsyncClient):
@@ -72,6 +93,17 @@ class TestAuthAPI:
         resp = await client.post("/api/v1/auth/login", json={"password": DEFAULT_PASSWORD})
         assert resp.status_code == 200
         assert resp.json()["setup_complete"] is True
+
+    @pytest.mark.asyncio
+    async def test_login_is_rate_limited(self, client: AsyncClient):
+        await setup_parent(client)
+        rate_limit._attempts.clear()
+        for _ in range(rate_limit._MAX_ATTEMPTS):
+            resp = await client.post("/api/v1/auth/login", json={"password": "wrong-password"})
+            assert resp.status_code == 401
+        locked = await client.post("/api/v1/auth/login", json={"password": DEFAULT_PASSWORD})
+        assert locked.status_code == 429
+        rate_limit._attempts.clear()
 
     @pytest.mark.asyncio
     async def test_protected_dashboard_requires_auth(self, client: AsyncClient):

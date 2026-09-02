@@ -8,14 +8,16 @@ from tests.conftest import DEFAULT_PASSWORD, create_child, setup_parent
 
 class TestDefaultProfile:
     @pytest.mark.asyncio
-    async def test_default_profile_public(self, client: AsyncClient):
+    async def test_public_list_falls_back_to_pinless_child(self, client: AsyncClient):
         await setup_parent(client)
-        child = await create_child(client, name="Sam", age=10)
-        resp = await client.get("/api/v1/children/default")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["id"] == child["id"]
-        assert data["is_default"] is True
+        locked = await client.post(
+            "/api/v1/children", json={"name": "Ana", "age": 10, "strictness": 3, "pin": "1234"}
+        )
+        assert locked.status_code == 200
+        open_child = await create_child(client, name="Sam", age=10)
+        resp = await client.get("/api/v1/children/public")
+        default = [p for p in resp.json() if p["is_default"]]
+        assert [p["id"] for p in default] == [open_child["id"]]
 
     @pytest.mark.asyncio
     async def test_public_list_marks_default(self, client: AsyncClient):

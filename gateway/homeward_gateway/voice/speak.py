@@ -224,10 +224,6 @@ def synthesize_speech(text: str) -> dict[str, Any]:
     }
 
 
-def synthesize_wav_bytes(text: str) -> bytes:
-    return synthesize_speech(text)["audio_wav"]
-
-
 def synthesize_speech_payload(text: str) -> dict[str, Any]:
     result = synthesize_speech(text)
     return {

@@ -1,6 +1,5 @@
 """Policy preset loading and matching."""
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -90,12 +89,3 @@ def check_policy_match(
 
     return True, None
 
-
-def compile_jailbreak_regex(preset: PolicyPreset) -> list[re.Pattern[str]]:
-    patterns = []
-    for p in preset.jailbreak_patterns:
-        try:
-            patterns.append(re.compile(re.escape(p), re.IGNORECASE))
-        except re.error:
-            continue
-    return patterns

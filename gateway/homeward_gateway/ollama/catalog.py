@@ -133,16 +133,6 @@ def pick_recommended_model(ram_gb: float, installed: set[str]) -> str:
     return fitting[-1].id
 
 
-def pick_default_model(ram_gb: float, installed: set[str], current: str | None = None) -> str:
-    """Default selection — prefer current, then installed, then recommended."""
-    if current and (current in installed or current in catalog_by_id()):
-        return current
-    fitting = [m for m in MODEL_CATALOG if m.min_ram_gb <= ram_gb]
-    installed_fitting = [m for m in fitting if m.id in installed]
-    if installed_fitting:
-        return installed_fitting[-1].id
-    return pick_recommended_model(ram_gb, installed)
-
 
 CLASSIFIER_PREFERENCES = (
     "llama3.2:1b",

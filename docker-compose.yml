@@ -4,8 +4,10 @@ services:
     container_name: homeward-ollama
     volumes:
       - ollama_data:/root/.ollama
+    # Host-only: lets `ollama` CLI on this computer manage models, but keeps the
+    # unfiltered model API off the LAN so kids' devices must go through Homeward.
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "ollama", "list"]
@@ -43,13 +45,17 @@ services:
       - HOMEWARD_OLLAMA_MODEL=llama3.2:3b
       - HOMEWARD_CLASSIFIER_MODEL=llama3.2:3b
       - HOMEWARD_DATA_DIR=/data
-      - HOMEWARD_SECRET_KEY=${HOMEWARD_SECRET_KEY:-change-me-in-production}
+      # Leave unset to auto-generate a per-install key in the data volume.
+      - HOMEWARD_SECRET_KEY=${HOMEWARD_SECRET_KEY:-}
       - HOMEWARD_POLICIES_DIR=/app/policies
     volumes:
       - homeward_data:/data
       - ./policies:/app/policies:ro
+    # Host-only: the web container proxies /api/v1 for every device, and the
+    # gateway trusts the proxy's client-IP header only because nothing else can
+    # reach this port.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     restart: unless-stopped
     healthcheck:
       test:

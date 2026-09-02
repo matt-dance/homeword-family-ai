@@ -12,12 +12,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from homeward_gateway.auth.local_host import is_local_request, require_local_request
+from homeward_gateway.auth.local_host import client_ip_from_request, require_local_request
 from homeward_gateway.auth.parent_auth import (
     clear_session_cookie,
     get_parent_from_request,
+    has_child_access,
     hash_password,
+    hash_pin,
+    password_needs_rehash,
+    pin_needs_rehash,
+    set_child_access_cookie,
     set_session_cookie,
+    verify_child_pin,
     verify_password,
 )
 from homeward_gateway.auth.rate_limit import check_rate_limit, record_attempt, reset_attempts
@@ -52,7 +58,7 @@ from homeward_gateway.db.database import (
     get_session,
 )
 from homeward_gateway.dashboard.sessions import find_legacy_session, group_legacy_logs
-from homeward_gateway.home.location import HomeContext, home_context_from_parent
+from homeward_gateway.home.location import home_context_from_parent
 from homeward_gateway.profiles.default_profile import resolve_default_child
 from homeward_gateway.ollama import service as ollama_service
 from homeward_gateway.ollama.catalog import pick_classifier_model
@@ -89,12 +95,15 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8)
 
 
+PIN_PATTERN = r"^\d{4,6}$"
+
+
 class ChildCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     age: int = Field(ge=3, le=18)
     preset_id: str | None = None
     strictness: int = Field(default=3, ge=1, le=5)
-    pin: str | None = None
+    pin: str | None = Field(default=None, pattern=PIN_PATTERN)
     homework_mode: bool = False
     live_lookups: bool = False
 
@@ -104,7 +113,7 @@ class ChildUpdate(BaseModel):
     age: int | None = Field(default=None, ge=3, le=18)
     preset_id: str | None = None
     strictness: int | None = Field(default=None, ge=1, le=5)
-    pin: str | None = None
+    pin: str | None = Field(default=None, pattern=PIN_PATTERN)
     clear_pin: bool = False
     homework_mode: bool | None = None
     live_lookups: bool | None = None
@@ -119,8 +128,15 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     child_id: int
     session_id: int | None = None
-    history: list[dict] = Field(default_factory=list)
     quick_chat: bool = False
+
+
+class PinRequest(BaseModel):
+    pin: str = Field(min_length=1, max_length=10)
+
+
+AUDIO_SUFFIXES = frozenset({".webm", ".mp4", ".m4a", ".wav", ".mp3", ".ogg", ".flac"})
+HISTORY_TURN_LIMIT = 20
 
 
 class SessionCreateRequest(BaseModel):
@@ -164,10 +180,21 @@ async def require_parent(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ParentAccount:
+    """Parent routes need the session cookie *and* the host machine."""
+    require_local_request(request)
     parent = await get_parent_from_request(request, session)
     if not parent:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return parent
+
+
+def _rate_key(request: Request, scope: str) -> str:
+    return f"{scope}:{client_ip_from_request(request) or 'unknown'}"
+
+
+def _require_child_access(request: Request, child: ChildProfile) -> None:
+    if not has_child_access(request, child):
+        raise HTTPException(status_code=403, detail="PIN required")
 
 
 # --- Health ---
@@ -220,16 +247,22 @@ async def setup_status(session: Annotated[AsyncSession, Depends(get_session)]):
 @router.post("/setup")
 async def setup(
     body: SetupRequest,
+    request: Request,
     response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
+    require_local_request(request)
     result = await session.execute(select(ParentAccount).limit(1))
     existing = result.scalar_one_or_none()
     if existing:
         if existing.setup_complete:
             raise HTTPException(status_code=400, detail="Setup already completed")
+        rate_key = _rate_key(request, "login")
+        check_rate_limit(rate_key)
         if not verify_password(body.password, existing.password_hash):
+            record_attempt(rate_key)
             raise HTTPException(status_code=401, detail="Invalid password")
+        reset_attempts(rate_key)
         set_session_cookie(response, existing.id)
         return {"ok": True, "parent_id": existing.id, "resumed": True}
 
@@ -264,13 +297,24 @@ async def complete_setup(
 @router.post("/auth/login")
 async def login(
     body: LoginRequest,
+    request: Request,
     response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
+    require_local_request(request)
+    rate_key = _rate_key(request, "login")
+    check_rate_limit(rate_key)
+
     result = await session.execute(select(ParentAccount).limit(1))
     parent = result.scalar_one_or_none()
     if not parent or not verify_password(body.password, parent.password_hash):
+        record_attempt(rate_key)
         raise HTTPException(status_code=401, detail="Invalid password")
+
+    if password_needs_rehash(parent.password_hash):
+        parent.password_hash = hash_password(body.password)
+        await session.commit()
+    reset_attempts(rate_key)
     set_session_cookie(response, parent.id)
     return {"ok": True, "setup_complete": parent.setup_complete}
 
@@ -288,24 +332,25 @@ async def reset_password(
     response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    client_key = request.client.host if request.client else "unknown"
-    check_rate_limit(f"reset:{client_key}")
+    require_local_request(request)
+    rate_key = _rate_key(request, "reset")
+    check_rate_limit(rate_key)
 
     result = await session.execute(select(ParentAccount).limit(1))
     parent = result.scalar_one_or_none()
     if not parent or not parent.recovery_code_hash:
-        record_attempt(f"reset:{client_key}")
+        record_attempt(rate_key)
         raise HTTPException(status_code=400, detail="Invalid recovery code")
 
     if not verify_recovery_code(body.recovery_code, parent.recovery_code_hash):
-        record_attempt(f"reset:{client_key}")
+        record_attempt(rate_key)
         raise HTTPException(status_code=400, detail="Invalid recovery code")
 
     new_recovery_code = generate_recovery_code()
     parent.password_hash = hash_password(body.new_password)
     parent.recovery_code_hash = hash_recovery_code(new_recovery_code)
     await session.commit()
-    reset_attempts(f"reset:{client_key}")
+    reset_attempts(rate_key)
     set_session_cookie(response, parent.id)
     return {"ok": True, "recovery_code": new_recovery_code}
 
@@ -328,7 +373,6 @@ async def change_password(
 
 @router.get("/auth/me")
 async def auth_me(
-    request: Request,
     parent: Annotated[ParentAccount, Depends(require_parent)],
 ):
     return {
@@ -338,7 +382,6 @@ async def auth_me(
         "ollama_model": parent.ollama_model,
         "classifier_model": parent.classifier_model,
         "has_recovery_code": parent.recovery_code_hash is not None,
-        "is_local_host": is_local_request(request),
     }
 
 
@@ -499,7 +542,7 @@ async def create_child(
         age=body.age,
         preset_id=preset_id,
         strictness=body.strictness,
-        pin=body.pin,
+        pin=hash_pin(body.pin) if body.pin else None,
         homework_mode=body.homework_mode,
         live_lookups=body.live_lookups,
     )
@@ -546,8 +589,8 @@ async def update_child(
         child.strictness = body.strictness
     if body.clear_pin:
         child.pin = None
-    elif body.pin is not None:
-        child.pin = body.pin or None
+    elif body.pin:
+        child.pin = hash_pin(body.pin)
     if body.homework_mode is not None:
         child.homework_mode = body.homework_mode
     if body.live_lookups is not None:
@@ -582,20 +625,6 @@ async def list_children_public(session: Annotated[AsyncSession, Depends(get_sess
     return [_serialize_child_public(c, is_default=c.id == default_id) for c in children]
 
 
-@router.get("/children/default")
-async def get_default_child_public(session: Annotated[AsyncSession, Depends(get_session)]):
-    """Public default profile for quick chat links on the home network."""
-    result = await session.execute(select(ChildProfile))
-    children = list(result.scalars().all())
-    if not children:
-        raise HTTPException(status_code=404, detail="No profiles configured")
-    parent = await _load_household_parent(session)
-    default_child = resolve_default_child(children, parent.default_profile_child_id if parent else None)
-    if not default_child:
-        raise HTTPException(status_code=404, detail="No profiles configured")
-    return _serialize_child_public(default_child, is_default=True)
-
-
 @router.get("/children/{child_id}/starters")
 async def child_conversation_starters(
     child_id: int,
@@ -608,12 +637,14 @@ async def child_conversation_starters(
 @router.get("/children/{child_id}/sessions/resume")
 async def resume_child_session(
     child_id: int,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     result = await session.execute(select(ChildProfile).where(ChildProfile.id == child_id))
     child = result.scalar_one_or_none()
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
+    _require_child_access(request, child)
     if not child.allow_resume:
         raise HTTPException(status_code=404, detail="No resumable session")
 
@@ -653,22 +684,27 @@ async def resume_child_session(
 @router.post("/children/{child_id}/verify-pin")
 async def verify_pin(
     child_id: int,
-    body: dict,
+    body: PinRequest,
     request: Request,
+    response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    client_key = request.client.host if request.client else "unknown"
-    check_rate_limit(f"pin:{client_key}:{child_id}")
+    rate_key = _rate_key(request, f"pin:{child_id}")
+    check_rate_limit(rate_key)
 
-    pin = body.get("pin", "")
     result = await session.execute(select(ChildProfile).where(ChildProfile.id == child_id))
     child = result.scalar_one_or_none()
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
-    if child.pin and child.pin != pin:
-        record_attempt(f"pin:{client_key}:{child_id}")
-        raise HTTPException(status_code=403, detail="Invalid PIN")
-    reset_attempts(f"pin:{client_key}:{child_id}")
+    if child.pin:
+        if not verify_child_pin(body.pin, child.pin):
+            record_attempt(rate_key)
+            raise HTTPException(status_code=403, detail="Invalid PIN")
+        if pin_needs_rehash(child.pin):
+            child.pin = hash_pin(body.pin)
+            await session.commit()
+        set_child_access_cookie(response, child.id)
+    reset_attempts(rate_key)
     return {"ok": True, "child_id": child.id, "name": child.name}
 
 
@@ -697,18 +733,20 @@ async def transcribe_audio(
             detail="Local voice typing is not available on this Homeward server.",
         )
 
-    client_key = request.client.host if request.client else "unknown"
-    check_rate_limit(f"transcribe:{client_key}")
+    rate_key = _rate_key(request, "transcribe")
+    check_rate_limit(rate_key)
 
     content = await audio.read()
     suffix = ".webm"
     if audio.filename and "." in audio.filename:
-        suffix = "." + audio.filename.rsplit(".", 1)[-1].lower()
+        candidate = "." + audio.filename.rsplit(".", 1)[-1].lower()
+        if candidate in AUDIO_SUFFIXES:
+            suffix = candidate
 
     try:
         text = await asyncio.to_thread(transcribe_bytes, content, suffix)
     except ValueError as exc:
-        record_attempt(f"transcribe:{client_key}")
+        record_attempt(rate_key)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         detail = str(exc)
@@ -720,14 +758,14 @@ async def transcribe_audio(
         raise HTTPException(status_code=503, detail=detail) from exc
     except Exception as exc:
         logger.exception("Transcription failed")
-        record_attempt(f"transcribe:{client_key}")
+        record_attempt(rate_key)
         raise HTTPException(status_code=500, detail="Could not transcribe audio") from exc
 
     if not text:
-        record_attempt(f"transcribe:{client_key}")
+        record_attempt(rate_key)
         raise HTTPException(status_code=400, detail="Could not make out any words. Try speaking again.")
 
-    reset_attempts(f"transcribe:{client_key}")
+    reset_attempts(rate_key)
     return {"text": text}
 
 
@@ -753,8 +791,8 @@ async def speak_text(body: SpeakRequest, request: Request):
             detail="Local read-aloud is not available on this Homeward server.",
         )
 
-    client_key = request.client.host if request.client else "unknown"
-    check_rate_limit(f"speak:{client_key}")
+    rate_key = _rate_key(request, "speak")
+    check_rate_limit(rate_key)
 
     cleaned = sanitize_for_speech(body.text)
     if not cleaned:
@@ -765,28 +803,30 @@ async def speak_text(body: SpeakRequest, request: Request):
     try:
         payload = await asyncio.to_thread(synthesize_speech_payload, cleaned)
     except ValueError as exc:
-        record_attempt(f"speak:{client_key}")
+        record_attempt(rate_key)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Read-aloud synthesis failed")
-        record_attempt(f"speak:{client_key}")
+        record_attempt(rate_key)
         raise HTTPException(status_code=500, detail="Could not read text aloud") from exc
 
-    reset_attempts(f"speak:{client_key}")
+    reset_attempts(rate_key)
     return payload
 
 
 @router.post("/chat/sessions")
 async def create_chat_session(
     body: SessionCreateRequest,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     result = await session.execute(select(ChildProfile).where(ChildProfile.id == body.child_id))
     child = result.scalar_one_or_none()
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
+    _require_child_access(request, child)
 
     chat_model, _ = await get_effective_models(session)
     if body.end_session_id:
@@ -821,12 +861,6 @@ async def _get_child_context(child_id: int, session: AsyncSession) -> tuple[Chil
     if not preset:
         raise HTTPException(status_code=500, detail="Preset not found")
     return child, preset
-
-
-async def _load_home_context(session: AsyncSession, parent_id: int) -> HomeContext:
-    result = await session.execute(select(ParentAccount).where(ParentAccount.id == parent_id))
-    parent = result.scalar_one_or_none()
-    return home_context_from_parent(parent)
 
 
 async def _load_parent_account(session: AsyncSession, parent_id: int) -> ParentAccount | None:
@@ -921,9 +955,28 @@ BLOCKED_MESSAGE = (
     "Let's talk about something fun instead — like animals, space, or a hobby you enjoy!"
 )
 LLM_UNAVAILABLE_MESSAGE = (
-    "Homeward's AI isn't ready yet. Ask a parent to start Ollama "
-    "(run: ollama serve, then ollama pull llama3.2:3b)."
+    "Homeward's brain is taking a nap right now. "
+    "Ask a parent to check the AI status on the dashboard, then try again."
 )
+
+
+async def _history_for_session(session: AsyncSession, chat_session_id: int | None) -> list[dict]:
+    """Prior turns from the server log — never from the client, so history
+    cannot be used to smuggle unfiltered text past the input filter."""
+    if not chat_session_id:
+        return []
+    result = await session.execute(
+        select(ConversationLog)
+        .where(ConversationLog.session_id == chat_session_id)
+        .where(ConversationLog.blocked.is_(False))
+        .order_by(ConversationLog.created_at.desc())
+        .limit(HISTORY_TURN_LIMIT)
+    )
+    logs = list(reversed(result.scalars().all()))
+    return [
+        {"role": "user" if log.direction == "input" else "assistant", "content": log.content}
+        for log in logs
+    ]
 
 
 def user_facing_message(stage: str | None) -> str:
@@ -946,18 +999,21 @@ def _ensure_chat_available(child: ChildProfile) -> None:
 @router.post("/chat")
 async def chat(
     body: ChatRequest,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     child, preset = await _get_child_context(body.child_id, session)
+    _require_child_access(request, child)
     _ensure_chat_available(child)
     chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
+    history = await _history_for_session(session, chat_session_id)
     chat_model, classifier_model = await get_effective_models(session)
-    home = await _load_home_context(session, child.parent_id)
     parent = await _load_parent_account(session, child.parent_id)
+    home = home_context_from_parent(parent)
     ai_prefs = _serialize_ai_preferences(parent)
     result = await process_chat(
         body.message,
-        body.history,
+        history,
         preset,
         child.strictness,
         child.name,
@@ -1004,11 +1060,13 @@ async def chat_stream(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     child, preset = await _get_child_context(body.child_id, session)
+    _require_child_access(request, child)
     _ensure_chat_available(child)
     chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
+    history = await _history_for_session(session, chat_session_id)
     chat_model, classifier_model = await get_effective_models(session)
-    home = await _load_home_context(session, child.parent_id)
     parent = await _load_parent_account(session, child.parent_id)
+    home = home_context_from_parent(parent)
     ai_prefs = _serialize_ai_preferences(parent)
 
     async def event_stream() -> AsyncIterator[str]:
@@ -1035,7 +1093,7 @@ async def chat_stream(
 
             async for item in process_chat_stream(
                 body.message,
-                body.history,
+                history,
                 preset,
                 child.strictness,
                 child.name,
@@ -1101,13 +1159,11 @@ def _serialize_log(log: ConversationLog) -> dict:
 
 @router.get("/dashboard/sessions")
 async def dashboard_sessions(
-    request: Request,
     parent: Annotated[ParentAccount, Depends(require_parent)],
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: int = 30,
     child_id: int | None = None,
 ):
-    require_local_request(request)
     children_result = await session.execute(
         select(ChildProfile).where(ChildProfile.parent_id == parent.id)
     )
@@ -1168,11 +1224,9 @@ async def dashboard_sessions(
 @router.get("/dashboard/sessions/{session_id}/messages")
 async def dashboard_session_messages(
     session_id: str,
-    request: Request,
     parent: Annotated[ParentAccount, Depends(require_parent)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    require_local_request(request)
     children_result = await session.execute(
         select(ChildProfile).where(ChildProfile.parent_id == parent.id)
     )
@@ -1226,11 +1280,9 @@ async def _parent_child_ids(
 @router.delete("/dashboard/sessions/{session_id}")
 async def delete_dashboard_session(
     session_id: str,
-    request: Request,
     parent: Annotated[ParentAccount, Depends(require_parent)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    require_local_request(request)
     child_ids = await _parent_child_ids(parent, session)
     if not child_ids:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -1273,12 +1325,10 @@ async def delete_dashboard_session(
 
 @router.delete("/dashboard/sessions")
 async def delete_dashboard_child_sessions(
-    request: Request,
     parent: Annotated[ParentAccount, Depends(require_parent)],
     session: Annotated[AsyncSession, Depends(get_session)],
     child_id: int,
 ):
-    require_local_request(request)
     child_ids = await _parent_child_ids(parent, session)
     if child_id not in child_ids:
         raise HTTPException(status_code=404, detail="Child not found")
@@ -1289,51 +1339,13 @@ async def delete_dashboard_child_sessions(
     return {"ok": True}
 
 
-@router.get("/dashboard/logs")
-async def dashboard_logs(
-    request: Request,
-    parent: Annotated[ParentAccount, Depends(require_parent)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-    limit: int = 50,
-    child_id: int | None = None,
-):
-    require_local_request(request)
-    children_result = await session.execute(
-        select(ChildProfile).where(ChildProfile.parent_id == parent.id)
-    )
-    child_ids = _filter_child_ids([c.id for c in children_result.scalars().all()], child_id)
-    if not child_ids:
-        return []
-
-    logs_result = await session.execute(
-        select(ConversationLog)
-        .where(ConversationLog.child_id.in_(child_ids))
-        .order_by(ConversationLog.created_at.desc())
-        .limit(limit)
-    )
-    logs = logs_result.scalars().all()
-    return [
-        {
-            "id": log.id,
-            "child_id": log.child_id,
-            "direction": log.direction,
-            "content": log.content,
-            "blocked": log.blocked,
-            "block_reason": log.block_reason,
-            "created_at": log.created_at.isoformat(),
-        }
-        for log in logs
-    ]
-
 
 @router.get("/dashboard/blocked/stats")
 async def dashboard_blocked_stats(
-    request: Request,
     parent: Annotated[ParentAccount, Depends(require_parent)],
     session: Annotated[AsyncSession, Depends(get_session)],
     child_id: int | None = None,
 ):
-    require_local_request(request)
     children_result = await session.execute(
         select(ChildProfile).where(ChildProfile.parent_id == parent.id)
     )
@@ -1358,13 +1370,11 @@ async def dashboard_blocked_stats(
 
 @router.get("/dashboard/blocked")
 async def dashboard_blocked(
-    request: Request,
     parent: Annotated[ParentAccount, Depends(require_parent)],
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: int = 50,
     child_id: int | None = None,
 ):
-    require_local_request(request)
     children_result = await session.execute(
         select(ChildProfile).where(ChildProfile.parent_id == parent.id)
     )
@@ -1391,15 +1401,6 @@ async def dashboard_blocked(
         for a in attempts
     ]
 
-
-@router.get("/dashboard/devices")
-async def dashboard_devices():
-    """Placeholder for paired devices (Phase 2)."""
-    return {
-        "devices": [],
-        "message": "Device pairing will be available in a future update. "
-        "For now, kids can use the chat in this browser.",
-    }
 
 
 # --- Ollama ---
