@@ -145,7 +145,11 @@ class TestFormatters:
         assert "could not find" in prompt.lower()
 
     def test_sports_notes(self):
-        result = format_sports_notes("NFL", ["Denver Broncos 24 vs Kansas City Chiefs 17 (Final)"], "broncos")
+        result = format_sports_notes(
+            "NFL",
+            ["Kansas City Chiefs 17 at Denver Broncos 24 (Final)"],
+            "broncos",
+        )
         assert result.source == "espn-scoreboard"
         assert result.source_label == "Public sports scoreboard"
         assert "Broncos" in result.summary
@@ -153,7 +157,10 @@ class TestFormatters:
     def test_sports_schedule_notes(self):
         result = format_sports_notes(
             "College Football",
-            ["Boise State Broncos 51 vs Eastern Washington Eagles 14 (Final)"],
+            [
+                "Eastern Washington Eagles 14 at Boise State Broncos 51 (Final)"
+                " — Albertsons Stadium, Boise, ID"
+            ],
             "Boise State",
             schedule=True,
         )
@@ -162,6 +169,7 @@ class TestFormatters:
         assert "Boise State" in result.summary
         prompt = lookup_prompt_notes(result)
         assert "Do NOT say you could not find" in prompt
+        assert "Do not guess where a game is played" in prompt
         assert "Boise State" in prompt
 
     def test_news_notes(self):
@@ -182,16 +190,24 @@ class TestParsers:
         payload = {
             "events": [
                 {
-                    "name": "Denver Broncos vs Kansas City Chiefs",
-                    "status": {"type": {"description": "Final"}},
+                    "name": "Kansas City Chiefs at Denver Broncos",
+                    "status": {
+                        "type": {
+                            "description": "Final",
+                            "completed": True,
+                            "state": "post",
+                        }
+                    },
                     "competitions": [
                         {
                             "competitors": [
                                 {
+                                    "homeAway": "home",
                                     "team": {"displayName": "Denver Broncos", "location": "Denver"},
                                     "score": "24",
                                 },
                                 {
+                                    "homeAway": "away",
                                     "team": {"displayName": "Kansas City Chiefs", "location": "Kansas City"},
                                     "score": "17",
                                 },
@@ -200,13 +216,21 @@ class TestParsers:
                     ],
                 },
                 {
-                    "name": "Dallas Cowboys vs New York Giants",
-                    "status": {"type": {"description": "Final"}},
+                    "name": "New York Giants at Dallas Cowboys",
+                    "status": {"type": {"description": "Final", "completed": True, "state": "post"}},
                     "competitions": [
                         {
                             "competitors": [
-                                {"team": {"displayName": "Dallas Cowboys"}, "score": "10"},
-                                {"team": {"displayName": "New York Giants"}, "score": "7"},
+                                {
+                                    "homeAway": "home",
+                                    "team": {"displayName": "Dallas Cowboys"},
+                                    "score": "10",
+                                },
+                                {
+                                    "homeAway": "away",
+                                    "team": {"displayName": "New York Giants"},
+                                    "score": "7",
+                                },
                             ]
                         }
                     ],
@@ -215,26 +239,38 @@ class TestParsers:
         }
         events = parse_scoreboard_events(payload, "broncos")
         assert len(events) == 1
-        assert "Broncos" in events[0]
+        assert events[0] == "Kansas City Chiefs 17 at Denver Broncos 24 (Final)"
 
     def test_parse_scoreboard_college_location_filter(self):
         payload = {
             "events": [
                 {
                     "name": "Eastern Washington Eagles at Boise State Broncos",
-                    "status": {"type": {"description": "Final"}},
+                    "status": {
+                        "type": {
+                            "description": "Final",
+                            "completed": True,
+                            "state": "post",
+                        }
+                    },
                     "competitions": [
                         {
+                            "venue": {
+                                "fullName": "Albertsons Stadium",
+                                "address": {"city": "Boise", "state": "ID"},
+                            },
                             "competitors": [
                                 {
+                                    "homeAway": "home",
                                     "team": {"displayName": "Boise State Broncos", "location": "Boise State"},
                                     "score": "51",
                                 },
                                 {
+                                    "homeAway": "away",
                                     "team": {"displayName": "Eastern Washington Eagles", "location": "Eastern Washington"},
                                     "score": "14",
                                 },
-                            ]
+                            ],
                         }
                     ],
                 },
@@ -242,7 +278,53 @@ class TestParsers:
         }
         events = parse_scoreboard_events(payload, "boise state", team_filter="Boise State")
         assert len(events) == 1
-        assert "Boise State" in events[0]
+        assert events[0] == (
+            "Eastern Washington Eagles 14 at Boise State Broncos 51 (Final)"
+            " — Albertsons Stadium, Boise, ID"
+        )
+
+    def test_parse_scoreboard_scheduled_includes_venue_and_kickoff(self):
+        payload = {
+            "events": [
+                {
+                    "name": "Boise State Broncos at Oregon Ducks",
+                    "status": {
+                        "type": {
+                            "description": "Scheduled",
+                            "completed": False,
+                            "state": "pre",
+                            "detail": "Sat, September 5th at 3:30 PM EDT",
+                        }
+                    },
+                    "competitions": [
+                        {
+                            "venue": {
+                                "fullName": "Autzen Stadium",
+                                "address": {"city": "Eugene", "state": "OR"},
+                            },
+                            "competitors": [
+                                {
+                                    "homeAway": "home",
+                                    "team": {"displayName": "Oregon Ducks", "location": "Oregon"},
+                                    "score": "0",
+                                },
+                                {
+                                    "homeAway": "away",
+                                    "team": {"displayName": "Boise State Broncos", "location": "Boise State"},
+                                    "score": "0",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            ]
+        }
+        events = parse_scoreboard_events(payload, "boise state", team_filter="Boise State")
+        assert len(events) == 1
+        assert events[0] == (
+            "Boise State Broncos at Oregon Ducks (Scheduled)"
+            " — Autzen Stadium, Eugene, OR — Sat, September 5th at 3:30 PM EDT"
+        )
 
     def test_parse_featured_headlines(self):
         payload = {

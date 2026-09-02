@@ -535,11 +535,18 @@ def lookup_card(result: LookupResult) -> ToolCard:
 
 def lookup_prompt_notes(result: LookupResult) -> str:
     if result.found:
+        sports_hint = ""
+        if result.kind == "sports":
+            sports_hint = (
+                "For sports, use the home/away and venue lines exactly as written. "
+                "Do not guess where a game is played or contradict the lookup. "
+            )
         return (
             "LIVE LOOKUP RESULTS from a named source — not a generic web search. "
             f"Source: {result.source_label}. "
             "These facts were verified just now and ARE the answer. "
             "Summarize them clearly for the child. "
+            f"{sports_hint}"
             "Do NOT say you could not find information, could not check, or that a game "
             "was cancelled or postponed when results are listed below.\n\n"
             f"{result.notes}"
@@ -551,6 +558,69 @@ def lookup_prompt_notes(result: LookupResult) -> str:
         "Do not invent weather, scores, or headlines.\n\n"
         f"{result.notes}"
     )
+
+
+def _format_venue(competition: dict[str, Any]) -> str:
+    venue = competition.get("venue") or {}
+    full_name = str(venue.get("fullName") or "").strip()
+    address = venue.get("address") or {}
+    city = str(address.get("city") or "").strip()
+    state = str(address.get("state") or "").strip()
+    place = ", ".join(part for part in (city, state) if part)
+    if full_name and place:
+        return f"{full_name}, {place}"
+    return full_name or place
+
+
+def _format_event_time(event: dict[str, Any]) -> str:
+    status_type = ((event.get("status") or {}).get("type") or {})
+    detail = str(status_type.get("detail") or status_type.get("shortDetail") or "").strip()
+    return detail
+
+
+def _format_scoreboard_line(event: dict[str, Any], competition: dict[str, Any]) -> str:
+    """Format one game as away-at-home with optional scores, venue, and kickoff."""
+    status_type = ((event.get("status") or {}).get("type") or {})
+    status = str(status_type.get("description") or "").strip()
+    show_scores = bool(status_type.get("completed")) or status_type.get("state") == "in"
+
+    home_team = away_team = ""
+    home_score = away_score = ""
+    for competitor in competition.get("competitors") or []:
+        team_info = competitor.get("team") or {}
+        team = team_info.get("displayName") or team_info.get("shortDisplayName") or "Team"
+        side = str(competitor.get("homeAway") or "").lower()
+        score = str(competitor.get("score") or "").strip()
+        if side == "home":
+            home_team = team
+            home_score = score
+        elif side == "away":
+            away_team = team
+            away_score = score
+
+    if not home_team or not away_team:
+        name = str(event.get("name") or "").strip()
+        if name:
+            line = name
+        else:
+            return ""
+    elif show_scores and home_score and away_score:
+        line = f"{away_team} {away_score} at {home_team} {home_score}"
+    else:
+        line = f"{away_team} at {home_team}"
+
+    if status:
+        line = f"{line} ({status})"
+
+    venue = _format_venue(competition)
+    if venue:
+        line = f"{line} — {venue}"
+
+    kickoff = _format_event_time(event)
+    if kickoff and not status_type.get("completed"):
+        line = f"{line} — {kickoff}"
+
+    return line
 
 
 def parse_scoreboard_events(
@@ -566,28 +636,24 @@ def parse_scoreboard_events(
 
     for event in payload.get("events") or []:
         name = str(event.get("name") or "")
-        status = ((event.get("status") or {}).get("type") or {}).get("description") or ""
         competitions = event.get("competitions") or []
         if not competitions:
             continue
-        teams = []
+        competition = competitions[0]
         team_names: list[str] = []
-        for competitor in competitions[0].get("competitors") or []:
+        for competitor in competition.get("competitors") or []:
             team_info = competitor.get("team") or {}
             team = team_info.get("displayName") or team_info.get("shortDisplayName") or "Team"
             location = team_info.get("location") or ""
-            score = competitor.get("score") or "0"
-            teams.append(f"{team} {score}")
             team_names.extend(part for part in (team, location) if part)
 
-        haystack = " ".join([name, " ".join(team_names), " ".join(teams)]).lower()
+        haystack = " ".join([name, " ".join(team_names)]).lower()
         if filter_by_team and needle not in haystack:
             continue
 
-        line = " vs ".join(teams)
-        if status:
-            line = f"{line} ({status})"
-        events.append(line)
+        line = _format_scoreboard_line(event, competition)
+        if line:
+            events.append(line)
     return events
 
 
