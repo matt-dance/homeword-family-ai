@@ -103,11 +103,13 @@ function DashboardContent() {
   const openSession = async (session: ChatSessionSummary) => {
     setSelectedSession(session);
     setSessionLoading(true);
+    setSessionActionError("");
     try {
       const messages = await api.sessionMessages(session.id);
       setSessionMessages(messages);
     } catch {
       setSessionMessages([]);
+      setSessionActionError("Couldn't load this conversation. Check that Homeward is running and try again.");
     } finally {
       setSessionLoading(false);
     }
@@ -205,7 +207,7 @@ function DashboardContent() {
         <KidChatLink>
           <Button className="rounded-xl shadow-sm shadow-primary/20 font-medium">
             <Sparkles className="mr-2 h-4 w-4" />
-            Open Kid Chat
+            Open Quick Chat
           </Button>
         </KidChatLink>
       </div>
@@ -341,7 +343,13 @@ function DashboardContent() {
                   {aiReady && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
                 </p>
                 <p className="text-xs font-medium text-muted-foreground mt-1">
-                  Local Ollama AI
+                  {aiReady ? (
+                    "Local AI model"
+                  ) : (
+                    <Link href="/dashboard/settings" className="text-primary underline-offset-4 hover:underline">
+                      Fix in Settings →
+                    </Link>
+                  )}
                 </p>
               </div>
               <div

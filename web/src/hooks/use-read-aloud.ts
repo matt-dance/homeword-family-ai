@@ -15,11 +15,12 @@ export function useReadAloud() {
   });
 
   useEffect(() => {
+    const controller = controllerRef.current;
     api
       .speakStatus()
       .then((status) => setSupported(status.available))
       .catch(() => setSupported(false));
-    return () => controllerRef.current.dispose();
+    return () => controller.dispose();
   }, []);
 
   const stop = useCallback(() => {

@@ -2,7 +2,6 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { api, type Child } from "@/lib/api";
 import { chatPathForQuickChat, QUICK_CHAT_LABEL } from "@/lib/default-profile";
 import { chatPathForChild } from "@/lib/slug";
@@ -16,7 +15,7 @@ import { getAgeTheme, AGE_THEME_CONFIGS } from "@/lib/age-theme";
 import { HomewardLogo } from "@/components/homeward-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
-import { Sparkles, Home, ArrowRight, Lock, BookOpen, Globe, Star } from "lucide-react";
+import { Sparkles, ArrowRight, Lock, BookOpen, Globe, Star, WifiOff, RotateCcw } from "lucide-react";
 
 function ChatPickerContent() {
   const router = useRouter();
@@ -24,12 +23,14 @@ function ChatPickerContent() {
   const forcePick = searchParams.get("pick") === "1";
   const [children, setChildren] = useState<Child[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     api
       .childrenPublic()
       .then((kids) => {
         setChildren(kids);
+        setLoadError(false);
         if (kids.length === 0) {
           return;
         }
@@ -38,24 +39,51 @@ function ChatPickerContent() {
           const savedId = getDeviceProfileId();
           const savedChild = findChildById(kids, savedId);
           if (savedChild) {
-            router.replace(savedChild.is_default ? chatPathForQuickChat() : chatPathForChild(savedChild));
+            router.replace(chatPathForChild(savedChild));
             return;
           }
         }
       })
-      .catch(() => router.replace("/setup"))
+      // Never bounce LAN devices to /setup (the middleware sends them straight back here).
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, [router, forcePick]);
 
-  const handlePick = (child: Child, quickChat = false) => {
+  const handlePick = (child: Child) => {
     setDeviceProfileId(child.id);
-    router.push(quickChat ? chatPathForQuickChat() : chatPathForChild(child));
+    router.push(chatPathForChild(child));
+  };
+
+  const handleQuickChat = () => {
+    // Quick Chat is a shared entry point; don't pin this device to a named profile.
+    clearDeviceProfileId();
+    router.push(chatPathForQuickChat());
   };
 
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Sparkles className="h-8 w-8 animate-pulse text-primary" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-5 p-6 bg-background text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-500">
+          <WifiOff className="h-8 w-8" />
+        </div>
+        <div>
+          <h2 className="text-xl font-bold">Can&apos;t reach Homeward</h2>
+          <p className="text-muted-foreground mt-1 max-w-sm">
+            Make sure the Homeward computer is on and you&apos;re on the same Wi‑Fi, then try again.
+          </p>
+        </div>
+        <Button variant="outline" className="rounded-xl" onClick={() => window.location.reload()}>
+          <RotateCcw className="mr-2 h-4 w-4" />
+          Try again
+        </Button>
       </div>
     );
   }
@@ -69,15 +97,9 @@ function ChatPickerContent() {
         <div>
           <h2 className="text-xl font-bold">No profiles yet</h2>
           <p className="text-muted-foreground mt-1 max-w-sm">
-            Ask a parent to set up Homeward to add your profile.
+            A parent needs to finish setting up Homeward on the home computer first.
           </p>
         </div>
-        <Link href="/">
-          <Button variant="outline" className="rounded-xl">
-            <Home className="mr-2 h-4 w-4" />
-            Home
-          </Button>
-        </Link>
       </div>
     );
   }
@@ -108,7 +130,7 @@ function ChatPickerContent() {
           <div className="mb-4">
             <button
               type="button"
-              onClick={() => handlePick(defaultChild, true)}
+              onClick={handleQuickChat}
               className="group relative flex w-full items-center justify-between rounded-2xl border border-primary/40 bg-primary/5 p-4 sm:p-5 shadow-xs transition-all hover:border-primary/70 hover:shadow-md active:scale-[0.99]"
             >
               <div className="flex items-center gap-4 min-w-0 text-left">
@@ -139,7 +161,7 @@ function ChatPickerContent() {
         )}
 
         <div className="space-y-3.5">
-          {children.filter((child) => !child.is_default).map((child) => {
+          {children.map((child) => {
             const themeKey = getAgeTheme(child);
             const theme = AGE_THEME_CONFIGS[themeKey];
 

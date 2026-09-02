@@ -63,4 +63,4 @@ python3 -m pytest tests/test_speak.py -v --tb=short -m "not slow"
 echo
 echo "== Web vitest (read-aloud unit tests) =="
 cd "$ROOT/web"
-npm run test:read-aloud
+npx vitest run src/lib/read-aloud.test.ts

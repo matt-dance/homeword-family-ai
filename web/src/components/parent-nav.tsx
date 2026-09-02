@@ -83,7 +83,7 @@ export function ParentNav({ onLogout }: ParentNavProps) {
               className="border-primary/30 text-primary hover:bg-primary/5 font-medium shadow-xs"
             >
               <ExternalLink className="mr-1.5 h-4 w-4" />
-              <span className="hidden sm:inline">Kid Chat</span>
+              <span className="hidden sm:inline">Quick Chat</span>
             </Button>
           </KidChatLink>
           <Button

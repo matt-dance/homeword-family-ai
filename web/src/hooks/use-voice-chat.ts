@@ -69,9 +69,8 @@ export function useVoiceChat({ onTranscript, onListeningStart }: UseVoiceChatOpt
   useEffect(() => {
     const hasRecorder = typeof MediaRecorder !== "undefined";
     const hasMic = typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
-    const hasSpeech = typeof window !== "undefined" && Boolean(window.speechSynthesis);
 
-    if (!hasRecorder || !hasMic || !hasSpeech) {
+    if (!hasRecorder || !hasMic) {
       setVoiceSupported(false);
       return;
     }

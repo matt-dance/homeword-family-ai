@@ -17,14 +17,13 @@ import {
   CheckCircle2,
   Shield,
   Sparkles,
-  Lock,
   ChevronDown,
   SlidersHorizontal,
   Users,
 } from "lucide-react";
 
 export default function SettingsPage() {
-  const [devicesMessage, setDevicesMessage] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [cloudEnabled, setCloudEnabled] = useState(false);
   const [openaiKey, setOpenaiKey] = useState("");
   const [cloudMessage, setCloudMessage] = useState("");
@@ -53,10 +52,9 @@ export default function SettingsPage() {
   const [advancedSaving, setAdvancedSaving] = useState(false);
 
   useEffect(() => {
-    Promise.all([api.me(), api.devices(), api.homeLocation(), api.advancedSettings()])
-      .then(([me, devicesData, home, advanced]) => {
+    Promise.all([api.me(), api.homeLocation(), api.advancedSettings()])
+      .then(([me, home, advanced]) => {
         setCloudEnabled(me.cloud_enabled);
-        setDevicesMessage(devicesData.message);
         setHomeLocation(home.location || "");
         setHomeLabel(home.label);
         setHomeTimezone(home.timezone);
@@ -66,6 +64,7 @@ export default function SettingsPage() {
         setAiVerbosity(advanced.ai_verbosity);
         setAdvancedChildren(advanced.children);
       })
+      .catch(() => setLoadError("Couldn't load settings. Check that Homeward is running, then refresh."))
       .finally(() => setLoading(false));
   }, []);
 
@@ -163,6 +162,11 @@ export default function SettingsPage() {
         <p className="text-sm text-muted-foreground mt-1">
           Manage local Ollama models, parent dashboard password, and optional cloud fallbacks.
         </p>
+        {loadError && (
+          <p className="mt-3 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive">
+            {loadError}
+          </p>
+        )}
       </div>
 
       {/* Local AI Card */}
@@ -487,7 +491,7 @@ export default function SettingsPage() {
             Local Network & Devices
           </CardTitle>
           <CardDescription>
-            {devicesMessage || "Access kid chat from any phone, tablet, or laptop on your home Wi-Fi."}
+            Access kid chat from any phone, tablet, or laptop on your home Wi‑Fi.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -499,12 +503,8 @@ export default function SettingsPage() {
               </code>
             </p>
             <p>
-              Kids can chat securely from any device on your local network while the Parent Dashboard
-              remains strictly protected on this host computer.
-            </p>
-            <p className="text-[11px]">
-              Native dev without Docker? Run <code className="font-mono">npm run dev:lan</code> (port 80,
-              may require sudo) or <code className="font-mono">npm run dev</code> on port 43123.
+              Kids can chat from any device on your home network. The Parent Dashboard only opens on
+              this computer.
             </p>
           </div>
         </CardContent>

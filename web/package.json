@@ -8,24 +8,25 @@
     "build": "next build",
     "start": "next start -p 43123",
     "start:lan": "next start -p 80",
-    "lint": "next lint",
-    "test:read-aloud": "vitest run src/lib/read-aloud.test.ts",
-    "test:unit": "vitest run src/lib/local-host.test.ts src/lib/default-profile.test.ts src/lib/device-profile.test.ts"
+    "lint": "eslint .",
+    "test:unit": "vitest run"
   },
   "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.469.0",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
-    "tailwind-merge": "^2.6.0",
-    "lucide-react": "^0.469.0"
+    "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.4.20",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.25",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",

@@ -5,17 +5,16 @@ import {
   normalizeHostname,
 } from "@/lib/local-host";
 
+// Kid chat endpoints that must stay reachable from phones and tablets on the LAN.
+const KID_CHILD_PATHS = /^\/api\/v1\/children\/(public|\d+\/(starters|verify-pin|sessions\/resume))$/;
+
 function isParentOnlyApi(path: string, method: string): boolean {
   if (path.startsWith("/api/v1/dashboard")) return true;
   if (path.startsWith("/api/v1/settings")) return true;
-  if (path.startsWith("/api/v1/ollama")) return true;
-  if (path.startsWith("/api/v1/setup")) return true;
-  if (path.startsWith("/api/v1/auth/me")) return true;
-  if (path.startsWith("/api/v1/auth/change-password")) return true;
-  if (path.startsWith("/api/v1/auth/reset-password")) return true;
-  if (path.startsWith("/api/v1/auth/logout")) return true;
-  if (path.startsWith("/api/v1/children") && !path.startsWith("/api/v1/children/public")) return true;
-  if (path.startsWith("/api/v1/auth/login") && method === "POST") return true;
+  if (path.startsWith("/api/v1/ollama/pull") || path.startsWith("/api/v1/ollama/bootstrap")) return true;
+  if (path.startsWith("/api/v1/setup") && path !== "/api/v1/setup/status") return true;
+  if (path.startsWith("/api/v1/auth/")) return !(path === "/api/v1/auth/login" && method !== "POST");
+  if (path.startsWith("/api/v1/children")) return !KID_CHILD_PATHS.test(path);
   return false;
 }
 
@@ -45,14 +44,12 @@ export function middleware(request: NextRequest) {
     );
   }
 
+  // Always overwrite: the gateway trusts these from this proxy, so a client
+  // must never be able to smuggle its own values through.
   const requestHeaders = new Headers(request.headers);
   const hostHeader = request.headers.get("host");
-  if (hostHeader) {
-    requestHeaders.set("x-homeward-client-host", normalizeHostname(hostHeader));
-  }
-  if (clientIp) {
-    requestHeaders.set("x-homeward-client-ip", clientIp);
-  }
+  requestHeaders.set("x-homeward-client-host", hostHeader ? normalizeHostname(hostHeader) : "");
+  requestHeaders.set("x-homeward-client-ip", clientIp);
 
   return NextResponse.next({
     request: { headers: requestHeaders },

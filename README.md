@@ -53,17 +53,23 @@ Run once on the Homeward computer:
 ./scripts/setup-local-url.sh
 ```
 
-This does two things:
+This adds `127.0.0.1 homeward.local` to `/etc/hosts` so the parent dashboard on this computer resolves over loopback (the dashboard is host-only).
 
-1. **On this computer** — adds `127.0.0.1 homeward.local` to `/etc/hosts` so the parent dashboard stays on the host machine.
-2. **On your network** — the gateway broadcasts `homeward.local` via mDNS automatically when it starts, so phones and tablets on the same Wi‑Fi can open kid chat. (Docker runs a dedicated mDNS sidecar.)
+On your network, the gateway broadcasts `homeward.local` via mDNS automatically when it starts, so phones and tablets on the same Wi‑Fi can open kid chat. (Docker runs a dedicated mDNS sidecar.)
 
 | Who | URL | What works |
 |-----|-----|------------|
 | Parent on the Homeward computer | http://homeward.local | Dashboard, settings, kid chat |
 | Kids on other devices (same Wi‑Fi) | http://homeward.local/chat | Kid chat only |
 
-Run `./scripts/setup-local-url.sh` once if `homeward.local` does not resolve on this computer (adds `/etc/hosts`). mDNS for other devices starts with the gateway — no separate step needed.
+mDNS for other devices starts with the gateway — no separate step needed.
+
+### How access is protected
+
+- **Parent dashboard is host-only.** Every parent API route requires both the parent session cookie *and* a request from this computer. Login, setup and password reset are rate limited.
+- **Child PINs are enforced by the server.** A correct PIN gives that browser a signed, `HttpOnly` cookie for that child; chat, sessions and "continue last chat" refuse without it. PINs are stored hashed.
+- **Ports.** Only the web app (port 80) is reachable from the LAN. In Docker the gateway (8000) and Ollama (11434) are bound to `127.0.0.1` so kids' devices cannot bypass Homeward's filters by talking to the model directly. For native dev, run the gateway with `--host 127.0.0.1` for the same effect.
+- **Chat history is server-side.** The model only sees prior turns from Homeward's own log, never text supplied by the client.
 
 You can still use `http://localhost` (Docker) or `http://localhost:43123` (native dev) on the host if you prefer.
 
@@ -159,7 +165,8 @@ pytest -v
 | Area | Tests |
 |------|-------|
 | **Safety pipeline** | Rules, policy, classifier fallback, input/output filtering |
-| **Auth** | Password hashing, session cookies, protected routes |
+| **Auth** | PBKDF2 password hashing, cookie flags, login rate limit, host-only parent routes |
+| **Child PINs** | Hashed at rest, server-enforced on chat/resume, rate-limited attempts |
 | **Setup flow** | Create/resume/complete setup, validation |
 | **Chat** | Jailbreak blocking, dangerous content, session logging |
 | **Dashboard** | Session grouping, message drill-down, blocked attempts |
@@ -207,7 +214,8 @@ pytest tests/test_speak.py -v -m slow
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HOMEWARD_SECRET_KEY` | `change-me-in-production` | Session signing key — **change in production** |
+| `HOMEWARD_SECRET_KEY` | *(auto-generated)* | Session signing key. Unset = a random key is created once and stored in `HOMEWARD_DATA_DIR/.secret_key` |
+| `HOMEWARD_API_DOCS` | `false` | Serve `/docs` (OpenAPI UI) on the gateway |
 | `HOMEWARD_DOCKER` | `false` | Set automatically in Docker Compose |
 | `HOMEWARD_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API URL |
 | `HOMEWARD_OLLAMA_MODEL` | `llama3.2:3b` | Default chat model |

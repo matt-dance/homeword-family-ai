@@ -55,3 +55,10 @@ class TestChildSlugs:
         assert len(public) == 1
         assert public[0]["slug"] == "maya"
         assert public[0]["name"] == child["name"]
+
+
+@pytest.mark.asyncio
+async def test_quick_slug_is_reserved_for_quick_chat(client: AsyncClient):
+    await setup_parent(client)
+    child = await create_child(client, name="Quick")
+    assert child["slug"] != "quick"

@@ -1,5 +1,6 @@
 import { decodeSpeechPayload } from "@/lib/read-aloud";
 import type { ChatTool } from "@/lib/chat-tools";
+import { markParentUnlocked } from "@/lib/parent-lock";
 
 const API_BASE = "/api/v1";
 
@@ -151,6 +152,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+/** A fresh sign-in should not be greeted by the idle-lock overlay. */
+function unlockParentUi<T>(result: T): T {
+  markParentUnlocked();
+  return result;
+}
+
 export const api = {
   health: () =>
     request<{ status: string; ollama?: { ready: boolean } }>("/health"),
@@ -159,19 +166,19 @@ export const api = {
     request<{ ok: boolean; resumed?: boolean; recovery_code?: string }>("/setup", {
       method: "POST",
       body: JSON.stringify({ password }),
-    }),
+    }).then(unlockParentUi),
   completeSetup: () =>
     request<{ ok: boolean }>("/setup/complete", { method: "POST" }),
   login: (password: string) =>
     request<{ ok: boolean; setup_complete: boolean }>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ password }),
-    }),
+    }).then(unlockParentUi),
   resetPassword: (recovery_code: string, new_password: string) =>
     request<{ ok: boolean; recovery_code: string }>("/auth/reset-password", {
       method: "POST",
       body: JSON.stringify({ recovery_code, new_password }),
-    }),
+    }).then(unlockParentUi),
   changePassword: (current_password: string, new_password: string) =>
     request<{ ok: boolean }>("/auth/change-password", {
       method: "POST",
@@ -186,12 +193,10 @@ export const api = {
       ollama_model: string | null;
       classifier_model: string | null;
       has_recovery_code: boolean;
-      is_local_host: boolean;
     }>("/auth/me"),
   presets: () => request<Preset[]>("/presets"),
   children: () => request<Child[]>("/children"),
   childrenPublic: () => request<Child[]>("/children/public"),
-  defaultProfile: () => request<Child>("/children/default"),
   createChild: (data: {
     name: string;
     age: number;
@@ -235,15 +240,6 @@ export const api = {
     request<{ ok: boolean; child_id: number; name: string }>(
       `/children/${childId}/verify-pin`,
       { method: "POST", body: JSON.stringify({ pin }) }
-    ),
-  chat: (message: string, childId: number, history: Array<{ role: string; content: string }>) =>
-    request<{ blocked: boolean; message: string; reason?: string }>("/chat", {
-      method: "POST",
-      body: JSON.stringify({ message, child_id: childId, history }),
-    }),
-  logs: (childId?: number) =>
-    request<ConversationLog[]>(
-      `/dashboard/logs${childId != null ? `?child_id=${childId}` : ""}`,
     ),
   sessions: (childId?: number) =>
     request<ChatSessionSummary[]>(
@@ -308,8 +304,6 @@ export const api = {
     request<BlockedAttempt[]>(
       `/dashboard/blocked${childId != null ? `?child_id=${childId}` : ""}`,
     ),
-  devices: () =>
-    request<{ devices: unknown[]; message: string }>("/dashboard/devices"),
   cloudSettings: (cloud_enabled: boolean, openai_api_key?: string) =>
     request<{ ok: boolean }>("/settings/cloud", {
       method: "POST",
@@ -378,7 +372,6 @@ export const api = {
 export async function streamChat(
   message: string,
   childId: number,
-  history: Array<{ role: string; content: string }>,
   onToken: (token: string) => void,
   onBlocked: (message: string) => void,
   onDone: () => void,
@@ -394,7 +387,6 @@ export async function streamChat(
     body: JSON.stringify({
       message,
       child_id: childId,
-      history,
       session_id: sessionId,
       quick_chat: quickChat ?? false,
     }),

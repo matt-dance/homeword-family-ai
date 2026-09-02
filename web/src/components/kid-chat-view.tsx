@@ -45,6 +45,9 @@ function simpleModeKey(childId: number) {
   return `homeward-simple-mode-${childId}`;
 }
 
+const CHAT_ERROR_MESSAGE = "Oops — something got tangled up. Please try again in a moment!";
+const SESSION_ERROR_MESSAGE = "We couldn't start a chat right now. Try again, or pick a different profile.";
+
 interface KidChatViewProps {
   selectedChild: Child;
   onSwitchProfile: () => void;
@@ -157,7 +160,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
         setMessages([]);
         setSessionReady(true);
       } catch {
-        setPinError("Could not start chat session. Try switching profiles.");
+        setPinError(SESSION_ERROR_MESSAGE);
       }
     },
     [selectedChild],
@@ -165,12 +168,13 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
 
   useEffect(() => {
     if (!pinVerified || chatSessionId !== null) return;
-    if (selectedChild.allow_resume !== false) {
+    // Quick Chat is anonymous and shared, so never offer another kid's last chat.
+    if (selectedChild.allow_resume !== false && !quickChat) {
       setResumeOffered(true);
     } else {
       void initSession(false);
     }
-  }, [selectedChild, pinVerified, chatSessionId, initSession]);
+  }, [selectedChild, pinVerified, chatSessionId, initSession, quickChat]);
 
   const handleNewChat = async () => {
     if (streaming) return;
@@ -185,11 +189,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       setChatSessionId(session.session_id);
       setSessionReady(true);
     } catch {
-      setPinError("Could not start a new chat. Try again.");
+      setPinError(SESSION_ERROR_MESSAGE);
     }
   };
 
   const handlePinSubmit = async () => {
+    if (!pin.trim()) return;
     try {
       await api.verifyPin(selectedChild.id, pin);
       setPinError("");
@@ -198,8 +203,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       setMessages([]);
       setSessionReady(false);
       setResumeOffered(false);
-    } catch {
-      setPinError("That PIN doesn't match. Try again!");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "";
+      // The server explains lockouts ("Too many attempts…"); everything else is a mismatch.
+      setPinError(
+        message.toLowerCase().includes("too many") ? message : "That PIN doesn't match. Try again!",
+      );
     }
   };
 
@@ -235,10 +244,6 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
       setStreaming(true);
 
-      const history = messages.map((m) => ({
-        role: m.role,
-        content: extractChatTools(m.content).text || m.content,
-      }));
       let assistantContent = "";
       const controller = new AbortController();
       abortRef.current = controller;
@@ -247,7 +252,6 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
         await streamChat(
           userMsg,
           selectedChild.id,
-          history,
           (token) => {
             assistantContent += token;
             setMessages((prev) => {
@@ -260,15 +264,17 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           },
           (blockedMsg) => {
             assistantContent = blockedMsg;
-            setMessages((prev) => [
-              ...prev.filter((m) => !(m.role === "assistant" && m.content === assistantContent && m.blocked)),
-              { role: "assistant", content: blockedMsg, blocked: true },
-            ]);
+            // Drop any half-streamed reply so the kid sees one clear message, not both.
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              const base = last?.role === "assistant" ? prev.slice(0, -1) : prev;
+              return [...base, { role: "assistant", content: blockedMsg, blocked: true }];
+            });
           },
           () => {
             setStreaming(false);
             if (controller.signal.aborted) return;
-            if (!assistantContent || assistantContent.includes("Something went wrong")) return;
+            if (!assistantContent || assistantContent === CHAT_ERROR_MESSAGE) return;
             if (!autoReadNextRef.current) return;
             autoReadNextRef.current = false;
             window.setTimeout(() => {
@@ -306,9 +312,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           setStreaming(false);
           return;
         }
-        const fallback =
-          e instanceof Error ? e.message : "Something went wrong. Please try again in a moment!";
-        setMessages((prev) => [...prev, { role: "assistant", content: fallback, blocked: true }]);
+        console.error("Chat stream failed", e);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          const base = last?.role === "assistant" && !last.content ? prev.slice(0, -1) : prev;
+          return [...base, { role: "assistant", content: CHAT_ERROR_MESSAGE, blocked: true }];
+        });
         setStreaming(false);
       } finally {
         if (abortRef.current === controller) {
@@ -316,7 +325,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
         }
       }
     },
-    [input, selectedChild, streaming, pinVerified, chatSessionId, sessionReady, messages, speakMessage, stopReadAloud, quickChat],
+    [input, selectedChild, streaming, pinVerified, chatSessionId, sessionReady, speakMessage, stopReadAloud, quickChat],
   );
 
   const handleStop = useCallback(() => {
@@ -348,7 +357,9 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
               {displayName ?? `Hi, ${selectedChild.name}!`}
             </h1>
             <p className="text-muted-foreground mt-1.5 text-sm">
-              Enter your secret PIN to unlock your chat
+              {displayName
+                ? "This shared chat is PIN protected. Ask a parent for the household PIN."
+                : "Enter your secret PIN to unlock your chat"}
             </p>
           </div>
           <Card className="border-border/80 bg-card/95 shadow-xl backdrop-blur-md rounded-2xl">
@@ -420,6 +431,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             >
               <PlusCircle className="mr-2 h-4 w-4" />
               Start fresh chat
+            </Button>
+            {pinError && (
+              <p className="text-sm font-medium text-destructive animate-slide-down">{pinError}</p>
+            )}
+            <Button variant="ghost" onClick={handleSwitch} className="text-muted-foreground hover:text-foreground">
+              Pick a different profile
             </Button>
           </div>
         </div>
@@ -508,6 +525,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
               onClick={handleNewChat}
               disabled={streaming}
               title="Start a new chat"
+              aria-label="Start a new chat"
               className="rounded-lg text-muted-foreground hover:text-foreground"
             >
               <PlusCircle className="h-4 w-4" />
@@ -518,6 +536,8 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
               size="sm"
               onClick={toggleSimpleMode}
               title="Simple mode — bigger, fewer messages"
+              aria-label={simpleMode ? "Switch to full view" : "Switch to simple mode"}
+              aria-pressed={simpleMode}
               className="rounded-lg text-xs font-medium"
             >
               <LayoutList className="h-4 w-4" />
@@ -757,6 +777,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                 onClick={handleMicClick}
                 disabled={streaming || transcribing || !sessionReady}
                 title={listening ? "Stop voice listening" : "Speak with microphone"}
+                aria-label={listening ? "Stop voice listening" : "Speak with microphone"}
                 className={`shrink-0 rounded-2xl transition-all ${
                   listening ? "shadow-md shadow-destructive/25 scale-105" : "border-border/80 bg-card hover:bg-primary/5 hover:border-primary/50"
                 } ${simpleMode ? "h-14 w-14" : "h-11 w-11"}`}
@@ -790,6 +811,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                 variant="destructive"
                 onClick={handleStop}
                 title="Stop the reply"
+                aria-label="Stop the reply"
                 className={`shrink-0 rounded-2xl shadow-sm transition-transform active:scale-95 ${
                   simpleMode ? "h-14 px-5 text-base" : "h-11 px-4 text-sm"
                 }`}
@@ -803,6 +825,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                 disabled={!input.trim() || !sessionReady || transcribing}
                 size="icon"
                 title="Send message"
+                aria-label="Send message"
                 className={`shrink-0 rounded-2xl shadow-sm shadow-primary/20 transition-transform active:scale-95 ${
                   simpleMode ? "h-14 w-14" : "h-11 w-11"
                 }`}

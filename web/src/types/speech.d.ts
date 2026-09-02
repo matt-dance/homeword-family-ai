@@ -60,17 +60,12 @@ interface SpeechRecognitionAlternative {
   confidence: number;
 }
 
-declare var SpeechRecognition: {
+interface SpeechRecognitionStatic {
   prototype: SpeechRecognition;
   new (): SpeechRecognition;
-};
-
-declare var webkitSpeechRecognition: {
-  prototype: SpeechRecognition;
-  new (): SpeechRecognition;
-};
+}
 
 interface Window {
-  SpeechRecognition?: typeof SpeechRecognition;
-  webkitSpeechRecognition?: typeof webkitSpeechRecognition;
+  SpeechRecognition?: SpeechRecognitionStatic;
+  webkitSpeechRecognition?: SpeechRecognitionStatic;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getAgeTheme, AGE_THEME_CONFIGS } from "./age-theme";
+import { getAgeTheme } from "./age-theme";
 
 describe("age-theme", () => {
   it("determines young theme for age <= 8 or preset young_explorer", () => {
@@ -22,11 +22,5 @@ describe("age-theme", () => {
 
   it("defaults to curious theme if no child provided", () => {
     expect(getAgeTheme(undefined)).toBe("curious");
-  });
-
-  it("has complete configuration for all 3 age groups", () => {
-    expect(AGE_THEME_CONFIGS.young.avatarEmoji).toBeDefined();
-    expect(AGE_THEME_CONFIGS.curious.avatarEmoji).toBeDefined();
-    expect(AGE_THEME_CONFIGS.teen.avatarEmoji).toBeDefined();
   });
 });

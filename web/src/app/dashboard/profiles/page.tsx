@@ -12,7 +12,6 @@ import { LiveLookupsToggle } from "@/components/live-lookups-toggle";
 import {
   ExternalLink,
   Users,
-  Shield,
   BookOpen,
   Lock,
   Moon,
@@ -23,6 +22,8 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
+
+const PIN_PATTERN = /^\d{4,6}$/;
 
 export default function ProfilesPage() {
   const [children, setChildren] = useState<Child[]>([]);
@@ -45,11 +46,13 @@ export default function ProfilesPage() {
   const [addSaving, setAddSaving] = useState(false);
   const [deletingChildId, setDeletingChildId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState("");
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     api
       .children()
       .then(setChildren)
+      .catch(() => setLoadError("Couldn't load profiles. Check that Homeward is running, then refresh."))
       .finally(() => setLoading(false));
   }, []);
 
@@ -62,6 +65,10 @@ export default function ProfilesPage() {
   const saveChildSettings = async () => {
     if (!editingChildId) return;
     setChildSaveError("");
+    if (childDraft.pin && !PIN_PATTERN.test(childDraft.pin)) {
+      setChildSaveError("PIN must be 4–6 digits.");
+      return;
+    }
     try {
       const updated = await api.updateChild(editingChildId, {
         name: childDraft.name,
@@ -98,6 +105,10 @@ export default function ProfilesPage() {
   };
 
   const saveNewChild = async () => {
+    if (newChild.pin.trim() && !PIN_PATTERN.test(newChild.pin.trim())) {
+      setAddError("PIN must be 4–6 digits.");
+      return;
+    }
     const name = newChild.name.trim();
     if (!name) {
       setAddError("Please enter a name");
@@ -166,6 +177,11 @@ export default function ProfilesPage() {
         <p className="text-sm text-muted-foreground mt-1">
           Configure safety presets, PIN locks, homework mode, and quiet hours for each child.
         </p>
+        {loadError && (
+          <p className="mt-3 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive">
+            {loadError}
+          </p>
+        )}
       </div>
 
       <Card className="border-border/80 shadow-xs">
@@ -175,7 +191,7 @@ export default function ProfilesPage() {
             Configured Children
           </CardTitle>
           <CardDescription>
-            Each child gets a personalized experience and dedicated chat link (e.g. /chat/lincoln).
+            Each child gets a personalized experience and dedicated chat link (e.g. /chat/avery).
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -216,7 +232,7 @@ export default function ProfilesPage() {
                   <Input
                     value={newChild.name}
                     onChange={(e) => setNewChild({ ...newChild, name: e.target.value })}
-                    placeholder="Lincoln"
+                    placeholder="Avery"
                     className="rounded-xl"
                   />
                 </div>

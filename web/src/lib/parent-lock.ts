@@ -15,13 +15,17 @@ export function subscribeParentLock(listener: Listener): () => void {
   };
 }
 
+function storage(): Storage | null {
+  return typeof sessionStorage === "undefined" ? null : sessionStorage;
+}
+
 export function markParentUnlocked(): void {
-  sessionStorage.setItem(PARENT_UNLOCK_KEY, String(Date.now()));
+  storage()?.setItem(PARENT_UNLOCK_KEY, String(Date.now()));
   notify();
 }
 
 export function isParentLockExpired(now = Date.now()): boolean {
-  const raw = sessionStorage.getItem(PARENT_UNLOCK_KEY);
+  const raw = storage()?.getItem(PARENT_UNLOCK_KEY);
   if (!raw) return true;
   const unlockedAt = Number.parseInt(raw, 10);
   if (Number.isNaN(unlockedAt)) return true;
@@ -29,6 +33,6 @@ export function isParentLockExpired(now = Date.now()): boolean {
 }
 
 export function clearParentUnlock(): void {
-  sessionStorage.removeItem(PARENT_UNLOCK_KEY);
+  storage()?.removeItem(PARENT_UNLOCK_KEY);
   notify();
 }

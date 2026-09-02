@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { DEFAULT_HOMEWARD_URL } from "@/lib/local-host";
 import { api, type Preset } from "@/lib/api";
 import { HomewardLogo } from "@/components/homeward-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -20,7 +21,6 @@ import {
   KeyRound,
   Copy,
   Check,
-  Sparkles,
   BookOpen,
   CheckCircle2,
 } from "lucide-react";
@@ -36,6 +36,8 @@ interface ChildForm {
 }
 
 type Step = "login" | "password" | "recovery" | "children" | "model" | "review" | "forgot";
+
+const PIN_PATTERN = /^\d{4,6}$/;
 
 export default function SetupPage() {
   const router = useRouter();
@@ -237,6 +239,10 @@ export default function SetupPage() {
     const valid = children.every((c) => c.name.trim().length > 0);
     if (!valid) {
       setError("Please enter a name for each child");
+      return;
+    }
+    if (children.some((c) => c.pin.trim() && !PIN_PATTERN.test(c.pin.trim()))) {
+      setError("PINs must be 4–6 digits");
       return;
     }
     setLoading(true);
@@ -554,7 +560,7 @@ export default function SetupPage() {
                       <div className="space-y-1.5">
                         <Label>Name</Label>
                         <Input
-                          placeholder="e.g. Lincoln"
+                          placeholder="e.g. Avery"
                           value={child.name}
                           onChange={(e) => updateChild(i, "name", e.target.value)}
                           className="rounded-xl"
@@ -689,6 +695,17 @@ export default function SetupPage() {
                   <Check className="h-4 w-4 text-emerald-500" />
                   <span>All conversations logged privately on this computer</span>
                 </div>
+              </div>
+              <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4 text-xs sm:text-sm space-y-1">
+                <p className="font-semibold text-foreground">
+                  Kids can chat from phones and tablets on your Wi‑Fi at{" "}
+                  <code className="text-primary font-mono bg-primary/10 px-1.5 py-0.5 rounded">
+                    {DEFAULT_HOMEWARD_URL}
+                  </code>
+                </p>
+                <p className="text-muted-foreground">
+                  The Parent Dashboard only opens on this computer.
+                </p>
               </div>
               <Button
                 onClick={handleComplete}

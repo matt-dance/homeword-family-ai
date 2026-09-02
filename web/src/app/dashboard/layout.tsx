@@ -11,20 +11,12 @@ import { ParentLockOverlay } from "@/components/parent-lock-overlay";
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [ready, setReady] = useState(false);
-  const [localOnly, setLocalOnly] = useState(true);
   const { locked, refreshActivity } = useParentLock();
 
   useEffect(() => {
     api
       .me()
-      .then((me) => {
-        if (me.is_local_host === false) {
-          setLocalOnly(false);
-          router.replace("/chat");
-          return;
-        }
-        setReady(true);
-      })
+      .then(() => setReady(true))
       .catch(() => router.replace("/setup"));
   }, [router]);
 
@@ -34,7 +26,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     router.replace("/setup");
   };
 
-  if (!ready || !localOnly) {
+  if (!ready) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <p className="text-muted-foreground">Loading…</p>

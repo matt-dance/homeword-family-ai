@@ -1,8 +1,8 @@
 /** Network URL helpers for Homeward. */
 
-export const HOMEWARD_HOSTNAME = "homeward.local";
+const HOMEWARD_HOSTNAME = "homeward.local";
 /** Public HTTP port advertised on the home network (standard port 80). */
-export const HOMEWARD_PORT = 80;
+const HOMEWARD_PORT = 80;
 
 export function homewardBaseUrl(
   hostname: string = HOMEWARD_HOSTNAME,
@@ -32,20 +32,14 @@ export function isLoopbackClient(clientIp: string): boolean {
   return ip === "127.0.0.1" || ip === "::1" || ip.startsWith("127.");
 }
 
-/** True when the client IP matches loopback or a known same-machine LAN address. */
-export function isLocalClient(clientIp: string, serverIps: Set<string>): boolean {
-  if (isLoopbackClient(clientIp)) return true;
-  const ip = clientIp.trim().toLowerCase().replace(/^::ffff:/, "");
-  return serverIps.has(ip);
-}
-
+/**
+ * Best-effort client address. Next.js fills `x-forwarded-for` from the socket
+ * when absent; an explicit header from a non-browser client can still lie, so
+ * the gateway treats this as a hint on top of the parent session cookie.
+ */
 export function clientIpFromRequest(headers: Headers): string {
-  const explicit = headers.get("x-homeward-client-ip");
-  if (explicit) return explicit.split(",")[0]?.trim() ?? "";
   const forwarded = headers.get("x-forwarded-for");
   if (forwarded) return forwarded.split(",")[0]?.trim() ?? "";
-  const realIp = headers.get("x-real-ip");
-  if (realIp) return realIp.trim();
   return "";
 }
 

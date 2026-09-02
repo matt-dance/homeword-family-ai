@@ -135,6 +135,7 @@ class PinRequest(BaseModel):
     pin: str = Field(min_length=1, max_length=10)
 
 
+RESERVED_SLUGS = frozenset({"quick"})
 AUDIO_SUFFIXES = frozenset({".webm", ".mp4", ".m4a", ".wav", ".mp3", ".ogg", ".flac"})
 HISTORY_TURN_LIMIT = 20
 
@@ -415,7 +416,8 @@ async def _assign_child_slug(session: AsyncSession, child: ChildProfile) -> None
     taken = await _child_slugs_for_parent(
         session, child.parent_id, exclude_child_id=child.id
     )
-    child.slug = unique_slug(slugify_name(child.name), taken)
+    # /chat/quick is the anonymous Quick Chat route, never a child's page.
+    child.slug = unique_slug(slugify_name(child.name), taken | RESERVED_SLUGS)
 
 
 def _serialize_child(c: ChildProfile) -> dict:

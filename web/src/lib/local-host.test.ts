@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_HOMEWARD_URL,
+  clientIpFromRequest,
   homewardBaseUrl,
-  isLocalClient,
+  isLocalDashboardClient,
   isLoopbackHostname,
   normalizeHostname,
 } from "./local-host";
@@ -17,10 +17,22 @@ describe("local-host", () => {
     expect(isLoopbackHostname("localhost:43123")).toBe(true);
   });
 
-  it("detects same-machine client by IP", () => {
-    const serverIps = new Set(["127.0.0.1", "192.168.1.10"]);
-    expect(isLocalClient("192.168.1.10", serverIps)).toBe(true);
-    expect(isLocalClient("192.168.1.99", serverIps)).toBe(false);
+  it("ignores client-supplied x-homeward-* headers when reading the client ip", () => {
+    const headers = new Headers({
+      "x-homeward-client-ip": "127.0.0.1",
+      "x-forwarded-for": "192.168.1.99",
+    });
+    expect(clientIpFromRequest(headers)).toBe("192.168.1.99");
+  });
+
+  it("treats a LAN device with a homeward.local host as remote", () => {
+    const headers = new Headers({ host: "homeward.local", "x-forwarded-for": "192.168.1.99" });
+    expect(isLocalDashboardClient(headers)).toBe(false);
+  });
+
+  it("treats a loopback browser as local", () => {
+    const headers = new Headers({ host: "localhost", "x-forwarded-for": "::1" });
+    expect(isLocalDashboardClient(headers)).toBe(true);
   });
 
   it("normalizes host headers", () => {
@@ -29,7 +41,6 @@ describe("local-host", () => {
 
   it("omits port 80 from default URL", () => {
     expect(homewardBaseUrl()).toBe("http://homeward.local");
-    expect(DEFAULT_HOMEWARD_URL).toBe("http://homeward.local");
     expect(homewardBaseUrl("homeward.local", 43123)).toBe("http://homeward.local:43123");
   });
 });

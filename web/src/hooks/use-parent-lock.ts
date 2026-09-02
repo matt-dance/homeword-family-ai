@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "@/lib/api";
 import {
   clearParentUnlock,
   isParentLockExpired,
@@ -15,8 +16,17 @@ export function useParentLock() {
     typeof window !== "undefined" ? isParentLockExpired() : true,
   );
 
+  const wasLockedRef = useRef<boolean | null>(null);
+
   const syncFromStorage = useCallback(() => {
-    setLocked(isParentLockExpired());
+    const expired = isParentLockExpired();
+    setLocked(expired);
+    // Idle lock is real, not cosmetic: drop the server session so the cookie
+    // cannot be reused until the parent signs in again.
+    if (expired && wasLockedRef.current === false) {
+      void api.logout().catch(() => {});
+    }
+    wasLockedRef.current = expired;
   }, []);
 
   const refreshActivity = useCallback(() => {

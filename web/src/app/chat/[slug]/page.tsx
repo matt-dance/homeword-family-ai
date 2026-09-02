@@ -11,7 +11,7 @@ import { setDeviceProfileId } from "@/lib/device-profile";
 import { HomewardLogo } from "@/components/homeward-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
-import { Sparkles, Home, ArrowLeft } from "lucide-react";
+import { Sparkles, ArrowLeft } from "lucide-react";
 
 function findChildBySlug(children: Child[], slug: string): Child | undefined {
   const normalized = slug.toLowerCase();
@@ -26,11 +26,11 @@ function ChildChatContent() {
   const router = useRouter();
   const params = useParams();
   const slug = typeof params.slug === "string" ? params.slug : "";
-  const [children, setChildren] = useState<Child[]>([]);
   const [selectedChild, setSelectedChild] = useState<Child | null>(null);
   const [displayName, setDisplayName] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     if (!slug) return;
@@ -38,16 +38,12 @@ function ChildChatContent() {
     api
       .childrenPublic()
       .then((kids) => {
-        setChildren(kids);
         if (slug.toLowerCase() === QUICK_CHAT_SLUG) {
           const defaultChild = kids.find((child) => child.is_default);
           if (defaultChild) {
             setSelectedChild(defaultChild);
             setDisplayName(QUICK_CHAT_LABEL);
             setNotFound(false);
-            setDeviceProfileId(defaultChild.id);
-          } else if (kids.length === 0) {
-            router.replace("/setup");
           } else {
             setNotFound(true);
           }
@@ -60,13 +56,11 @@ function ChildChatContent() {
           setDisplayName(undefined);
           setNotFound(false);
           setDeviceProfileId(match.id);
-        } else if (kids.length === 0) {
-          router.replace("/setup");
         } else {
           setNotFound(true);
         }
       })
-      .catch(() => router.replace("/setup"))
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, [slug, router]);
 
@@ -78,7 +72,7 @@ function ChildChatContent() {
     );
   }
 
-  if (notFound) {
+  if (notFound || loadError) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-primary/5 to-background flex flex-col">
         <header className="border-b border-border/70 bg-card/80 p-4 flex items-center justify-between">
@@ -89,21 +83,19 @@ function ChildChatContent() {
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
             <Sparkles className="h-7 w-7" />
           </div>
-          <h1 className="text-2xl font-bold mb-2">Profile not found</h1>
+          <h1 className="text-2xl font-bold mb-2">
+            {loadError ? "Can't reach Homeward" : "Profile not found"}
+          </h1>
           <p className="text-muted-foreground text-sm mb-6">
-            We couldn&apos;t find a chat profile for &ldquo;{slug}&rdquo;.
+            {loadError
+              ? "Make sure the Homeward computer is on and you're on the same Wi‑Fi."
+              : `We couldn't find a chat profile for “${slug}”.`}
           </p>
           <div className="flex flex-col gap-3">
-            <Link href="/chat">
+            <Link href="/chat?pick=1">
               <Button className="w-full rounded-xl">
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Pick a profile
-              </Button>
-            </Link>
-            <Link href="/">
-              <Button variant="outline" className="w-full rounded-xl">
-                <Home className="mr-2 h-4 w-4" />
-                Home
               </Button>
             </Link>
           </div>
