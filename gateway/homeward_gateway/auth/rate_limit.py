@@ -11,26 +11,32 @@ _MAX_ATTEMPTS = 5
 _attempts: dict[str, list[float]] = defaultdict(list)
 
 
-def _prune(key: str, now: float) -> None:
-    cutoff = now - _WINDOW_SECONDS
+def _prune(key: str, now: float, window_seconds: int = _WINDOW_SECONDS) -> None:
+    cutoff = now - window_seconds
     _attempts[key] = [ts for ts in _attempts[key] if ts > cutoff]
 
 
-def check_rate_limit(key: str) -> None:
+def check_rate_limit(
+    key: str,
+    *,
+    max_attempts: int = _MAX_ATTEMPTS,
+    window_seconds: int = _WINDOW_SECONDS,
+) -> None:
     from fastapi import HTTPException
 
     now = time.time()
-    _prune(key, now)
-    if len(_attempts[key]) >= _MAX_ATTEMPTS:
+    _prune(key, now, window_seconds)
+    if len(_attempts[key]) >= max_attempts:
+        minutes = max(1, window_seconds // 60)
         raise HTTPException(
             status_code=429,
-            detail="Too many attempts. Please wait 15 minutes and try again.",
+            detail=f"Too many attempts. Please wait {minutes} minutes and try again.",
         )
 
 
-def record_attempt(key: str) -> None:
+def record_attempt(key: str, *, window_seconds: int = _WINDOW_SECONDS) -> None:
     now = time.time()
-    _prune(key, now)
+    _prune(key, now, window_seconds)
     _attempts[key].append(now)
 
 

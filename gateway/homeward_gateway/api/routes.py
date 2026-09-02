@@ -138,6 +138,8 @@ class PinRequest(BaseModel):
 RESERVED_SLUGS = frozenset({"quick"})
 AUDIO_SUFFIXES = frozenset({".webm", ".mp4", ".m4a", ".wav", ".mp3", ".ogg", ".flac"})
 HISTORY_TURN_LIMIT = 20
+CHAT_RATE_MAX = 40
+CHAT_RATE_WINDOW = 300
 
 
 class SessionCreateRequest(BaseModel):
@@ -205,13 +207,13 @@ def _require_child_access(request: Request, child: ChildProfile) -> None:
 async def health(session: Annotated[AsyncSession, Depends(get_session)]):
     chat_model, classifier_model = await get_effective_models(session)
     ollama = await ollama_service.get_status(chat_model, classifier_model)
+    public_ollama = {key: value for key, value in ollama.items() if key != "ollama_url"}
     return {
         "status": "ok" if ollama["ready"] or settings.cloud_enabled else "degraded",
         "service": "homeward-gateway",
         "version": "0.1.0",
-        "ollama_url": settings.ollama_base_url,
         "cloud_enabled": settings.cloud_enabled,
-        "ollama": ollama,
+        "ollama": public_ollama,
     }
 
 
@@ -321,7 +323,8 @@ async def login(
 
 
 @router.post("/auth/logout")
-async def logout(response: Response):
+async def logout(request: Request, response: Response):
+    require_local_request(request)
     clear_session_cookie(response)
     return {"ok": True}
 
@@ -716,8 +719,9 @@ async def transcribe_status():
 
 
 @router.get("/chat/transcribe/self-test")
-async def transcribe_self_test():
-    """Automated end-to-end voice pipeline check (no mic required)."""
+async def transcribe_self_test(request: Request):
+    """Automated end-to-end voice pipeline check (no mic required). Host only."""
+    require_local_request(request)
     result = await asyncio.to_thread(run_voice_self_test)
     if not result.get("ok"):
         raise HTTPException(status_code=503, detail=result)
@@ -777,8 +781,9 @@ async def speak_status():
 
 
 @router.get("/chat/speak/self-test")
-async def speak_self_test():
-    """Automated read-aloud pipeline check (no speakers required)."""
+async def speak_self_test(request: Request):
+    """Automated read-aloud pipeline check (no speakers required). Host only."""
+    require_local_request(request)
     result = await asyncio.to_thread(run_speak_self_test)
     if not result.get("ok"):
         raise HTTPException(status_code=503, detail=result)
@@ -1007,6 +1012,9 @@ async def chat(
     child, preset = await _get_child_context(body.child_id, session)
     _require_child_access(request, child)
     _ensure_chat_available(child)
+    rate_key = _rate_key(request, f"chat:{child.id}")
+    check_rate_limit(rate_key, max_attempts=CHAT_RATE_MAX, window_seconds=CHAT_RATE_WINDOW)
+    record_attempt(rate_key, window_seconds=CHAT_RATE_WINDOW)
     chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
     history = await _history_for_session(session, chat_session_id)
     chat_model, classifier_model = await get_effective_models(session)
@@ -1040,8 +1048,6 @@ async def chat(
         return {
             "blocked": True,
             "message": user_facing_message(result.stage),
-            "reason": result.block_reason,
-            "stage": result.stage,
             "session_id": chat_session_id,
         }
 
@@ -1064,6 +1070,9 @@ async def chat_stream(
     child, preset = await _get_child_context(body.child_id, session)
     _require_child_access(request, child)
     _ensure_chat_available(child)
+    rate_key = _rate_key(request, f"chat:{child.id}")
+    check_rate_limit(rate_key, max_attempts=CHAT_RATE_MAX, window_seconds=CHAT_RATE_WINDOW)
+    record_attempt(rate_key, window_seconds=CHAT_RATE_WINDOW)
     chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
     history = await _history_for_session(session, chat_session_id)
     chat_model, classifier_model = await get_effective_models(session)
@@ -1128,7 +1137,6 @@ async def chat_stream(
                         payload = json.dumps({
                             "type": "blocked",
                             "message": user_facing_message(item.stage),
-                            "reason": item.block_reason,
                         })
                         yield f"data: {payload}\n\n"
                         return
@@ -1409,13 +1417,19 @@ async def dashboard_blocked(
 
 
 @router.get("/ollama/status")
-async def ollama_status(session: Annotated[AsyncSession, Depends(get_session)]):
+async def ollama_status(
+    _parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
     chat_model, classifier_model = await get_effective_models(session)
     return await ollama_service.get_status(chat_model, classifier_model)
 
 
 @router.get("/ollama/recommendations")
-async def ollama_recommendations(session: Annotated[AsyncSession, Depends(get_session)]):
+async def ollama_recommendations(
+    _parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
     chat_model, classifier_model = await get_effective_models(session)
     return await ollama_service.get_recommendations(chat_model, classifier_model)
 

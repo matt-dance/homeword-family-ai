@@ -46,7 +46,7 @@ class ChildProfile(Base):
     age: Mapped[int] = mapped_column(Integer, nullable=False)
     preset_id: Mapped[str] = mapped_column(String(50), nullable=False)
     strictness: Mapped[int] = mapped_column(Integer, default=3)
-    pin: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    pin: Mapped[str | None] = mapped_column(String(255), nullable=True)
     homework_mode: Mapped[bool] = mapped_column(Boolean, default=False)
     live_lookups: Mapped[bool] = mapped_column(Boolean, default=False)
     allow_resume: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -231,6 +231,25 @@ def _migrate_session_columns(connection) -> None:
             connection.execute(
                 sa.text("ALTER TABLE conversation_logs ADD COLUMN session_id INTEGER")
             )
+
+
+async def hash_legacy_child_pins() -> int:
+    """Hash leftover plaintext PINs from installs that predate hashed storage."""
+    from sqlalchemy import select
+
+    from homeward_gateway.auth.parent_auth import hash_pin
+
+    async with async_session_factory() as session:
+        result = await session.execute(select(ChildProfile).where(ChildProfile.pin.isnot(None)))
+        upgraded = 0
+        for child in result.scalars():
+            stored = child.pin or ""
+            if stored.isdigit() and 4 <= len(stored) <= 6:
+                child.pin = hash_pin(stored)
+                upgraded += 1
+        if upgraded:
+            await session.commit()
+        return upgraded
 
 
 async def get_session() -> AsyncSession:

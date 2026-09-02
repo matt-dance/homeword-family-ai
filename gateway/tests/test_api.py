@@ -15,6 +15,8 @@ class TestHealth:
         assert data["status"] in ("ok", "degraded")
         assert data["service"] == "homeward-gateway"
         assert "ollama" in data
+        assert "ollama_url" not in data
+        assert "ollama_url" not in data["ollama"]
 
 
 class TestSetupFlow:
@@ -65,7 +67,13 @@ class TestSetupFlow:
 
 class TestOllama:
     @pytest.mark.asyncio
-    async def test_ollama_status(self, client):
+    async def test_ollama_status_requires_parent(self, client):
+        resp = await client.get("/api/v1/ollama/status")
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_ollama_status(self, client: AsyncClient):
+        await setup_parent(client)
         resp = await client.get("/api/v1/ollama/status")
         assert resp.status_code == 200
         data = resp.json()
@@ -74,7 +82,8 @@ class TestOllama:
         assert "chat_model" in data
 
     @pytest.mark.asyncio
-    async def test_ollama_recommendations(self, client):
+    async def test_ollama_recommendations(self, client: AsyncClient):
+        await setup_parent(client)
         resp = await client.get("/api/v1/ollama/recommendations")
         assert resp.status_code == 200
         data = resp.json()
@@ -174,3 +183,28 @@ class TestChat:
             json={"message": "hello", "child_id": 9999},
         )
         assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_chat_is_rate_limited(self, client: AsyncClient, monkeypatch):
+        from homeward_gateway.api import routes as api_routes
+        from homeward_gateway.pipeline.pipeline import PipelineResult
+
+        await setup_parent(client)
+        child = await create_child(client)
+        monkeypatch.setattr(api_routes, "CHAT_RATE_MAX", 2)
+
+        async def fake_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Hi!")
+
+        monkeypatch.setattr(api_routes, "process_chat", fake_chat)
+        for _ in range(2):
+            resp = await client.post(
+                "/api/v1/chat",
+                json={"message": "hello there", "child_id": child["id"]},
+            )
+            assert resp.status_code == 200
+        locked = await client.post(
+            "/api/v1/chat",
+            json={"message": "hello again", "child_id": child["id"]},
+        )
+        assert locked.status_code == 429

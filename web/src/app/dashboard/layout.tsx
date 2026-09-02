@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { clearParentUnlock } from "@/lib/parent-lock";
+import { clearParentUnlock, markParentUnlocked } from "@/lib/parent-lock";
 import { useParentLock } from "@/hooks/use-parent-lock";
 import { ParentNav } from "@/components/parent-nav";
 import { ParentLockOverlay } from "@/components/parent-lock-overlay";
@@ -16,7 +16,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     api
       .me()
-      .then(() => setReady(true))
+      .then(() => {
+        // A valid host session is enough to open this tab; idle lock still applies after.
+        markParentUnlocked();
+        setReady(true);
+      })
       .catch(() => router.replace("/setup"));
   }, [router]);
 

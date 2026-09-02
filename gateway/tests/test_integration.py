@@ -55,7 +55,8 @@ class TestChatBehavior:
         assert resp.status_code == 200
         data = resp.json()
         assert data["blocked"] is True
-        assert data["stage"] == "llm"
+        assert "reason" not in data
+        assert "stage" not in data
         # Kid-facing copy: no shell commands, points at a parent instead.
         assert "ollama" not in data["message"].lower()
         assert "parent" in data["message"].lower()

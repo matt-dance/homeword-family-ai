@@ -15,10 +15,25 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _warn_if_lan_exposed() -> None:
+    if settings.host in {"0.0.0.0", "::", "[::]"} and not settings.docker_mode:
+        logger.warning(
+            "Gateway is listening on %s — devices on the Wi‑Fi can reach the API "
+            "directly. Bind to 127.0.0.1 so only this computer and the web app can.",
+            settings.host,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     settings.resolved_secret_key()  # create the per-install signing key up front
+    from homeward_gateway.db.database import hash_legacy_child_pins
+
+    upgraded = await hash_legacy_child_pins()
+    if upgraded:
+        logger.info("Hashed %s legacy plaintext child PIN(s)", upgraded)
+    _warn_if_lan_exposed()
     logger.info("Homeward gateway started on %s:%s", settings.host, settings.port)
     from homeward_gateway.ollama import service as ollama_service
 

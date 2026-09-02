@@ -15,8 +15,9 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
     policies_dir: Path = Path(__file__).parent.parent.parent / "policies"
 
-    # Server
-    host: str = "0.0.0.0"
+    # Server — bind loopback by default so LAN devices cannot skip the web proxy.
+    # Docker overrides this to 0.0.0.0 inside the container (port is host-only).
+    host: str = "127.0.0.1"
     port: int = 8000
     web_port: int = 80
     mdns_enabled: bool = True

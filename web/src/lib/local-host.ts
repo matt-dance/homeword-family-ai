@@ -43,7 +43,13 @@ export function clientIpFromRequest(headers: Headers): string {
   return "";
 }
 
-/** Edge-safe: middleware cannot read host network interfaces (no Node `os`). */
+/**
+ * Edge-safe host check for the parent dashboard.
+ * Only loopback counts — `homeward.local` is shared on the LAN, and Edge
+ * cannot enumerate this machine's interface IPs (no Node `os`). Parents on
+ * this computer should use localhost or the /etc/hosts mapping from
+ * setup-local-url.sh so homeward.local resolves to 127.0.0.1.
+ */
 export function isLocalDashboardClient(headers: Headers): boolean {
   const ip = clientIpFromRequest(headers);
   if (ip && isLoopbackClient(ip)) return true;

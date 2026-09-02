@@ -62,6 +62,14 @@ class TestSpeakAPI:
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
+    @pytest.mark.asyncio
+    async def test_speak_self_test_rejects_lan(self, client: AsyncClient):
+        resp = await client.get(
+            "/api/v1/chat/speak/self-test",
+            headers={"X-Homeward-Client-Ip": "192.168.1.42"},
+        )
+        assert resp.status_code == 403
+
 
 class TestSpeakHelpers:
     def test_sanitize_for_speech_strips_emoji(self):

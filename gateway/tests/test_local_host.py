@@ -102,7 +102,10 @@ class TestParentSurfaceIsHostOnly:
             ("POST", "/api/v1/settings/advanced", {"ai_tone": "warm"}),
             ("GET", "/api/v1/settings/home-location", None),
             ("POST", "/api/v1/ollama/pull", {"model": "llama3.2:3b"}),
+            ("GET", "/api/v1/ollama/status", None),
+            ("GET", "/api/v1/ollama/recommendations", None),
             ("GET", "/api/v1/auth/me", None),
+            ("POST", "/api/v1/auth/logout", None),
         ],
     )
     async def test_parent_routes_reject_lan_even_with_cookie(

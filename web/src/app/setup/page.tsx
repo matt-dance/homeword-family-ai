@@ -269,6 +269,7 @@ export default function SetupPage() {
 
   const handleComplete = async () => {
     setLoading(true);
+    setError("");
     try {
       await api.completeSetup();
       router.replace("/dashboard");
@@ -686,9 +687,9 @@ export default function SetupPage() {
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-emerald-500" />
+                  <Check className={`h-4 w-4 ${ollamaReady ? "text-emerald-500" : "text-amber-500"}`} />
                   <span>
-                    Local Ollama AI engine {ollamaReady ? "(active and ready)" : "(downloading…)"}
+                    Local Ollama AI engine {ollamaReady ? "(active and ready)" : "(still downloading — chat waits until it finishes)"}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -707,9 +708,12 @@ export default function SetupPage() {
                   The Parent Dashboard only opens on this computer.
                 </p>
               </div>
+              {error && (
+                <p className="text-sm font-medium text-destructive text-center">{error}</p>
+              )}
               <Button
                 onClick={handleComplete}
-                disabled={loading || !ollamaReady}
+                disabled={loading}
                 className="w-full h-12 rounded-xl text-base font-semibold shadow-sm shadow-primary/25"
               >
                 Go to Parent Dashboard

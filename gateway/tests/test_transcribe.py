@@ -64,6 +64,14 @@ class TestTranscribeAPI:
             resp = await client.get("/api/v1/chat/transcribe/self-test")
         assert resp.status_code == 503
 
+    @pytest.mark.asyncio
+    async def test_transcribe_self_test_rejects_lan(self, client: AsyncClient):
+        resp = await client.get(
+            "/api/v1/chat/transcribe/self-test",
+            headers={"X-Homeward-Client-Ip": "192.168.1.42"},
+        )
+        assert resp.status_code == 403
+
 
 @pytest.mark.skipif(not whisper_available(), reason="faster-whisper not installed")
 @pytest.mark.skipif(not SELF_TEST_FIXTURE.is_file(), reason="speech fixture missing")

@@ -363,9 +363,13 @@ export function OllamaSetup({
               )}
             </div>
 
-            {isReady && (
+            {isReady ? (
               <p className="text-sm text-green-700 dark:text-green-400">
                 AI is ready — {selectedModel} is selected.
+              </p>
+            ) : (
+              <p className="text-sm text-amber-700 dark:text-amber-400">
+                The model is still downloading. You can continue and kids can chat once it finishes.
               </p>
             )}
           </CardContent>
@@ -395,7 +399,7 @@ export function OllamaSetup({
             }
             onContinue();
           }}
-          disabled={loading || busy || !!pullJobId || !isReady}
+          disabled={loading || busy || !!pullJobId}
           className="w-full"
           size="lg"
         >

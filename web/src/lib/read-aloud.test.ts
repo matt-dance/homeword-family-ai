@@ -74,4 +74,8 @@ describe("sanitizeForSpeech", () => {
   it("strips emoji that break TTS", () => {
     expect(sanitizeForSpeech("Rock and roll 🤘 yeah")).toBe("Rock and roll yeah");
   });
+
+  it("strips markdown for read-aloud", () => {
+    expect(sanitizeForSpeech("## Dogs\nThey are **loyal**.")).toBe("Dogs They are loyal.");
+  });
 });

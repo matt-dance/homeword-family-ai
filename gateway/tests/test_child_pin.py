@@ -6,7 +6,7 @@ from httpx import AsyncClient
 from homeward_gateway.auth import rate_limit
 from homeward_gateway.auth.parent_auth import hash_pin, verify_child_pin
 from homeward_gateway.db import database as db_module
-from homeward_gateway.db.database import ChildProfile
+from homeward_gateway.db.database import ChildProfile, hash_legacy_child_pins
 from homeward_gateway.pipeline.pipeline import PipelineResult
 from tests.conftest import create_child, setup_parent
 
@@ -23,6 +23,24 @@ class TestPinHashing:
     def test_legacy_plaintext_pin_still_verifies(self):
         assert verify_child_pin("1234", "1234")
         assert not verify_child_pin("1235", "1234")
+
+    @pytest.mark.asyncio
+    async def test_startup_hashes_plaintext_pins(self, client: AsyncClient):
+        await setup_parent(client)
+        child = await create_child(client)
+        async with db_module.async_session_factory() as session:
+            row = await session.get(ChildProfile, child["id"])
+            assert row is not None
+            row.pin = "2468"
+            await session.commit()
+
+        upgraded = await hash_legacy_child_pins()
+        assert upgraded == 1
+        async with db_module.async_session_factory() as session:
+            row = await session.get(ChildProfile, child["id"])
+            assert row is not None
+            assert row.pin != "2468"
+            assert verify_child_pin("2468", row.pin)
 
 
 async def _pin_child(client: AsyncClient, pin: str = "1234") -> dict:
