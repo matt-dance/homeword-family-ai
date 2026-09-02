@@ -208,10 +208,13 @@ export function OllamaSetup({
                 </p>
               ) : (
                 <p className="text-xs">
-                  Checked via Ollama on this machine
-                  {status?.installed_models?.length
-                    ? ` · ${status.installed_models.length} model${status.installed_models.length !== 1 ? "s" : ""} already installed`
-                    : ""}
+                  {status?.reachable
+                    ? `Connected to Ollama${
+                        status.installed_models?.length
+                          ? ` · ${status.installed_models.length} model${status.installed_models.length !== 1 ? "s" : ""} already installed`
+                          : ""
+                      }`
+                    : "Memory read from this computer — Ollama is not connected yet"}
                 </p>
               )}
             </div>

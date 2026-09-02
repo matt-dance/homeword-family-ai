@@ -7,7 +7,43 @@ import pytest
 from homeward_gateway.ollama import service as ollama_service
 
 
+@pytest.fixture(autouse=True)
+def _reset_working_url():
+    ollama_service._working_ollama_url = None
+    yield
+    ollama_service._working_ollama_url = None
+
+
 class TestOllamaService:
+    def test_url_candidates_try_ipv4_when_localhost_is_configured(self):
+        from homeward_gateway.config import settings
+
+        original = settings.ollama_base_url
+        settings.ollama_base_url = "http://localhost:11434"
+        try:
+            urls = ollama_service._ollama_url_candidates()
+            assert urls[0] == "http://localhost:11434"
+            assert "http://127.0.0.1:11434" in urls
+        finally:
+            settings.ollama_base_url = original
+
+    @pytest.mark.asyncio
+    async def test_is_ollama_reachable_falls_back_to_ipv4(self):
+        from homeward_gateway.config import settings
+
+        original = settings.ollama_base_url
+        settings.ollama_base_url = "http://localhost:11434"
+
+        async def fake_probe(url: str) -> bool:
+            return url == "http://127.0.0.1:11434"
+
+        try:
+            with patch.object(ollama_service, "_probe_ollama", side_effect=fake_probe):
+                assert await ollama_service.is_ollama_reachable() is True
+                assert ollama_service._working_ollama_url == "http://127.0.0.1:11434"
+        finally:
+            settings.ollama_base_url = original
+
     @pytest.mark.asyncio
     async def test_is_ollama_reachable_true(self):
         mock_response = MagicMock(status_code=200)

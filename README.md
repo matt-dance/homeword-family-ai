@@ -123,7 +123,7 @@ pip install -e ".[dev]"
 
 export HOMEWARD_DATA_DIR=./gateway/data
 export HOMEWARD_POLICIES_DIR=./policies
-export HOMEWARD_OLLAMA_BASE_URL=http://localhost:11434
+export HOMEWARD_OLLAMA_BASE_URL=http://127.0.0.1:11434
 
 cd gateway
 python -m uvicorn homeward_gateway.main:app --host 127.0.0.1 --port 8000 --reload
@@ -218,7 +218,7 @@ pytest tests/test_speak.py -v -m slow
 | `HOMEWARD_API_DOCS` | `false` | Serve `/docs` (OpenAPI UI) on the gateway |
 | `HOMEWARD_DOCKER` | `false` | Set automatically in Docker Compose |
 | `HOMEWARD_HOST` | `127.0.0.1` | Gateway bind address. Docker sets `0.0.0.0` inside the container; keep `127.0.0.1` for native dev |
-| `HOMEWARD_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API URL |
+| `HOMEWARD_OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama API URL |
 | `HOMEWARD_OLLAMA_MODEL` | `llama3.2:3b` | Default chat model |
 | `HOMEWARD_CLASSIFIER_MODEL` | `llama3.2:3b` | Safety classifier model |
 | `HOMEWARD_DATA_DIR` | `./data` | SQLite database directory |

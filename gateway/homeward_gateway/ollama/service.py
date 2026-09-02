@@ -25,6 +25,51 @@ from homeward_gateway.ollama.catalog import (
 logger = logging.getLogger(__name__)
 
 _pull_jobs: dict[str, dict[str, Any]] = {}
+_working_ollama_url: str | None = None
+
+
+def _ollama_url_candidates() -> list[str]:
+    """Prefer the configured URL, then IPv4/localhost aliases.
+
+    ``localhost`` often resolves to ``::1`` while Ollama only listens on
+    ``127.0.0.1``, which makes a running engine look down.
+    """
+    primary = settings.ollama_base_url.rstrip("/")
+    urls = [primary]
+    rest = primary.split("://", 1)[-1]
+    if rest.startswith("localhost"):
+        urls.append(primary.replace("://localhost", "://127.0.0.1", 1))
+    elif rest.startswith("127.0.0.1"):
+        urls.append(primary.replace("://127.0.0.1", "://localhost", 1))
+    seen: list[str] = []
+    for url in urls:
+        if url not in seen:
+            seen.append(url)
+    return seen
+
+
+async def _probe_ollama(url: str) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{url}/api/tags")
+            return resp.status_code == 200
+    except Exception:
+        return False
+
+
+async def resolved_ollama_url() -> str | None:
+    """Return a working Ollama base URL, or None if nothing is listening."""
+    global _working_ollama_url
+    if _working_ollama_url and await _probe_ollama(_working_ollama_url):
+        return _working_ollama_url
+    for url in _ollama_url_candidates():
+        if await _probe_ollama(url):
+            if url != settings.ollama_base_url.rstrip("/"):
+                logger.info("Ollama reachable at %s (configured %s)", url, settings.ollama_base_url)
+            _working_ollama_url = url
+            return url
+    _working_ollama_url = None
+    return None
 
 
 def get_system_ram_gb() -> tuple[float, str]:
@@ -115,18 +160,16 @@ def _other_installed_models(installed: list[str], ram_gb: float) -> list[dict[st
 
 
 async def is_ollama_reachable() -> bool:
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(f"{settings.ollama_base_url}/api/tags")
-            return resp.status_code == 200
-    except Exception:
-        return False
+    return await resolved_ollama_url() is not None
 
 
 async def list_installed_models() -> list[str]:
+    url = await resolved_ollama_url()
+    if not url:
+        return []
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{settings.ollama_base_url}/api/tags")
+            resp = await client.get(f"{url}/api/tags")
             if resp.status_code != 200:
                 return []
             data = resp.json()
@@ -145,7 +188,7 @@ async def get_status(chat_model: str, classifier_model: str) -> dict[str, Any]:
     return {
         "reachable": reachable,
         "managed": settings.docker_mode,
-        "ollama_url": settings.ollama_base_url,
+        "ollama_url": (await resolved_ollama_url()) or settings.ollama_base_url,
         "system_ram_gb": ram_gb,
         "ram_detection": ram_source,
         "installed_models": installed,
@@ -222,10 +265,11 @@ async def _run_pull(job_id: str, model: str) -> None:
     job = _pull_jobs[job_id]
     job["status"] = "downloading"
     try:
+        url = await resolved_ollama_url() or settings.ollama_base_url.rstrip("/")
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
                 "POST",
-                f"{settings.ollama_base_url}/api/pull",
+                f"{url}/api/pull",
                 json={"name": model, "stream": True},
             ) as resp:
                 if resp.status_code != 200:

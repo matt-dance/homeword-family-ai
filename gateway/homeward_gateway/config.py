@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     child_access_max_age: int = 86400  # one PIN unlock per device per day
 
     # Ollama / LLM
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "llama3.2:3b"
     classifier_model: str = "llama3.2:3b"
     classifier_timeout: float = 10.0
