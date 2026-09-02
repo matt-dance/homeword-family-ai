@@ -33,7 +33,7 @@ git push -u github main
 # or see README.md → Native Development Install
 ```
 
-Open **http://localhost:43123** and complete the setup wizard.
+Open **http://localhost** and complete the setup wizard.
 
 ## Verify voice features (optional)
 

@@ -23,6 +23,13 @@ class ParentAccount(Base):
     ollama_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     classifier_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     recovery_code_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    home_location: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    home_location_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    home_timezone: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    default_profile_child_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    classifier_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    ai_tone: Mapped[str] = mapped_column(String(20), default="balanced")
+    ai_verbosity: Mapped[int] = mapped_column(Integer, default=3)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -132,6 +139,20 @@ def _migrate_parent_columns(connection) -> None:
         connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN classifier_model VARCHAR(100)"))
     if "recovery_code_hash" not in columns:
         connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN recovery_code_hash VARCHAR(255)"))
+    if "home_location" not in columns:
+        connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN home_location VARCHAR(120)"))
+    if "home_location_label" not in columns:
+        connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN home_location_label VARCHAR(200)"))
+    if "home_timezone" not in columns:
+        connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN home_timezone VARCHAR(80)"))
+    if "default_profile_child_id" not in columns:
+        connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN default_profile_child_id INTEGER"))
+    if "classifier_enabled" not in columns:
+        connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN classifier_enabled BOOLEAN DEFAULT 1"))
+    if "ai_tone" not in columns:
+        connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN ai_tone VARCHAR(20) DEFAULT 'balanced'"))
+    if "ai_verbosity" not in columns:
+        connection.execute(sa.text("ALTER TABLE parent_accounts ADD COLUMN ai_verbosity INTEGER DEFAULT 3"))
 
 
 def _migrate_child_columns(connection) -> None:

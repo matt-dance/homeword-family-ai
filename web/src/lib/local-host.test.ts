@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_HOMEWARD_URL,
+  homewardBaseUrl,
   isLocalClient,
   isLoopbackHostname,
   normalizeHostname,
@@ -7,7 +9,8 @@ import {
 
 describe("local-host", () => {
   it("does not treat homeward.local as loopback", () => {
-    expect(isLoopbackHostname("homeward.local:43123")).toBe(false);
+    expect(isLoopbackHostname("homeward.local")).toBe(false);
+    expect(isLoopbackHostname("homeward.local:80")).toBe(false);
   });
 
   it("recognizes loopback hostnames", () => {
@@ -21,6 +24,12 @@ describe("local-host", () => {
   });
 
   it("normalizes host headers", () => {
-    expect(normalizeHostname("Homeward.local:43123")).toBe("homeward.local");
+    expect(normalizeHostname("Homeward.local:80")).toBe("homeward.local");
+  });
+
+  it("omits port 80 from default URL", () => {
+    expect(homewardBaseUrl()).toBe("http://homeward.local");
+    expect(DEFAULT_HOMEWARD_URL).toBe("http://homeward.local");
+    expect(homewardBaseUrl("homeward.local", 43123)).toBe("http://homeward.local:43123");
   });
 });

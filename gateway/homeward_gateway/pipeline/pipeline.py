@@ -7,9 +7,24 @@ from homeward_gateway.pipeline.classifier import classify
 from homeward_gateway.pipeline.normalize import normalize, normalize_output
 from homeward_gateway.pipeline.policy import PolicyPreset, check_policy_match
 from homeward_gateway.pipeline.rules import check_rules
-from homeward_gateway.chat.lookups import detect_lookup_intent, fetch_lookup, lookup_card, lookup_prompt_notes
-from homeward_gateway.chat.tools import detect_intents, extract_model_tools, run_local_tools, tool_prompt_hint
+from homeward_gateway.chat.lookups import (
+    detect_lookup_intent,
+    fetch_lookup,
+    lookup_card,
+    lookup_prompt_notes,
+    resolve_weather_place,
+    weather_missing_place_notes,
+    weather_place_not_found_notes,
+)
+from homeward_gateway.chat.tools import (
+    clock_tool_hint,
+    detect_intents,
+    extract_model_tools,
+    run_local_tools,
+    tool_prompt_hint,
+)
 from homeward_gateway.models.router import generate_response, stream_response
+from homeward_gateway.home.location import HomeContext
 
 
 @dataclass
@@ -30,6 +45,7 @@ async def filter_input(
     preset: PolicyPreset,
     strictness: int,
     classifier_model: str | None = None,
+    classifier_enabled: bool = True,
 ) -> PipelineResult:
     """Run input through all safety stages. Fail-closed on any error."""
     # Stage 1: Normalize
@@ -58,16 +74,17 @@ async def filter_input(
         return PipelineResult(allowed=False, block_reason="rules error", stage="rules")
 
     # Stage 3: Classifier
-    try:
-        classifier_result = await classify(normalized, strictness, model=classifier_model)
-        if not classifier_result.allowed:
-            return PipelineResult(
-                allowed=False,
-                block_reason=classifier_result.reason,
-                stage=classifier_result.stage,
-            )
-    except Exception:
-        return PipelineResult(allowed=False, block_reason="classifier error", stage="classifier")
+    if classifier_enabled:
+        try:
+            classifier_result = await classify(normalized, strictness, model=classifier_model)
+            if not classifier_result.allowed:
+                return PipelineResult(
+                    allowed=False,
+                    block_reason=classifier_result.reason,
+                    stage=classifier_result.stage,
+                )
+        except Exception:
+            return PipelineResult(allowed=False, block_reason="classifier error", stage="classifier")
 
     # Stage 4: Policy match
     try:
@@ -85,6 +102,7 @@ async def filter_output(
     preset: PolicyPreset,
     strictness: int,
     classifier_model: str | None = None,
+    classifier_enabled: bool = True,
 ) -> PipelineResult:
     """Run output through safety stages before delivering to child."""
     try:
@@ -107,16 +125,17 @@ async def filter_output(
     except Exception:
         return PipelineResult(allowed=False, block_reason="output rules error", stage="rules")
 
-    try:
-        classifier_result = await classify(normalized, strictness, model=classifier_model)
-        if not classifier_result.allowed:
-            return PipelineResult(
-                allowed=False,
-                block_reason=classifier_result.reason,
-                stage=f"output_{classifier_result.stage}",
-            )
-    except Exception:
-        return PipelineResult(allowed=False, block_reason="output classifier error", stage="classifier")
+    if classifier_enabled:
+        try:
+            classifier_result = await classify(normalized, strictness, model=classifier_model)
+            if not classifier_result.allowed:
+                return PipelineResult(
+                    allowed=False,
+                    block_reason=classifier_result.reason,
+                    stage=f"output_{classifier_result.stage}",
+                )
+        except Exception:
+            return PipelineResult(allowed=False, block_reason="output classifier error", stage="classifier")
 
     try:
         policy_ok, policy_reason = check_policy_match(normalized, preset, strictness)
@@ -135,6 +154,8 @@ async def resolve_live_lookup(
     preset: PolicyPreset,
     strictness: int,
     classifier_model: str | None = None,
+    history: list[dict] | None = None,
+    home: HomeContext | None = None,
 ) -> tuple[str, list[dict]]:
     """Fetch a named source only when the parent enabled it for this child.
 
@@ -148,8 +169,20 @@ async def resolve_live_lookup(
     if not intent:
         return "", []
 
+    if intent.kind == "weather":
+        place = resolve_weather_place(
+            user_message,
+            history,
+            home_location=home.location if home else None,
+        )
+        if not place:
+            return weather_missing_place_notes(), []
+        intent = type(intent)(kind="weather", query=place)
+
     result = await fetch_lookup(intent)
     if not result:
+        if intent.kind == "weather":
+            return weather_place_not_found_notes(intent.query), []
         return "", []
 
     safety = await filter_output(result.notes, preset, strictness, classifier_model)
@@ -163,9 +196,26 @@ async def resolve_live_lookup(
     return lookup_prompt_notes(result), [lookup_card(result).to_dict()]
 
 
-def _combined_tool_hint(user_message: str, lookup_notes: str) -> str:
-    parts = [tool_prompt_hint(detect_intents(user_message)), lookup_notes]
+def _combined_tool_hint(
+    user_message: str,
+    home: HomeContext | None = None,
+) -> str:
+    tz = home.timezone if home else None
+    parts = [
+        tool_prompt_hint(detect_intents(user_message)),
+        clock_tool_hint(user_message, timezone=tz),
+    ]
     return "\n\n".join(part for part in parts if part)
+
+
+def _user_message_with_lookup(user_content: str, lookup_notes: str) -> str:
+    """Put lookup facts directly on the user turn so small models use them."""
+    if not lookup_notes:
+        return user_content
+    return (
+        f"{lookup_notes}\n\n"
+        f"Using the live lookup facts above, answer this question: {user_content}"
+    )
 
 
 async def process_chat(
@@ -179,9 +229,16 @@ async def process_chat(
     classifier_model: str | None = None,
     homework_mode: bool = False,
     live_lookups: bool = False,
+    home: HomeContext | None = None,
+    classifier_enabled: bool = True,
+    ai_tone: str = "balanced",
+    ai_verbosity: int = 3,
+    quick_chat: bool = False,
 ) -> PipelineResult:
     """Full pipeline: filter input → LLM → filter output."""
-    input_result = await filter_input(user_message, preset, strictness, classifier_model)
+    input_result = await filter_input(
+        user_message, preset, strictness, classifier_model, classifier_enabled=classifier_enabled,
+    )
     if not input_result.allowed:
         return input_result
 
@@ -191,11 +248,14 @@ async def process_chat(
         preset=preset,
         strictness=strictness,
         classifier_model=classifier_model,
+        history=messages,
+        home=home,
     )
-    hint = _combined_tool_hint(user_message, lookup_notes)
+    hint = _combined_tool_hint(user_message, home)
+    user_turn = _user_message_with_lookup(input_result.content, lookup_notes)
     try:
         response = await generate_response(
-            messages + [{"role": "user", "content": input_result.content}],
+            messages + [{"role": "user", "content": user_turn}],
             child_name,
             age,
             preset,
@@ -203,11 +263,17 @@ async def process_chat(
             model=chat_model,
             homework_mode=homework_mode,
             tool_hint=hint,
+            home_label=home.label if home else None,
+            ai_tone=ai_tone,
+            ai_verbosity=ai_verbosity,
+            quick_chat=quick_chat,
         )
     except Exception:
         return PipelineResult(allowed=False, block_reason="llm error", stage="llm")
 
-    output_result = await filter_output(response, preset, strictness, classifier_model)
+    output_result = await filter_output(
+        response, preset, strictness, classifier_model, classifier_enabled=classifier_enabled,
+    )
     if not output_result.allowed:
         return output_result
 
@@ -225,14 +291,21 @@ async def process_chat_stream(
     classifier_model: str | None = None,
     homework_mode: bool = False,
     live_lookups: bool = False,
+    home: HomeContext | None = None,
+    classifier_enabled: bool = True,
+    ai_tone: str = "balanced",
+    ai_verbosity: int = 3,
+    quick_chat: bool = False,
 ) -> AsyncIterator[str | PipelineResult | ToolEvent]:
     """Stream pipeline: filter input first, then stream LLM, filter output at end."""
-    input_result = await filter_input(user_message, preset, strictness, classifier_model)
+    input_result = await filter_input(
+        user_message, preset, strictness, classifier_model, classifier_enabled=classifier_enabled,
+    )
     if not input_result.allowed:
         yield input_result
         return
 
-    local_tools = [card.to_dict() for card in run_local_tools(user_message)]
+    local_tools = [card.to_dict() for card in run_local_tools(user_message, timezone=home.timezone if home else None)]
     if local_tools:
         yield ToolEvent(local_tools)
 
@@ -242,15 +315,18 @@ async def process_chat_stream(
         preset=preset,
         strictness=strictness,
         classifier_model=classifier_model,
+        history=messages,
+        home=home,
     )
     if lookup_tools:
         yield ToolEvent(lookup_tools)
 
-    hint = _combined_tool_hint(user_message, lookup_notes)
+    hint = _combined_tool_hint(user_message, home)
+    user_turn = _user_message_with_lookup(input_result.content, lookup_notes)
     collected = []
     try:
         async for token in stream_response(
-            messages + [{"role": "user", "content": input_result.content}],
+            messages + [{"role": "user", "content": user_turn}],
             child_name,
             age,
             preset,
@@ -258,6 +334,10 @@ async def process_chat_stream(
             model=chat_model,
             homework_mode=homework_mode,
             tool_hint=hint,
+            home_label=home.label if home else None,
+            ai_tone=ai_tone,
+            ai_verbosity=ai_verbosity,
+            quick_chat=quick_chat,
         ):
             collected.append(token)
             yield token
@@ -270,6 +350,8 @@ async def process_chat_stream(
     extra = [card.to_dict() for card in model_cards]
     if extra:
         yield ToolEvent(extra)
-    output_result = await filter_output(full_response, preset, strictness, classifier_model)
+    output_result = await filter_output(
+        full_response, preset, strictness, classifier_model, classifier_enabled=classifier_enabled,
+    )
     if not output_result.allowed:
         yield PipelineResult(allowed=False, block_reason=output_result.block_reason, stage=output_result.stage)

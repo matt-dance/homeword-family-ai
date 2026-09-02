@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
+    web_port: int = 80
+    mdns_enabled: bool = True
+    mdns_hostname: str = "homeward.local"
     secret_key: str = "change-me-in-production"
     session_cookie_name: str = "homeward_session"
     session_max_age: int = 86400 * 7

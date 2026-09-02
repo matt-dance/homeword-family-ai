@@ -43,7 +43,7 @@ Replace `YOUR_GITHUB_USERNAME` with your GitHub account after you create or clon
 .\scripts\install.ps1
 ```
 
-Then open **http://homeward.local:43123** from any device on your Wi‑Fi.
+Then open **http://homeward.local** from any device on your Wi‑Fi.
 
 ### Local URL (`homeward.local`)
 
@@ -56,16 +56,16 @@ Run once on the Homeward computer:
 This does two things:
 
 1. **On this computer** — adds `127.0.0.1 homeward.local` to `/etc/hosts` so the parent dashboard stays on the host machine.
-2. **On your network** — broadcasts `homeward.local` via mDNS (Bonjour) so phones, tablets, and other computers can open kid chat at the same URL.
+2. **On your network** — the gateway broadcasts `homeward.local` via mDNS automatically when it starts, so phones and tablets on the same Wi‑Fi can open kid chat. (Docker runs a dedicated mDNS sidecar.)
 
 | Who | URL | What works |
 |-----|-----|------------|
-| Parent on the Homeward computer | http://homeward.local:43123 | Dashboard, settings, kid chat |
-| Kids on other devices (same Wi‑Fi) | http://homeward.local:43123/chat | Kid chat only |
+| Parent on the Homeward computer | http://homeward.local | Dashboard, settings, kid chat |
+| Kids on other devices (same Wi‑Fi) | http://homeward.local/chat | Kid chat only |
 
-Keep the mDNS broadcaster running while kids use other devices (`scripts/publish-mdns.py`, or re-run `setup-local-url.sh`).
+Run `./scripts/setup-local-url.sh` once if `homeward.local` does not resolve on this computer (adds `/etc/hosts`). mDNS for other devices starts with the gateway — no separate step needed.
 
-You can still use `http://localhost:43123` on the host if you prefer.
+You can still use `http://localhost` (Docker) or `http://localhost:43123` (native dev) on the host if you prefer.
 
 That's it — Homeward starts **Ollama automatically** and begins downloading a recommended AI model on first launch.
 
@@ -128,7 +128,8 @@ python -m uvicorn homeward_gateway.main:app --host 0.0.0.0 --port 8000 --reload
 ```bash
 cd web
 npm install
-npm run dev   # runs on port 43123
+npm run dev        # port 43123 (no sudo)
+npm run dev:lan    # port 80 for homeward.local (may require sudo)
 ```
 
 ### Ollama (manual, dev only)
@@ -253,7 +254,7 @@ Then start Homeward again and walk through the setup wizard.
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────┐
-│  web (43123)│────▶│ gateway (8000)   │────▶│ Ollama      │
+│  web (80)   │────▶│ gateway (8000)   │────▶│ Ollama      │
 │  Next.js    │     │ FastAPI pipeline │     │ (included)  │
 └─────────────┘     └──────────────────┘     └─────────────┘
                             │

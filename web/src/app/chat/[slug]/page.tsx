@@ -5,7 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, type Child } from "@/lib/api";
 import { slugifyName } from "@/lib/slug";
+import { QUICK_CHAT_LABEL, QUICK_CHAT_SLUG } from "@/lib/default-profile";
 import { KidChatView } from "@/components/kid-chat-view";
+import { setDeviceProfileId } from "@/lib/device-profile";
 import { HomewardLogo } from "@/components/homeward-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -26,6 +28,7 @@ function ChildChatContent() {
   const slug = typeof params.slug === "string" ? params.slug : "";
   const [children, setChildren] = useState<Child[]>([]);
   const [selectedChild, setSelectedChild] = useState<Child | null>(null);
+  const [displayName, setDisplayName] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -36,10 +39,27 @@ function ChildChatContent() {
       .childrenPublic()
       .then((kids) => {
         setChildren(kids);
+        if (slug.toLowerCase() === QUICK_CHAT_SLUG) {
+          const defaultChild = kids.find((child) => child.is_default);
+          if (defaultChild) {
+            setSelectedChild(defaultChild);
+            setDisplayName(QUICK_CHAT_LABEL);
+            setNotFound(false);
+            setDeviceProfileId(defaultChild.id);
+          } else if (kids.length === 0) {
+            router.replace("/setup");
+          } else {
+            setNotFound(true);
+          }
+          return;
+        }
+
         const match = findChildBySlug(kids, slug);
         if (match) {
           setSelectedChild(match);
+          setDisplayName(undefined);
           setNotFound(false);
+          setDeviceProfileId(match.id);
         } else if (kids.length === 0) {
           router.replace("/setup");
         } else {
@@ -99,13 +119,9 @@ function ChildChatContent() {
   return (
     <KidChatView
       selectedChild={selectedChild}
-      onSwitchProfile={() => {
-        if (children.length <= 1) {
-          router.push("/");
-        } else {
-          router.push("/chat");
-        }
-      }}
+      displayName={displayName}
+      quickChat={slug.toLowerCase() === QUICK_CHAT_SLUG}
+      onSwitchProfile={() => router.push("/chat?pick=1")}
     />
   );
 }

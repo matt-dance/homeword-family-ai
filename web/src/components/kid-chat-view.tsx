@@ -48,9 +48,11 @@ function simpleModeKey(childId: number) {
 interface KidChatViewProps {
   selectedChild: Child;
   onSwitchProfile: () => void;
+  displayName?: string;
+  quickChat?: boolean;
 }
 
-export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps) {
+export function KidChatView({ selectedChild, onSwitchProfile, displayName, quickChat = false }: KidChatViewProps) {
   const ageThemeKey = getAgeTheme(selectedChild);
   const ageConfig = AGE_THEME_CONFIGS[ageThemeKey];
 
@@ -297,6 +299,7 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
             });
           },
           controller.signal,
+          quickChat,
         );
       } catch (e) {
         if (controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) {
@@ -313,7 +316,7 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
         }
       }
     },
-    [input, selectedChild, streaming, pinVerified, chatSessionId, sessionReady, messages, speakMessage, stopReadAloud],
+    [input, selectedChild, streaming, pinVerified, chatSessionId, sessionReady, messages, speakMessage, stopReadAloud, quickChat],
   );
 
   const handleStop = useCallback(() => {
@@ -342,7 +345,7 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
               {ageConfig.avatarEmoji}
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
-              Hi, {selectedChild.name}!
+              {displayName ?? `Hi, ${selectedChild.name}!`}
             </h1>
             <p className="text-muted-foreground mt-1.5 text-sm">
               Enter your secret PIN to unlock your chat
@@ -396,7 +399,7 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
           </div>
           <div>
             <h2 className="text-2xl font-bold tracking-tight text-foreground">
-              Welcome back, {selectedChild.name}!
+              {displayName ? `Welcome to ${displayName}!` : `Welcome back, ${selectedChild.name}!`}
             </h2>
             <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
               Would you like to pick up where you left off, or start a brand new conversation?
@@ -470,7 +473,7 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <p className="font-bold text-base sm:text-lg tracking-tight truncate text-foreground">
-                  {selectedChild.name}&apos;s Chat
+                  {displayName ?? `${selectedChild.name}'s Chat`}
                 </p>
                 <span className="hidden sm:inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary border border-primary/20">
                   {ageConfig.ageRange}
@@ -547,7 +550,7 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
                     simpleMode ? "text-3xl sm:text-4xl" : "text-2xl sm:text-3xl"
                   }`}
                 >
-                  Hi {selectedChild.name}! 👋
+                  {displayName ? "Hi there! 👋" : `Hi ${selectedChild.name}! 👋`}
                 </h2>
                 <p className="text-muted-foreground text-sm sm:text-base max-w-md mx-auto">
                   {ageConfig.heroSub}
@@ -767,7 +770,9 @@ export function KidChatView({ selectedChild, onSwitchProfile }: KidChatViewProps
             )}
             <Input
               placeholder={
-                voiceSupported
+                displayName
+                  ? "Ask me anything…"
+                  : voiceSupported
                   ? `Ask me anything, ${selectedChild.name}…`
                   : `Ask a question, ${selectedChild.name}…`
               }

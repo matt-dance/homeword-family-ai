@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { chatPathForChild } from "@/lib/slug";
+import { KidChatLink } from "@/components/kid-chat-link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   api,
@@ -201,12 +202,12 @@ function DashboardContent() {
           </p>
         </div>
 
-        <Link href="/chat">
+        <KidChatLink>
           <Button className="rounded-xl shadow-sm shadow-primary/20 font-medium">
             <Sparkles className="mr-2 h-4 w-4" />
             Open Kid Chat
           </Button>
-        </Link>
+        </KidChatLink>
       </div>
 
       {/* Child Filter Chips */}
@@ -634,11 +635,6 @@ function DashboardContent() {
                       When your kids start chatting, their sessions will appear here.
                     </p>
                   </div>
-                  <Link href="/chat">
-                    <Button variant="outline" size="sm" className="rounded-xl mt-2">
-                      Open Kid Chat
-                    </Button>
-                  </Link>
                 </div>
               ) : (
                 <div className="space-y-2.5">

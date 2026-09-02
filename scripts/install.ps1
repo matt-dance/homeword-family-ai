@@ -12,7 +12,7 @@ docker compose up -d --build
 
 Write-Host ""
 Write-Host "Homeward is starting up."
-Write-Host "Open http://localhost:43123 in your browser."
+Write-Host "Open http://localhost in your browser (Docker maps port 80)."
 Write-Host ""
 Write-Host "On first launch, the setup wizard will help you:"
 Write-Host "  1. Create a parent password"

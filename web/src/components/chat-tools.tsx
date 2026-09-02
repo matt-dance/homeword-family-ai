@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import type {
   ChatTool,
+  ClockTool,
   DefineTool,
   FactsTool,
   LookupTool,
@@ -16,6 +17,7 @@ import {
   Calculator,
   Check,
   CheckCircle2,
+  Clock3,
   CloudSun,
   Globe,
   HelpCircle,
@@ -38,6 +40,7 @@ export function ChatToolCards({ tools }: { tools: ChatTool[] }) {
         <div key={`${tool.type}-${i}`}>
           {tool.type === "math" && <MathCard tool={tool} />}
           {tool.type === "timer" && <TimerCard tool={tool} />}
+          {tool.type === "clock" && <ClockCard tool={tool} />}
           {tool.type === "define" && <DefineCard tool={tool} />}
           {tool.type === "quiz" && <QuizCard tool={tool} />}
           {tool.type === "facts" && <FactsCard tool={tool} />}
@@ -212,6 +215,23 @@ function TimerCard({ tool }: { tool: TimerTool }) {
             Reset
           </Button>
         </div>
+      </div>
+    </CardShell>
+  );
+}
+
+function ClockCard({ tool }: { tool: ClockTool }) {
+  return (
+    <CardShell
+      icon={<Clock3 className="h-4 w-4" />}
+      title="Current time"
+      badge={tool.timezone || "Local time"}
+    >
+      <div className="py-1 text-center space-y-1">
+        <p className="font-mono text-3xl sm:text-4xl font-extrabold tabular-nums tracking-tight text-foreground">
+          {tool.time}
+        </p>
+        <p className="text-sm sm:text-base text-muted-foreground">{tool.date}</p>
       </div>
     </CardShell>
   );

@@ -1,7 +1,10 @@
 from homeward_gateway.chat.tools import (
+    clock_tool_hint,
+    current_clock_card,
     detect_intents,
     evaluate_math,
     extract_model_tools,
+    is_clock_question,
     parse_timer_seconds,
     run_local_tools,
 )
@@ -38,6 +41,24 @@ def test_detect_intents():
     assert "quiz" in detect_intents("Quiz me about planets")
     assert "facts" in detect_intents("3 facts about dogs")
     assert "timer" in detect_intents("Set a timer for 30 seconds")
+    assert "clock" in detect_intents("What time is it?")
+
+
+def test_clock_not_confused_with_timer():
+    assert "clock" not in detect_intents("Set a timer for 2 minutes")
+    assert is_clock_question("What time is it?")
+
+
+def test_run_local_clock():
+    cards = run_local_tools("What time is it?")
+    assert any(card.type == "clock" and card.data["time"] for card in cards)
+
+
+def test_clock_tool_hint_includes_actual_time():
+    hint = clock_tool_hint("What time is it?")
+    assert "Time:" in hint
+    assert "Date:" in hint
+    assert any(ch.isdigit() for ch in hint)
 
 
 def test_run_local_math_and_timer():

@@ -75,7 +75,21 @@ services:
     environment:
       - GATEWAY_URL=http://gateway:8000
     ports:
-      - "43123:43123"
+      - "80:43123"
+    restart: unless-stopped
+
+  mdns:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    container_name: homeward-mdns
+    depends_on:
+      web:
+        condition: service_started
+    network_mode: host
+    environment:
+      - HOMEWARD_MDNS_PORT=80
+    command: ["python", "-m", "homeward_gateway.network.mdns"]
     restart: unless-stopped
 
 volumes:

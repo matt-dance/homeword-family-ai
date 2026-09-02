@@ -7,6 +7,7 @@ import json
 import operator
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 TOOL_FENCE = "homeward"
@@ -52,6 +53,12 @@ _DEFINE_RE = re.compile(
 )
 _QUIZ_RE = re.compile(r"\b(quiz|flash\s*cards?|test me|practice questions)\b", re.IGNORECASE)
 _FACTS_RE = re.compile(r"\b(fun facts?|facts about|\d+\s+facts)\b", re.IGNORECASE)
+_CLOCK_RE = re.compile(
+    r"\b(?:what(?:'s| is) (?:the )?time(?:\s+is\s+it)?|what time is it|current time|"
+    r"what(?:'s| is) (?:the )?date|what day is (?:it|today)|"
+    r"what(?:'s| is) today(?:'?s date)?|day of the week)\b",
+    re.IGNORECASE,
+)
 _FENCE_RE = re.compile(
     rf"```{TOOL_FENCE}\s*(\{{[\s\S]*?\}})\s*```",
     re.IGNORECASE,
@@ -142,6 +149,53 @@ def format_duration(seconds: int) -> str:
     return f"{seconds} second{'' if seconds == 1 else 's'}"
 
 
+def is_clock_question(message: str) -> bool:
+    if parse_timer_seconds(message):
+        return False
+    return bool(_CLOCK_RE.search(message or ""))
+
+
+def format_local_time(now: datetime) -> str:
+    text = now.strftime("%I:%M %p")
+    if text.startswith("0"):
+        text = text[1:]
+    return text
+
+
+def current_clock_card(now: datetime | None = None, timezone: str | None = None) -> ToolCard:
+    moment = now
+    if moment is None:
+        if timezone:
+            try:
+                from zoneinfo import ZoneInfo
+
+                moment = datetime.now(ZoneInfo(timezone))
+            except Exception:
+                moment = datetime.now().astimezone()
+        else:
+            moment = datetime.now().astimezone()
+    tz = moment.tzname() or timezone or "local time"
+    return ToolCard(
+        "clock",
+        {
+            "time": format_local_time(moment),
+            "date": moment.strftime("%A, %B %d, %Y"),
+            "timezone": tz,
+        },
+    )
+
+
+def clock_tool_hint(message: str, timezone: str | None = None) -> str:
+    if not is_clock_question(message):
+        return ""
+    card = current_clock_card(timezone=timezone)
+    return (
+        "CURRENT LOCAL TIME from this device — not a guess. "
+        f"Time: {card.data['time']}. Date: {card.data['date']} ({card.data['timezone']}). "
+        "Use these exact values in your reply. Never use placeholders like [insert current time]."
+    )
+
+
 def detect_intents(message: str) -> list[str]:
     intents: list[str] = []
     if parse_timer_seconds(message):
@@ -154,6 +208,8 @@ def detect_intents(message: str) -> list[str]:
         intents.append("quiz")
     if _FACTS_RE.search(message):
         intents.append("facts")
+    if is_clock_question(message):
+        intents.append("clock")
     return intents
 
 
@@ -166,7 +222,7 @@ def _extract_math_expression(message: str) -> str | None:
     return None
 
 
-def run_local_tools(message: str) -> list[ToolCard]:
+def run_local_tools(message: str, *, timezone: str | None = None) -> list[ToolCard]:
     cards: list[ToolCard] = []
     seconds = parse_timer_seconds(message)
     if seconds:
@@ -182,6 +238,8 @@ def run_local_tools(message: str) -> list[ToolCard]:
             cards.append(ToolCard("math", evaluate_math(expr)))
         except (ValueError, ZeroDivisionError, SyntaxError):
             pass
+    if is_clock_question(message):
+        cards.append(current_clock_card(timezone=timezone))
     return cards
 
 
@@ -193,7 +251,7 @@ def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
         except json.JSONDecodeError:
             continue
         kind = payload.get("type")
-        if kind in {"define", "quiz", "facts", "math", "timer", "lookup"}:
+        if kind in {"define", "quiz", "facts", "math", "timer", "lookup", "clock"}:
             cards.append(ToolCard(kind, {k: v for k, v in payload.items() if k != "type"}))
     cleaned = _FENCE_RE.sub("", text)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
@@ -221,4 +279,9 @@ def tool_prompt_hint(intents: list[str]) -> str:
         parts.append("A calculator card will already show the number. Explain the steps in plain words.")
     if "timer" in intents:
         parts.append("A timer card will appear. Cheer them on in one short sentence.")
+    if "clock" in intents:
+        parts.append(
+            "A clock card shows the exact current local time and date. "
+            "Say that time in your reply. Never use placeholders."
+        )
     return " ".join(parts)

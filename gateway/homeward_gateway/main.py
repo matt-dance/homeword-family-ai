@@ -35,7 +35,18 @@ async def lifespan(app: FastAPI):
     if whisper_available():
         asyncio.create_task(asyncio.to_thread(_preload_whisper))
 
+    from homeward_gateway.network import mdns as mdns_service
+
+    if settings.mdns_enabled and not settings.docker_mode:
+        try:
+            await asyncio.to_thread(mdns_service.start, settings.mdns_hostname, settings.web_port)
+        except Exception as exc:
+            logger.warning("mDNS failed to start (homeward.local may not resolve on LAN): %s", exc)
+
     yield
+
+    if settings.mdns_enabled and not settings.docker_mode:
+        await asyncio.to_thread(mdns_service.stop)
 
 
 def _preload_whisper() -> None:

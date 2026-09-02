@@ -1,8 +1,20 @@
 /** Network URL helpers for Homeward. */
 
 export const HOMEWARD_HOSTNAME = "homeward.local";
-export const HOMEWARD_PORT = 43123;
-export const DEFAULT_HOMEWARD_URL = `http://${HOMEWARD_HOSTNAME}:${HOMEWARD_PORT}`;
+/** Public HTTP port advertised on the home network (standard port 80). */
+export const HOMEWARD_PORT = 80;
+
+export function homewardBaseUrl(
+  hostname: string = HOMEWARD_HOSTNAME,
+  port: number = HOMEWARD_PORT,
+): string {
+  if (port === 80) {
+    return `http://${hostname}`;
+  }
+  return `http://${hostname}:${port}`;
+}
+
+export const DEFAULT_HOMEWARD_URL = homewardBaseUrl();
 
 export function normalizeHostname(hostHeader: string | null): string {
   return hostHeader?.split(":")[0]?.replace(/^\[|\]$/g, "").toLowerCase() ?? "";
@@ -14,25 +26,17 @@ export function isLoopbackHostname(hostHeader: string | null): boolean {
   return host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.startsWith("127.");
 }
 
-export function getServerInterfaceIps(): Set<string> {
-  // Middleware runs on Node.js; networkInterfaces is available at runtime.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const os = require("os") as typeof import("os");
-  const ips = new Set(["127.0.0.1", "::1"]);
-  for (const addrs of Object.values(os.networkInterfaces())) {
-    for (const addr of addrs ?? []) {
-      if (addr.family === "IPv4") ips.add(addr.address);
-    }
-  }
-  return ips;
-}
-
-export function isLocalClient(clientIp: string, serverIps?: Set<string>): boolean {
+export function isLoopbackClient(clientIp: string): boolean {
   if (!clientIp) return false;
   const ip = clientIp.trim().toLowerCase().replace(/^::ffff:/, "");
-  if (ip === "127.0.0.1" || ip === "::1" || ip.startsWith("127.")) return true;
-  const ips = serverIps ?? getServerInterfaceIps();
-  return ips.has(ip);
+  return ip === "127.0.0.1" || ip === "::1" || ip.startsWith("127.");
+}
+
+/** True when the client IP matches loopback or a known same-machine LAN address. */
+export function isLocalClient(clientIp: string, serverIps: Set<string>): boolean {
+  if (isLoopbackClient(clientIp)) return true;
+  const ip = clientIp.trim().toLowerCase().replace(/^::ffff:/, "");
+  return serverIps.has(ip);
 }
 
 export function clientIpFromRequest(headers: Headers): string {
@@ -45,8 +49,9 @@ export function clientIpFromRequest(headers: Headers): string {
   return "";
 }
 
+/** Edge-safe: middleware cannot read host network interfaces (no Node `os`). */
 export function isLocalDashboardClient(headers: Headers): boolean {
   const ip = clientIpFromRequest(headers);
-  if (ip && isLocalClient(ip)) return true;
+  if (ip && isLoopbackClient(ip)) return true;
   return isLoopbackHostname(headers.get("host"));
 }

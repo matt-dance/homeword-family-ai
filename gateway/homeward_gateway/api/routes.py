@@ -52,6 +52,8 @@ from homeward_gateway.db.database import (
     get_session,
 )
 from homeward_gateway.dashboard.sessions import find_legacy_session, group_legacy_logs
+from homeward_gateway.home.location import HomeContext, home_context_from_parent
+from homeward_gateway.profiles.default_profile import resolve_default_child
 from homeward_gateway.ollama import service as ollama_service
 from homeward_gateway.ollama.catalog import pick_classifier_model
 from homeward_gateway.ollama.runtime import get_effective_models
@@ -118,6 +120,7 @@ class ChatRequest(BaseModel):
     child_id: int
     session_id: int | None = None
     history: list[dict] = Field(default_factory=list)
+    quick_chat: bool = False
 
 
 class SessionCreateRequest(BaseModel):
@@ -141,6 +144,17 @@ class OllamaPullRequest(BaseModel):
 class OllamaSettingsRequest(BaseModel):
     chat_model: str = Field(min_length=1, max_length=100)
     classifier_model: str | None = None
+
+
+class HomeLocationRequest(BaseModel):
+    location: str | None = Field(default=None, max_length=120)
+
+
+class AdvancedSettingsRequest(BaseModel):
+    default_profile_child_id: int | None = None
+    classifier_enabled: bool | None = None
+    ai_tone: str | None = Field(default=None, pattern=r"^(warm|balanced|concise)$")
+    ai_verbosity: int | None = Field(default=None, ge=1, le=5)
 
 
 # --- Dependencies ---
@@ -388,7 +402,7 @@ def _serialize_child(c: ChildProfile) -> dict:
     }
 
 
-def _serialize_child_public(c: ChildProfile) -> dict:
+def _serialize_child_public(c: ChildProfile, *, is_default: bool = False) -> dict:
     available, unavailable_message = is_chat_available(
         enabled=c.quiet_hours_enabled,
         start=c.quiet_hours_start,
@@ -405,6 +419,7 @@ def _serialize_child_public(c: ChildProfile) -> dict:
         "chat_unavailable_message": unavailable_message,
         "homework_mode": c.homework_mode,
         "live_lookups": c.live_lookups,
+        "is_default": is_default,
     }
 
 
@@ -560,8 +575,25 @@ async def update_child(
 async def list_children_public(session: Annotated[AsyncSession, Depends(get_session)]):
     """Public endpoint for kid profile picker — no auth required."""
     result = await session.execute(select(ChildProfile))
-    children = result.scalars().all()
-    return [_serialize_child_public(c) for c in children]
+    children = list(result.scalars().all())
+    parent = await _load_household_parent(session)
+    default_child = resolve_default_child(children, parent.default_profile_child_id if parent else None)
+    default_id = default_child.id if default_child else None
+    return [_serialize_child_public(c, is_default=c.id == default_id) for c in children]
+
+
+@router.get("/children/default")
+async def get_default_child_public(session: Annotated[AsyncSession, Depends(get_session)]):
+    """Public default profile for quick chat links on the home network."""
+    result = await session.execute(select(ChildProfile))
+    children = list(result.scalars().all())
+    if not children:
+        raise HTTPException(status_code=404, detail="No profiles configured")
+    parent = await _load_household_parent(session)
+    default_child = resolve_default_child(children, parent.default_profile_child_id if parent else None)
+    if not default_child:
+        raise HTTPException(status_code=404, detail="No profiles configured")
+    return _serialize_child_public(default_child, is_default=True)
 
 
 @router.get("/children/{child_id}/starters")
@@ -791,6 +823,38 @@ async def _get_child_context(child_id: int, session: AsyncSession) -> tuple[Chil
     return child, preset
 
 
+async def _load_home_context(session: AsyncSession, parent_id: int) -> HomeContext:
+    result = await session.execute(select(ParentAccount).where(ParentAccount.id == parent_id))
+    parent = result.scalar_one_or_none()
+    return home_context_from_parent(parent)
+
+
+async def _load_parent_account(session: AsyncSession, parent_id: int) -> ParentAccount | None:
+    result = await session.execute(select(ParentAccount).where(ParentAccount.id == parent_id))
+    return result.scalar_one_or_none()
+
+
+async def _load_household_parent(session: AsyncSession) -> ParentAccount | None:
+    result = await session.execute(select(ParentAccount).limit(1))
+    return result.scalar_one_or_none()
+
+
+def _serialize_ai_preferences(parent: ParentAccount | None) -> dict:
+    if not parent:
+        return {
+            "default_profile_child_id": None,
+            "classifier_enabled": True,
+            "ai_tone": "balanced",
+            "ai_verbosity": 3,
+        }
+    return {
+        "default_profile_child_id": parent.default_profile_child_id,
+        "classifier_enabled": parent.classifier_enabled,
+        "ai_tone": parent.ai_tone or "balanced",
+        "ai_verbosity": parent.ai_verbosity or 3,
+    }
+
+
 async def _log_message(
     session: AsyncSession,
     child_id: int,
@@ -888,6 +952,9 @@ async def chat(
     _ensure_chat_available(child)
     chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
     chat_model, classifier_model = await get_effective_models(session)
+    home = await _load_home_context(session, child.parent_id)
+    parent = await _load_parent_account(session, child.parent_id)
+    ai_prefs = _serialize_ai_preferences(parent)
     result = await process_chat(
         body.message,
         body.history,
@@ -899,6 +966,11 @@ async def chat(
         classifier_model=classifier_model,
         homework_mode=child.homework_mode,
         live_lookups=child.live_lookups,
+        home=home,
+        classifier_enabled=ai_prefs["classifier_enabled"],
+        ai_tone=ai_prefs["ai_tone"],
+        ai_verbosity=ai_prefs["ai_verbosity"],
+        quick_chat=body.quick_chat,
     )
 
     if not result.allowed:
@@ -935,6 +1007,9 @@ async def chat_stream(
     _ensure_chat_available(child)
     chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
     chat_model, classifier_model = await get_effective_models(session)
+    home = await _load_home_context(session, child.parent_id)
+    parent = await _load_parent_account(session, child.parent_id)
+    ai_prefs = _serialize_ai_preferences(parent)
 
     async def event_stream() -> AsyncIterator[str]:
         from homeward_gateway.db.database import async_session_factory
@@ -969,6 +1044,11 @@ async def chat_stream(
                 classifier_model=classifier_model,
                 homework_mode=child.homework_mode,
                 live_lookups=child.live_lookups,
+                home=home,
+                classifier_enabled=ai_prefs["classifier_enabled"],
+                ai_tone=ai_prefs["ai_tone"],
+                ai_verbosity=ai_prefs["ai_verbosity"],
+                quick_chat=body.quick_chat,
             ):
                 if await request.is_disconnected():
                     await persist_turn()
@@ -1429,3 +1509,91 @@ async def update_cloud_settings(
     else:
         settings.cloud_enabled = body.cloud_enabled
     return {"ok": True, "cloud_enabled": parent.cloud_enabled}
+
+
+@router.get("/settings/home-location")
+async def get_home_location(
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+):
+    return {
+        "location": parent.home_location,
+        "label": parent.home_location_label,
+        "timezone": parent.home_timezone,
+    }
+
+
+@router.post("/settings/home-location")
+async def update_home_location(
+    body: HomeLocationRequest,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    from homeward_gateway.chat.lookups import resolve_home_location
+
+    location = (body.location or "").strip()
+    if not location:
+        parent.home_location = None
+        parent.home_location_label = None
+        parent.home_timezone = None
+    else:
+        resolved = await resolve_home_location(location)
+        if not resolved:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not find that place. Try a city and state, like Denver, CO.",
+            )
+        parent.home_location, parent.home_location_label, parent.home_timezone = resolved
+    await session.commit()
+    return {
+        "ok": True,
+        "location": parent.home_location,
+        "label": parent.home_location_label,
+        "timezone": parent.home_timezone,
+    }
+
+
+@router.get("/settings/advanced")
+async def get_advanced_settings(
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    children_result = await session.execute(
+        select(ChildProfile).where(ChildProfile.parent_id == parent.id)
+    )
+    children = [
+        {"id": c.id, "name": c.name, "slug": c.slug, "has_pin": c.pin is not None}
+        for c in children_result.scalars().all()
+    ]
+    return {
+        **_serialize_ai_preferences(parent),
+        "children": children,
+    }
+
+
+@router.post("/settings/advanced")
+async def update_advanced_settings(
+    body: AdvancedSettingsRequest,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    if body.default_profile_child_id is not None:
+        if body.default_profile_child_id:
+            child_result = await session.execute(
+                select(ChildProfile).where(
+                    ChildProfile.id == body.default_profile_child_id,
+                    ChildProfile.parent_id == parent.id,
+                )
+            )
+            if not child_result.scalar_one_or_none():
+                raise HTTPException(status_code=404, detail="Child not found")
+        parent.default_profile_child_id = body.default_profile_child_id or None
+
+    if body.classifier_enabled is not None:
+        parent.classifier_enabled = body.classifier_enabled
+    if body.ai_tone is not None:
+        parent.ai_tone = body.ai_tone
+    if body.ai_verbosity is not None:
+        parent.ai_verbosity = body.ai_verbosity
+
+    await session.commit()
+    return {"ok": True, **_serialize_ai_preferences(parent)}

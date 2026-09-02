@@ -4,7 +4,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOSTNAME="homeward.local"
-PORT=43123
+PORT="${HOMEWARD_PORT:-80}"
+
+homeward_url() {
+  if [[ "${PORT}" == "80" ]]; then
+    echo "http://${HOSTNAME}"
+  else
+    echo "http://${HOSTNAME}:${PORT}"
+  fi
+}
 
 lan_ip() {
   ipconfig getifaddr en0 2>/dev/null \
@@ -30,36 +38,16 @@ fi
 
 echo ""
 
-# 2) Network: mDNS so phones/tablets can open homeward.local too.
+# 2) Network: mDNS is started automatically when the gateway runs.
+echo "mDNS: homeward.local is broadcast automatically when the gateway starts."
 if [[ -n "${LAN_IP}" ]]; then
   echo "This computer's LAN IP: ${LAN_IP}"
+  echo "Other devices on Wi‑Fi can use: $(homeward_url)/chat"
 else
-  echo "Could not detect LAN IP — mDNS may still work once you are on Wi‑Fi."
-fi
-
-if command -v avahi-publish >/dev/null 2>&1 && [[ -n "${LAN_IP}" ]]; then
-  echo ""
-  echo "Starting mDNS (Avahi) in the background..."
-  pkill -f "avahi-publish -a ${HOSTNAME}" 2>/dev/null || true
-  nohup avahi-publish -a "${HOSTNAME}" "${LAN_IP}" >/tmp/homeward-mdns.log 2>&1 &
-  echo "✓ Other devices on your network can use: http://${HOSTNAME}:${PORT}"
-elif [[ -f "${ROOT}/gateway/.venv/bin/python" ]]; then
-  echo ""
-  echo "Installing zeroconf (one time) and starting mDNS broadcaster..."
-  "${ROOT}/gateway/.venv/bin/pip" install -q zeroconf
-  pkill -f "publish-mdns.py" 2>/dev/null || true
-  nohup "${ROOT}/gateway/.venv/bin/python" "${ROOT}/scripts/publish-mdns.py" >/tmp/homeward-mdns.log 2>&1 &
-  sleep 1
-  echo "✓ Other devices on your network can use: http://${HOSTNAME}:${PORT}"
-else
-  echo ""
-  echo "To enable homeward.local on other devices, run in a separate terminal:"
-  echo "  pip install zeroconf && python3 ${ROOT}/scripts/publish-mdns.py"
-  echo "Or install Avahi and run:"
-  echo "  avahi-publish -a ${HOSTNAME} ${LAN_IP:-YOUR-LAN-IP}"
+  echo "Could not detect LAN IP — ensure the gateway is running on Wi‑Fi."
 fi
 
 echo ""
-echo "On this computer:  http://${HOSTNAME}:${PORT}"
-echo "Kid chat (any device on Wi‑Fi): http://${HOSTNAME}:${PORT}/chat"
+echo "On this computer:  $(homeward_url)"
+echo "Kid chat (any device on Wi‑Fi): $(homeward_url)/chat"
 echo "Parent dashboard: only works on this computer"

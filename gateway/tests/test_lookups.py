@@ -12,6 +12,8 @@ from homeward_gateway.chat.lookups import (
     lookup_prompt_notes,
     parse_featured_headlines,
     parse_scoreboard_events,
+    resolve_weather_place,
+    weather_missing_place_notes,
 )
 from homeward_gateway.pipeline.pipeline import (
     PipelineResult,
@@ -68,6 +70,28 @@ class TestDetectLookupIntent:
         assert intent.kind == "weather"
         assert intent.query == ""
 
+    def test_weather_tomorrow_detected(self):
+        intent = detect_lookup_intent("What's the weather tomorrow?")
+        assert intent is not None
+        assert intent.kind == "weather"
+
+    def test_resolve_weather_place_from_history(self):
+        place = resolve_weather_place(
+            "What's the weather tomorrow?",
+            [{"role": "user", "content": "We live in Denver"}],
+        )
+        assert place == "Denver"
+
+    def test_resolve_weather_place_uses_home_fallback(self):
+        place = resolve_weather_place(
+            "What's the weather tomorrow?",
+            home_location="Boulder, CO",
+        )
+        assert place == "Boulder, CO"
+
+    def test_weather_missing_place_notes(self):
+        assert "city or town" in weather_missing_place_notes().lower()
+
     def test_news(self):
         intent = detect_lookup_intent("What's in the news today?")
         assert intent is not None
@@ -78,6 +102,20 @@ class TestDetectLookupIntent:
         assert intent is not None
         assert intent.kind == "sports"
         assert intent.query == "broncos"
+
+    def test_sports_college_schedule(self):
+        intent = detect_lookup_intent("What's Boise State's schedule this weekend?")
+        assert intent is not None
+        assert intent.kind == "sports"
+        assert intent.query == "boise state"
+        assert intent.schedule is True
+        assert intent.date_range is not None
+
+    def test_sports_extracts_unknown_team(self):
+        intent = detect_lookup_intent("When does Oregon play this week?")
+        assert intent is not None
+        assert intent.kind == "sports"
+        assert "oregon" in intent.query
 
     def test_sports_without_team_is_ignored(self):
         assert detect_lookup_intent("Who won last night?") is None
@@ -97,13 +135,34 @@ class TestFormatters:
         assert "70" in result.summary
         assert "clear skies" in result.notes
         assert "Open-Meteo" in lookup_prompt_notes(result)
-        assert "not a generic web search" in lookup_prompt_notes(result)
+        assert "verified just now" in lookup_prompt_notes(result)
+
+    def test_lookup_prompt_notes_empty_sports(self):
+        result = format_sports_notes("NFL", [], "unknown team")
+        prompt = lookup_prompt_notes(result)
+        assert result.found is False
+        assert "No matching results" in prompt
+        assert "could not find" in prompt.lower()
 
     def test_sports_notes(self):
         result = format_sports_notes("NFL", ["Denver Broncos 24 vs Kansas City Chiefs 17 (Final)"], "broncos")
         assert result.source == "espn-scoreboard"
         assert result.source_label == "Public sports scoreboard"
         assert "Broncos" in result.summary
+
+    def test_sports_schedule_notes(self):
+        result = format_sports_notes(
+            "College Football",
+            ["Boise State Broncos 51 vs Eastern Washington Eagles 14 (Final)"],
+            "Boise State",
+            schedule=True,
+        )
+        assert result.found is True
+        assert "schedule" in result.notes.lower()
+        assert "Boise State" in result.summary
+        prompt = lookup_prompt_notes(result)
+        assert "Do NOT say you could not find" in prompt
+        assert "Boise State" in prompt
 
     def test_news_notes(self):
         result = format_news_notes(["Mars rover finds a new rock"])
@@ -128,8 +187,14 @@ class TestParsers:
                     "competitions": [
                         {
                             "competitors": [
-                                {"team": {"displayName": "Denver Broncos"}, "score": "24"},
-                                {"team": {"displayName": "Kansas City Chiefs"}, "score": "17"},
+                                {
+                                    "team": {"displayName": "Denver Broncos", "location": "Denver"},
+                                    "score": "24",
+                                },
+                                {
+                                    "team": {"displayName": "Kansas City Chiefs", "location": "Kansas City"},
+                                    "score": "17",
+                                },
                             ]
                         }
                     ],
@@ -151,6 +216,33 @@ class TestParsers:
         events = parse_scoreboard_events(payload, "broncos")
         assert len(events) == 1
         assert "Broncos" in events[0]
+
+    def test_parse_scoreboard_college_location_filter(self):
+        payload = {
+            "events": [
+                {
+                    "name": "Eastern Washington Eagles at Boise State Broncos",
+                    "status": {"type": {"description": "Final"}},
+                    "competitions": [
+                        {
+                            "competitors": [
+                                {
+                                    "team": {"displayName": "Boise State Broncos", "location": "Boise State"},
+                                    "score": "51",
+                                },
+                                {
+                                    "team": {"displayName": "Eastern Washington Eagles", "location": "Eastern Washington"},
+                                    "score": "14",
+                                },
+                            ]
+                        }
+                    ],
+                },
+            ]
+        }
+        events = parse_scoreboard_events(payload, "boise state", team_filter="Boise State")
+        assert len(events) == 1
+        assert "Boise State" in events[0]
 
     def test_parse_featured_headlines(self):
         payload = {
@@ -208,6 +300,51 @@ class TestResolveLiveLookup:
         assert tools[0]["source"] == "open-meteo"
 
     @pytest.mark.asyncio
+    async def test_enabled_weather_without_place_asks_for_city(self, monkeypatch):
+        fetched = False
+
+        async def fake_fetch(_intent):
+            nonlocal fetched
+            fetched = True
+            return None
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        notes, tools = await resolve_live_lookup(
+            "What's the weather tomorrow?",
+            live_lookups=True,
+            preset=YOUNG,
+            strictness=3,
+        )
+        assert "city or town" in notes.lower()
+        assert tools == []
+        assert fetched is False
+
+    @pytest.mark.asyncio
+    async def test_enabled_uses_place_from_history(self, monkeypatch):
+        result = format_weather_notes("Denver", WEATHER_GEO, WEATHER_FORECAST)
+        captured: dict[str, str] = {}
+
+        async def fake_fetch(intent):
+            captured["query"] = intent.query
+            return result
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+        notes, tools = await resolve_live_lookup(
+            "What's the weather tomorrow?",
+            live_lookups=True,
+            preset=YOUNG,
+            strictness=3,
+            history=[{"role": "user", "content": "I'm in Denver today"}],
+        )
+        assert captured["query"] == "Denver"
+        assert "Open-Meteo" in notes
+        assert tools[0]["type"] == "lookup"
+
+    @pytest.mark.asyncio
     async def test_unsafe_notes_are_dropped(self, monkeypatch):
         result = LookupResult(
             kind="news",
@@ -251,8 +388,8 @@ class TestProcessChatLookupGating:
 
         captured: dict[str, str] = {}
 
-        async def fake_generate(*_args, **kwargs):
-            captured["hint"] = kwargs.get("tool_hint") or ""
+        async def fake_generate(messages, *_args, **_kwargs):
+            captured["user_turn"] = messages[-1]["content"]
             return "Ask a parent to look outside."
 
         async def fake_filter_output(text, *_args, **_kwargs):
@@ -274,7 +411,7 @@ class TestProcessChatLookupGating:
         )
         assert result.allowed
         assert fetched is False
-        assert "Open-Meteo" not in captured["hint"]
+        assert "Open-Meteo" not in captured["user_turn"]
 
     @pytest.mark.asyncio
     async def test_process_chat_adds_notes_when_enabled(self, monkeypatch):
@@ -288,8 +425,8 @@ class TestProcessChatLookupGating:
 
         captured: dict[str, str] = {}
 
-        async def fake_generate(*_args, **kwargs):
-            captured["hint"] = kwargs.get("tool_hint") or ""
+        async def fake_generate(messages, *_args, **_kwargs):
+            captured["user_turn"] = messages[-1]["content"]
             return "It is sunny and about 70 degrees in Denver."
 
         async def fake_filter_output(text, *_args, **_kwargs):
@@ -310,8 +447,8 @@ class TestProcessChatLookupGating:
             live_lookups=True,
         )
         assert result.allowed
-        assert "Open-Meteo" in captured["hint"]
-        assert "70" in captured["hint"]
+        assert "Open-Meteo" in captured["user_turn"]
+        assert "70" in captured["user_turn"]
 
     @pytest.mark.asyncio
     async def test_stream_yields_lookup_card_when_enabled(self, monkeypatch):

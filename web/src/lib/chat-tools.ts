@@ -1,5 +1,6 @@
 export type MathTool = { type: "math"; expression: string; result: string; steps?: string[] };
 export type TimerTool = { type: "timer"; seconds: number; label: string };
+export type ClockTool = { type: "clock"; time: string; date: string; timezone?: string };
 export type DefineTool = { type: "define"; word: string; meaning: string; example?: string };
 export type QuizQuestion = { q: string; choices: string[]; answer: number; explain?: string };
 export type QuizTool = { type: "quiz"; title: string; questions: QuizQuestion[] };
@@ -12,9 +13,9 @@ export type LookupTool = {
   query: string;
   summary: string;
 };
-export type ChatTool = MathTool | TimerTool | DefineTool | QuizTool | FactsTool | LookupTool;
+export type ChatTool = MathTool | TimerTool | ClockTool | DefineTool | QuizTool | FactsTool | LookupTool;
 
-const TOOL_TYPES = new Set(["math", "timer", "define", "quiz", "facts", "lookup"]);
+const TOOL_TYPES = new Set(["math", "timer", "clock", "define", "quiz", "facts", "lookup"]);
 const FENCE_RE = /```homeward\s*(\{[\s\S]*?\})\s*```/gi;
 const INCOMPLETE_FENCE_RE = /```homeward[\s\S]*$/i;
 

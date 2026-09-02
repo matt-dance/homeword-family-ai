@@ -29,6 +29,7 @@ export interface Child {
   quiet_hours_days?: string | null;
   chat_available?: boolean;
   chat_unavailable_message?: string | null;
+  is_default?: boolean;
 }
 
 export interface ConversationStarter {
@@ -190,6 +191,7 @@ export const api = {
   presets: () => request<Preset[]>("/presets"),
   children: () => request<Child[]>("/children"),
   childrenPublic: () => request<Child[]>("/children/public"),
+  defaultProfile: () => request<Child>("/children/default"),
   createChild: (data: {
     name: string;
     age: number;
@@ -313,6 +315,46 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ cloud_enabled, openai_api_key }),
     }),
+  homeLocation: () =>
+    request<{
+      location: string | null;
+      label: string | null;
+      timezone: string | null;
+    }>("/settings/home-location"),
+  updateHomeLocation: (location: string | null) =>
+    request<{
+      ok: boolean;
+      location: string | null;
+      label: string | null;
+      timezone: string | null;
+    }>("/settings/home-location", {
+      method: "POST",
+      body: JSON.stringify({ location }),
+    }),
+  advancedSettings: () =>
+    request<{
+      default_profile_child_id: number | null;
+      classifier_enabled: boolean;
+      ai_tone: "warm" | "balanced" | "concise";
+      ai_verbosity: number;
+      children: Array<{ id: number; name: string; slug: string; has_pin: boolean }>;
+    }>("/settings/advanced"),
+  updateAdvancedSettings: (data: {
+    default_profile_child_id?: number | null;
+    classifier_enabled?: boolean;
+    ai_tone?: "warm" | "balanced" | "concise";
+    ai_verbosity?: number;
+  }) =>
+    request<{
+      ok: boolean;
+      default_profile_child_id: number | null;
+      classifier_enabled: boolean;
+      ai_tone: string;
+      ai_verbosity: number;
+    }>("/settings/advanced", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   ollamaStatus: () => request<OllamaStatus>("/ollama/status"),
   ollamaRecommendations: () => request<OllamaRecommendation>("/ollama/recommendations"),
   ollamaPull: (model: string) =>
@@ -343,12 +385,19 @@ export async function streamChat(
   sessionId?: number,
   onTools?: (tools: ChatTool[]) => void,
   signal?: AbortSignal,
+  quickChat?: boolean,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/chat/stream`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, child_id: childId, history, session_id: sessionId }),
+    body: JSON.stringify({
+      message,
+      child_id: childId,
+      history,
+      session_id: sessionId,
+      quick_chat: quickChat ?? false,
+    }),
     signal,
   });
 

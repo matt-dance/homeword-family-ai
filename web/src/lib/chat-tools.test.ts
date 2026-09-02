@@ -43,4 +43,14 @@ describe("extractChatTools", () => {
     const { tools } = extractChatTools("", [lookup]);
     expect(tools).toEqual([lookup]);
   });
+
+  it("accepts a clock card", () => {
+    const clock = {
+      type: "clock" as const,
+      time: "8:29 PM",
+      date: "Tuesday, September 1, 2026",
+      timezone: "MDT",
+    };
+    expect(asChatTool(clock)).toEqual(clock);
+  });
 });

@@ -4,10 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 43123 -H 0.0.0.0",
+    "dev:lan": "next dev -p 80 -H 0.0.0.0",
     "build": "next build",
     "start": "next start -p 43123",
+    "start:lan": "next start -p 80",
     "lint": "next lint",
-    "test:read-aloud": "vitest run src/lib/read-aloud.test.ts"
+    "test:read-aloud": "vitest run src/lib/read-aloud.test.ts",
+    "test:unit": "vitest run src/lib/local-host.test.ts src/lib/default-profile.test.ts src/lib/device-profile.test.ts"
   },
   "dependencies": {
     "next": "^15.1.0",

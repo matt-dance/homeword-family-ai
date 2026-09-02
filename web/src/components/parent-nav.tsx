@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { HomewardLogo } from "@/components/homeward-logo";
+import { KidChatLink } from "@/components/kid-chat-link";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import {
@@ -75,7 +76,7 @@ export function ParentNav({ onLogout }: ParentNavProps) {
 
         <div className="flex items-center gap-2">
           <ThemeToggle />
-          <Link href="/chat">
+          <KidChatLink>
             <Button
               variant="outline"
               size="sm"
@@ -84,7 +85,7 @@ export function ParentNav({ onLogout }: ParentNavProps) {
               <ExternalLink className="mr-1.5 h-4 w-4" />
               <span className="hidden sm:inline">Kid Chat</span>
             </Button>
-          </Link>
+          </KidChatLink>
           <Button
             variant="ghost"
             size="icon"
