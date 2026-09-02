@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    settings.resolved_secret_key()  # create the per-install signing key up front
     logger.info("Homeward gateway started on %s:%s", settings.host, settings.port)
     from homeward_gateway.ollama import service as ollama_service
 
