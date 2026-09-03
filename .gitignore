@@ -42,3 +42,6 @@ htmlcov/
 
 # Agent tools
 agent-tools/
+
+# Session / tool junk
+*.ses

@@ -175,7 +175,7 @@ export function OllamaSetup({
             Local AI
           </CardTitle>
           <CardDescription>
-            Homeward runs AI on your computer. Nothing goes to the cloud unless you turn that on later.
+            Homeward runs AI on your computer. Chat stays local.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

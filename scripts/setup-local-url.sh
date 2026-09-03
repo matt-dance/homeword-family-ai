@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Make homeward.local work on this computer AND for other devices on your Wi‑Fi.
+# Optional helper: map homeward.local on this computer via /etc/hosts.
+# Install does not run this. On this computer use http://localhost for setup
+# and the dashboard. Kids on Wi-Fi use http://homeward.local/chat (mDNS).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
