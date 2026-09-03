@@ -6,6 +6,7 @@ import { useVoiceChat } from "@/hooks/use-voice-chat";
 import { useReadAloud } from "@/hooks/use-read-aloud";
 import { VoiceListener } from "@/components/voice-listener";
 import { SpeakingIndicator } from "@/components/speaking-indicator";
+import { HomeworkCamera } from "@/components/homework-camera";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { ChatToolCards } from "@/components/chat-tools";
 import { ReplyChips } from "@/components/reply-chips";
@@ -86,6 +87,11 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
   const autoReadNextRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Voice conversation loop: swap these two hooks for useVoiceConversation({
+  //   onTranscript: handleVoiceTranscript,
+  // }). After the assistant stream finishes, call notifyAssistantDone(spoken)
+  // when conversationActive (instead of speakMessage). Mic tap while TTS is
+  // playing should call bargeIn(). See hooks/use-voice-conversation.ts.
   const {
     supported: readAloudSupported,
     error: readAloudError,
@@ -866,7 +872,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             </p>
           )}
 
-          <div className="flex items-center gap-2">
+          <div className="relative flex items-center gap-2">
             {voiceSupported && (
               <Button
                 type="button"
@@ -887,6 +893,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                 )}
               </Button>
             )}
+            <HomeworkCamera
+              childId={selectedChild.id}
+              enabled={Boolean(selectedChild.homework_mode)}
+              disabled={streaming || listening || transcribing || !sessionReady}
+              simpleMode={simpleMode}
+            />
             <Input
               placeholder={
                 displayName

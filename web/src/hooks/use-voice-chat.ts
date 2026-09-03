@@ -8,6 +8,9 @@ const SILENCE_THRESHOLD = 0.018;
 const SILENCE_DURATION_MS = 1300;
 const INITIAL_GRACE_MS = 700;
 const MIN_RECORD_BEFORE_STOP_MS = 500;
+const BARGE_IN_THRESHOLD = 0.055;
+const BARGE_IN_HOLD_MS = 350;
+const BARGE_IN_GRACE_MS = 500;
 
 function pickMimeType(): string | undefined {
   if (typeof MediaRecorder === "undefined") return undefined;
@@ -34,9 +37,10 @@ function measureRms(analyser: AnalyserNode, buffer: Uint8Array<ArrayBuffer>): nu
 export interface UseVoiceChatOptions {
   onTranscript: (text: string) => void;
   onListeningStart?: () => void;
+  onTranscriptEmpty?: () => void;
 }
 
-export function useVoiceChat({ onTranscript, onListeningStart }: UseVoiceChatOptions) {
+export function useVoiceChat({ onTranscript, onListeningStart, onTranscriptEmpty }: UseVoiceChatOptions) {
   const [listening, setListening] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
@@ -47,6 +51,7 @@ export function useVoiceChat({ onTranscript, onListeningStart }: UseVoiceChatOpt
 
   const onTranscriptRef = useRef(onTranscript);
   const onListeningStartRef = useRef(onListeningStart);
+  const onTranscriptEmptyRef = useRef(onTranscriptEmpty);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -57,6 +62,10 @@ export function useVoiceChat({ onTranscript, onListeningStart }: UseVoiceChatOpt
   const vadStateRef = useRef({ speechDetected: false, lastSpeechAt: 0, startedAt: 0 });
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const stopListeningRef = useRef<() => void>(() => undefined);
+  const bargeStreamRef = useRef<MediaStream | null>(null);
+  const bargeContextRef = useRef<AudioContext | null>(null);
+  const bargeFrameRef = useRef<number | null>(null);
+  const bargeCallbackRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     onListeningStartRef.current = onListeningStart;
@@ -65,6 +74,10 @@ export function useVoiceChat({ onTranscript, onListeningStart }: UseVoiceChatOpt
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
   }, [onTranscript]);
+
+  useEffect(() => {
+    onTranscriptEmptyRef.current = onTranscriptEmpty;
+  }, [onTranscriptEmpty]);
 
   useEffect(() => {
     const hasRecorder = typeof MediaRecorder !== "undefined";
@@ -231,8 +244,73 @@ export function useVoiceChat({ onTranscript, onListeningStart }: UseVoiceChatOpt
     vadFrameRef.current = requestAnimationFrame(tick);
   }, []);
 
+  const stopBargeInWatch = useCallback(() => {
+    if (bargeFrameRef.current) {
+      cancelAnimationFrame(bargeFrameRef.current);
+      bargeFrameRef.current = null;
+    }
+    bargeCallbackRef.current = null;
+    bargeStreamRef.current?.getTracks().forEach((track) => track.stop());
+    bargeStreamRef.current = null;
+    if (bargeContextRef.current) {
+      void bargeContextRef.current.close();
+      bargeContextRef.current = null;
+    }
+  }, []);
+
+  const startBargeInWatch = useCallback(
+    async (onSpeech: () => void) => {
+      stopBargeInWatch();
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) return;
+      bargeCallbackRef.current = onSpeech;
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true },
+        });
+        bargeStreamRef.current = stream;
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        bargeContextRef.current = audioContext;
+
+        const buffer = new Uint8Array(analyser.fftSize) as Uint8Array<ArrayBuffer>;
+        const startedAt = Date.now();
+        let speechStartedAt: number | null = null;
+
+        const tick = () => {
+          if (!bargeCallbackRef.current) return;
+          const rms = measureRms(analyser, buffer);
+          const now = Date.now();
+          if (now - startedAt < BARGE_IN_GRACE_MS) {
+            bargeFrameRef.current = requestAnimationFrame(tick);
+            return;
+          }
+          if (rms > BARGE_IN_THRESHOLD) {
+            if (speechStartedAt == null) speechStartedAt = now;
+            if (now - speechStartedAt >= BARGE_IN_HOLD_MS) {
+              const cb = bargeCallbackRef.current;
+              stopBargeInWatch();
+              cb?.();
+              return;
+            }
+          } else {
+            speechStartedAt = null;
+          }
+          bargeFrameRef.current = requestAnimationFrame(tick);
+        };
+        bargeFrameRef.current = requestAnimationFrame(tick);
+      } catch {
+        stopBargeInWatch();
+      }
+    },
+    [stopBargeInWatch],
+  );
+
   const startListening = useCallback(async () => {
     if (!voiceSupported || listening || transcribing) return;
+    stopBargeInWatch();
 
     onListeningStartRef.current?.();
     setSpeechError(null);
@@ -267,6 +345,7 @@ export function useVoiceChat({ onTranscript, onListeningStart }: UseVoiceChatOpt
         const blob = new Blob(recordedChunks, { type: mimeType });
         if (!blob.size) {
           setSpeechError("I didn't hear anything — tap the mic and speak clearly.");
+          onTranscriptEmptyRef.current?.();
           return;
         }
 
@@ -278,6 +357,7 @@ export function useVoiceChat({ onTranscript, onListeningStart }: UseVoiceChatOpt
             onTranscriptRef.current(result.text);
           } else {
             setSpeechError("Could not make out any words. Try again.");
+            onTranscriptEmptyRef.current?.();
           }
         } catch (e) {
           setSpeechError(
@@ -315,6 +395,7 @@ export function useVoiceChat({ onTranscript, onListeningStart }: UseVoiceChatOpt
     stopListening,
     startVad,
     startPreviewRecognition,
+    stopBargeInWatch,
   ]);
 
   const toggleListening = useCallback(() => {
@@ -327,10 +408,11 @@ export function useVoiceChat({ onTranscript, onListeningStart }: UseVoiceChatOpt
 
   useEffect(
     () => () => {
+      stopBargeInWatch();
       stopListening();
       cleanupStream();
     },
-    [stopListening, cleanupStream],
+    [stopListening, cleanupStream, stopBargeInWatch],
   );
 
   return {
@@ -342,5 +424,9 @@ export function useVoiceChat({ onTranscript, onListeningStart }: UseVoiceChatOpt
     interimTranscript,
     heardSpeech,
     toggleListening,
+    startListening,
+    stopListening,
+    startBargeInWatch,
+    stopBargeInWatch,
   };
 }

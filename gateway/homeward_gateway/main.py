@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from homeward_gateway.api.homework_routes import router as homework_router
 from homeward_gateway.api.routes import router
 from homeward_gateway.config import settings
 from homeward_gateway.db.database import init_db
@@ -98,6 +99,7 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api/v1")
+app.include_router(homework_router, prefix="/api/v1")
 
 
 def main():
