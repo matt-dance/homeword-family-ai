@@ -278,6 +278,42 @@ export const api = {
     request<{ available: boolean; ready: boolean; voice: string; message: string | null }>(
       "/chat/speak/status",
     ),
+  homeworkStatus: (childId: number) =>
+    request<{
+      homework_mode: boolean;
+      available: boolean;
+      ready: boolean;
+      model: string | null;
+      expected_model: string;
+      message: string | null;
+    }>(`/chat/homework/status?child_id=${childId}`),
+  homeworkHint: async (childId: number, blob: Blob, question?: string) => {
+    const form = new FormData();
+    const ext = blob.type.includes("jpeg") || blob.type.includes("jpg")
+      ? "jpg"
+      : blob.type.includes("webp")
+        ? "webp"
+        : "png";
+    form.append("image", blob, `worksheet.${ext}`);
+    form.append("child_id", String(childId));
+    if (question?.trim()) form.append("question", question.trim());
+    const res = await fetch(`${API_BASE}/chat/homework/hint`, {
+      method: "POST",
+      body: form,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const detail = err.detail;
+      throw new Error(typeof detail === "string" ? detail : "Could not get a homework hint");
+    }
+    return res.json() as Promise<{
+      hint: string;
+      vision_available: boolean;
+      model: string | null;
+      expected_model: string;
+    }>;
+  },
   speakText: async (text: string) => {
     const res = await fetch(`${API_BASE}/chat/speak`, {
       method: "POST",

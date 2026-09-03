@@ -30,7 +30,11 @@ export function useReadAloud() {
   }, []);
 
   const speakMessage = useCallback(
-    (messageKey: string, text: string) => {
+    (
+      messageKey: string,
+      text: string,
+      options?: { onStart?: () => void; onEnd?: () => void },
+    ) => {
       if (!text.trim()) return;
 
       setError(null);
@@ -44,11 +48,18 @@ export function useReadAloud() {
       setState({ messageKey, isSpeaking: false, isLoading: true });
 
       void controllerRef.current.speak(text, {
-        onStart: () => setState({ messageKey, isSpeaking: true, isLoading: false }),
-        onEnd: () => setState({ messageKey: null, isSpeaking: false, isLoading: false }),
+        onStart: () => {
+          setState({ messageKey, isSpeaking: true, isLoading: false });
+          options?.onStart?.();
+        },
+        onEnd: () => {
+          setState({ messageKey: null, isSpeaking: false, isLoading: false });
+          options?.onEnd?.();
+        },
         onError: (message) => {
           setError(message);
           setState({ messageKey: null, isSpeaking: false, isLoading: false });
+          options?.onEnd?.();
         },
       });
     },

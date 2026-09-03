@@ -8,6 +8,8 @@ describe("isParentOnlyApi", () => {
     expect(isParentOnlyApi("/api/v1/children/3/verify-pin", "POST")).toBe(false);
     expect(isParentOnlyApi("/api/v1/children/3/sessions/resume", "GET")).toBe(false);
     expect(isParentOnlyApi("/api/v1/chat", "POST")).toBe(false);
+    expect(isParentOnlyApi("/api/v1/chat/homework/status", "GET")).toBe(false);
+    expect(isParentOnlyApi("/api/v1/chat/homework/hint", "POST")).toBe(false);
     expect(isParentOnlyApi("/api/v1/setup/status", "GET")).toBe(false);
   });
 
