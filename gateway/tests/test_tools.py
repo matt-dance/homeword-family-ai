@@ -1,5 +1,7 @@
 from homeward_gateway.chat.tools import (
+    ask_parent_card,
     clock_tool_hint,
+    convert_units,
     current_clock_card,
     detect_intents,
     evaluate_math,
@@ -7,6 +9,7 @@ from homeward_gateway.chat.tools import (
     is_clock_question,
     parse_timer_seconds,
     run_local_tools,
+    tool_prompt_hint,
 )
 
 
@@ -42,6 +45,15 @@ def test_detect_intents():
     assert "facts" in detect_intents("3 facts about dogs")
     assert "timer" in detect_intents("Set a timer for 30 seconds")
     assert "clock" in detect_intents("What time is it?")
+    assert "story" in detect_intents("Tell me a short story about dragons")
+    assert "riddle" in detect_intents("Give me a riddle")
+    assert "riddle" in detect_intents("Let's play 20 questions")
+    assert "convert" in detect_intents("How many inches in 5 feet?")
+    assert "practice" in detect_intents("Practice times tables")
+    assert "practice" in detect_intents("Practice spelling words")
+    assert "howto" in detect_intents("How do I make pancakes?")
+    assert "howto" in detect_intents("Recipe for slime")
+    assert "quiz" in detect_intents("Quiz me on that")
 
 
 def test_clock_not_confused_with_timer():
@@ -83,3 +95,76 @@ def test_extract_model_tools_lookup():
     assert cards[0].type == "lookup"
     assert cards[0].data["source"] == "open-meteo"
     assert "homeward" not in cleaned
+
+
+def test_extract_model_tools_story_riddle_practice_howto():
+    text = (
+        '```homeward\n{"type":"story","title":"Moon hike",'
+        '"pages":[{"text":"You land.","choices":[{"label":"Wave","message":"I wave."}]}]}\n```\n'
+        '```homeward\n{"type":"riddle","riddle":"What has hands but no arms?","answer":"A clock"}\n```\n'
+        '```homeward\n{"type":"practice","title":"Twos","kind":"times",'
+        '"items":[{"prompt":"2 × 3","answer":"6"}]}\n```\n'
+        '```homeward\n{"type":"howto","title":"Toast","steps":["Get bread","Toast it"]}\n```'
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert [card.type for card in cards] == ["story", "riddle", "practice", "howto"]
+    assert cards[0].data["pages"][0]["text"] == "You land."
+    assert "homeward" not in cleaned
+
+
+def test_convert_how_many_x_in_y():
+    result = convert_units("How many inches in 5 feet?")
+    assert result is not None
+    assert result["from_amount"] == "5"
+    assert result["from_unit"] == "feet"
+    assert result["to_unit"] == "inches"
+    assert result["result"] == "60"
+
+
+def test_convert_how_many_in_a_unit():
+    result = convert_units("How many cups in a gallon?")
+    assert result is not None
+    assert result["from_amount"] == "1"
+    assert float(result["result"]) == 16
+
+
+def test_convert_explicit_to():
+    result = convert_units("Convert 10 miles to km")
+    assert result is not None
+    assert result["from_unit"] == "miles"
+    assert result["to_unit"] == "km"
+    assert abs(float(result["result"]) - 16.0934) < 0.02
+
+
+def test_convert_celsius_to_fahrenheit():
+    result = convert_units("Convert 0 celsius to fahrenheit")
+    assert result is not None
+    assert result["result"] == "32"
+
+
+def test_convert_rejects_unknown_or_mismatch():
+    assert convert_units("How many inches in 5 minutes?") is None
+    assert convert_units("What time is it?") is None
+
+
+def test_run_local_convert():
+    cards = run_local_tools("How many cm in 2 meters?")
+    assert any(card.type == "convert" and card.data["result"] == "200" for card in cards)
+
+
+def test_ask_parent_card_is_friendly():
+    card = ask_parent_card()
+    assert card.type == "ask_parent"
+    assert card.data["title"]
+    assert card.data["message"]
+
+
+def test_tool_prompt_hint_covers_new_cards():
+    hint = tool_prompt_hint(["story", "quiz", "riddle", "practice", "howto", "convert"])
+    assert "story" in hint
+    assert "pages" in hint
+    assert "quiz" in hint
+    assert "riddle" in hint
+    assert "practice" in hint
+    assert "howto" in hint
+    assert "convert" in hint or "conversion" in hint.lower()

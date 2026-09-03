@@ -803,33 +803,23 @@ async def resume_child_session(
         select(ChatSession)
         .where(ChatSession.child_id == child_id)
         .order_by(ChatSession.started_at.desc())
-        .limit(1)
+        .limit(20)
     )
-    chat_session = session_result.scalar_one_or_none()
-    if not chat_session:
-        raise HTTPException(status_code=404, detail="No resumable session")
+    for chat_session in session_result.scalars().all():
+        logs_result = await session.execute(
+            select(ConversationLog)
+            .where(ConversationLog.session_id == chat_session.id)
+            .order_by(ConversationLog.created_at.asc())
+        )
+        messages = _resume_messages(list(logs_result.scalars().all()))
+        if messages:
+            return {
+                "session_id": chat_session.id,
+                "messages": messages,
+                "preview": chat_session.preview,
+            }
 
-    logs_result = await session.execute(
-        select(ConversationLog)
-        .where(ConversationLog.session_id == chat_session.id)
-        .order_by(ConversationLog.created_at.asc())
-    )
-    logs = list(logs_result.scalars().all())
-    if not logs:
-        raise HTTPException(status_code=404, detail="No resumable session")
-
-    messages: list[dict] = []
-    for log in logs:
-        if log.blocked and log.direction == "input":
-            continue
-        role = "user" if log.direction == "input" else "assistant"
-        messages.append({"role": role, "content": log.content, "blocked": log.blocked})
-
-    return {
-        "session_id": chat_session.id,
-        "messages": messages,
-        "preview": chat_session.preview,
-    }
+    raise HTTPException(status_code=404, detail="No resumable session")
 
 
 @router.post("/children/{child_id}/verify-pin")
@@ -1138,6 +1128,19 @@ def user_facing_message(stage: str | None) -> str:
     return BLOCKED_MESSAGE
 
 
+def _resume_messages(logs: list[ConversationLog]) -> list[dict]:
+    messages: list[dict] = []
+    for log in logs:
+        if log.blocked and log.direction == "input":
+            continue
+        content = (log.content or "").strip()
+        if not content:
+            continue
+        role = "user" if log.direction == "input" else "assistant"
+        messages.append({"role": role, "content": log.content, "blocked": log.blocked})
+    return messages
+
+
 def _ensure_chat_available(child: ChildProfile) -> None:
     available, message = is_chat_available(
         enabled=child.quiet_hours_enabled,
@@ -1196,6 +1199,7 @@ async def chat(
             "blocked": True,
             "message": user_facing_message(result.stage),
             "session_id": chat_session_id,
+            "tools": result.tools or [],
         }
 
     await _log_message(session, child.id, "input", body.message, chat_session_id=chat_session_id)
@@ -1285,6 +1289,7 @@ async def chat_stream(
                         payload = json.dumps({
                             "type": "blocked",
                             "message": user_facing_message(item.stage),
+                            "tools": item.tools or [],
                         })
                         yield f"data: {payload}\n\n"
                         return

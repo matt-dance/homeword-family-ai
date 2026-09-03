@@ -160,6 +160,8 @@ class TestChat:
         data = resp.json()
         assert data["blocked"] is True
         assert "can't help" in data["message"].lower() or "fun" in data["message"].lower()
+        assert data.get("tools")
+        assert data["tools"][0]["type"] == "ask_parent"
 
     @pytest.mark.asyncio
     async def test_chat_blocks_dangerous(self, client: AsyncClient):

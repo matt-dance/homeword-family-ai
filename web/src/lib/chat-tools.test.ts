@@ -52,4 +52,42 @@ describe("extractChatTools", () => {
     };
     expect(asChatTool(clock)?.type).toBe("clock");
   });
+
+  it("accepts story, riddle, convert, practice, ask_parent, and howto cards", () => {
+    const story = {
+      type: "story",
+      title: "Moon hike",
+      pages: [{ text: "You land.", choices: [{ label: "Wave", message: "I wave." }] }],
+    };
+    const riddle = { type: "riddle", riddle: "What has hands but no arms?", answer: "A clock" };
+    const convert = {
+      type: "convert",
+      from_amount: "5",
+      from_unit: "feet",
+      to_unit: "inches",
+      result: "60",
+    };
+    const practice = {
+      type: "practice",
+      title: "Twos",
+      kind: "times",
+      items: [{ prompt: "2 × 3", answer: "6" }],
+    };
+    const askParent = { type: "ask_parent", title: "Ask a grown-up", message: "Let's ask a parent." };
+    const howto = { type: "howto", title: "Toast", steps: ["Get bread", "Toast it"] };
+
+    expect(asChatTool(story)?.type).toBe("story");
+    expect(asChatTool(riddle)?.type).toBe("riddle");
+    expect(asChatTool(convert)?.type).toBe("convert");
+    expect(asChatTool(practice)?.type).toBe("practice");
+    expect(asChatTool(askParent)?.type).toBe("ask_parent");
+    expect(asChatTool(howto)?.type).toBe("howto");
+
+    const fenced = [
+      '```homeward',
+      JSON.stringify(story),
+      "```",
+    ].join("\n");
+    expect(extractChatTools(fenced).tools[0]).toEqual(story);
+  });
 });
