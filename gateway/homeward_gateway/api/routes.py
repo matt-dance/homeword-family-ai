@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Annotated, AsyncIterator
 
@@ -50,12 +51,18 @@ from homeward_gateway.voice.transcribe import (
 )
 from homeward_gateway.config import settings
 from homeward_gateway.db.database import (
+    MEMORY_LABEL_MAX,
+    MEMORY_MAX_ITEMS,
+    MEMORY_VALUE_MAX,
     BlockedAttempt,
     ChatSession,
     ChildProfile,
     ConversationLog,
     ParentAccount,
+    dump_child_memory,
     get_session,
+    new_memory_id,
+    parse_child_memory,
 )
 from homeward_gateway.dashboard.sessions import find_legacy_session, group_legacy_logs
 from homeward_gateway.home.location import home_context_from_parent
@@ -176,6 +183,16 @@ class AdvancedSettingsRequest(BaseModel):
     ai_verbosity: int | None = Field(default=None, ge=1, le=5)
 
 
+class MemoryItemCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=500)
+    value: str = Field(min_length=1, max_length=500)
+
+
+class MemoryItemUpdate(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=500)
+    value: str | None = Field(default=None, min_length=1, max_length=500)
+
+
 # --- Dependencies ---
 
 
@@ -198,6 +215,49 @@ def _rate_key(request: Request, scope: str) -> str:
 def _require_child_access(request: Request, child: ChildProfile) -> None:
     if not has_child_access(request, child):
         raise HTTPException(status_code=403, detail="PIN required")
+
+
+_UNSAFE_MEMORY = re.compile(
+    r"\b(password|passwd|ssn|social security|credit card|passport|bank account|driver'?s license)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_memory_field(text: str, max_len: int) -> str:
+    cleaned = " ".join(text.split())
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Label and value are required")
+    if len(cleaned) > max_len:
+        raise HTTPException(
+            status_code=400, detail=f"Must be {max_len} characters or fewer"
+        )
+    if _UNSAFE_MEMORY.search(cleaned):
+        raise HTTPException(
+            status_code=400,
+            detail="Don't save passwords, IDs, or other private details",
+        )
+    return cleaned
+
+
+def _prompt_memory_items(child: ChildProfile, *, quick_chat: bool) -> list[dict[str, str]]:
+    if quick_chat:
+        return []
+    return parse_child_memory(child.memory_items)
+
+
+async def _parent_child(
+    session: AsyncSession, parent: ParentAccount, child_id: int
+) -> ChildProfile:
+    result = await session.execute(
+        select(ChildProfile).where(
+            ChildProfile.id == child_id,
+            ChildProfile.parent_id == parent.id,
+        )
+    )
+    child = result.scalar_one_or_none()
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+    return child
 
 
 # --- Health ---
@@ -619,6 +679,92 @@ async def update_child(
     return _serialize_child(child)
 
 
+@router.get("/children/{child_id}/memory")
+async def list_child_memory(
+    child_id: int,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    child = await _parent_child(session, parent, child_id)
+    return {"items": parse_child_memory(child.memory_items)}
+
+
+@router.post("/children/{child_id}/memory")
+async def add_child_memory(
+    child_id: int,
+    body: MemoryItemCreate,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    child = await _parent_child(session, parent, child_id)
+    items = parse_child_memory(child.memory_items)
+    if len(items) >= MEMORY_MAX_ITEMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {MEMORY_MAX_ITEMS} parent-approved notes per child",
+        )
+    item = {
+        "id": new_memory_id(),
+        "label": _normalize_memory_field(body.label, MEMORY_LABEL_MAX),
+        "value": _normalize_memory_field(body.value, MEMORY_VALUE_MAX),
+    }
+    items.append(item)
+    child.memory_items = dump_child_memory(items)
+    await session.commit()
+    return item
+
+
+@router.patch("/children/{child_id}/memory/{item_id}")
+async def update_child_memory(
+    child_id: int,
+    item_id: str,
+    body: MemoryItemUpdate,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    child = await _parent_child(session, parent, child_id)
+    items = parse_child_memory(child.memory_items)
+    target = next((item for item in items if item["id"] == item_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Memory note not found")
+    if body.label is not None:
+        target["label"] = _normalize_memory_field(body.label, MEMORY_LABEL_MAX)
+    if body.value is not None:
+        target["value"] = _normalize_memory_field(body.value, MEMORY_VALUE_MAX)
+    child.memory_items = dump_child_memory(items)
+    await session.commit()
+    return target
+
+
+@router.delete("/children/{child_id}/memory/{item_id}")
+async def delete_child_memory(
+    child_id: int,
+    item_id: str,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    child = await _parent_child(session, parent, child_id)
+    items = parse_child_memory(child.memory_items)
+    next_items = [item for item in items if item["id"] != item_id]
+    if len(next_items) == len(items):
+        raise HTTPException(status_code=404, detail="Memory note not found")
+    child.memory_items = dump_child_memory(next_items)
+    await session.commit()
+    return {"ok": True}
+
+
+@router.delete("/children/{child_id}/memory")
+async def wipe_child_memory(
+    child_id: int,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    child = await _parent_child(session, parent, child_id)
+    child.memory_items = dump_child_memory([])
+    await session.commit()
+    return {"ok": True}
+
+
 @router.get("/children/public")
 async def list_children_public(session: Annotated[AsyncSession, Depends(get_session)]):
     """Public endpoint for kid profile picker — no auth required."""
@@ -1037,6 +1183,7 @@ async def chat(
         ai_tone=ai_prefs["ai_tone"],
         ai_verbosity=ai_prefs["ai_verbosity"],
         quick_chat=body.quick_chat,
+        memory_items=_prompt_memory_items(child, quick_chat=body.quick_chat),
     )
 
     if not result.allowed:
@@ -1118,6 +1265,7 @@ async def chat_stream(
                 ai_tone=ai_prefs["ai_tone"],
                 ai_verbosity=ai_prefs["ai_verbosity"],
                 quick_chat=body.quick_chat,
+                memory_items=_prompt_memory_items(child, quick_chat=body.quick_chat),
             ):
                 if await request.is_disconnected():
                     await persist_turn()

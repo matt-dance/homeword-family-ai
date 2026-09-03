@@ -240,6 +240,7 @@ async def process_chat(
     ai_tone: str = "balanced",
     ai_verbosity: int = 3,
     quick_chat: bool = False,
+    memory_items: list[dict] | None = None,
 ) -> PipelineResult:
     """Full pipeline: filter input → LLM → filter output."""
     input_result = await filter_input(
@@ -272,6 +273,7 @@ async def process_chat(
             ai_tone=ai_tone,
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
+            memory_items=memory_items,
         )
     except Exception:
         return PipelineResult(allowed=False, block_reason="llm error", stage="llm")
@@ -301,6 +303,7 @@ async def process_chat_stream(
     ai_tone: str = "balanced",
     ai_verbosity: int = 3,
     quick_chat: bool = False,
+    memory_items: list[dict] | None = None,
 ) -> AsyncIterator[str | PipelineResult | ToolEvent]:
     """Stream pipeline: filter input first, then stream LLM, filter output at end."""
     input_result = await filter_input(
@@ -342,6 +345,7 @@ async def process_chat_stream(
             ai_tone=ai_tone,
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
+            memory_items=memory_items,
         ):
             collected.append(token)
             yield token

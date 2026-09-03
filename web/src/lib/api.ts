@@ -33,6 +33,12 @@ export interface Child {
   is_default?: boolean;
 }
 
+export interface ChildMemoryItem {
+  id: string;
+  label: string;
+  value: string;
+}
+
 export interface ConversationStarter {
   label: string;
   message: string;
@@ -234,6 +240,28 @@ export const api = {
     }),
   conversationStarters: (childId: number) =>
     request<ConversationStarter[]>(`/children/${childId}/starters`),
+  childMemory: (childId: number) =>
+    request<{ items: ChildMemoryItem[] }>(`/children/${childId}/memory`),
+  addChildMemory: (childId: number, data: { label: string; value: string }) =>
+    request<ChildMemoryItem>(`/children/${childId}/memory`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateChildMemory: (
+    childId: number,
+    itemId: string,
+    data: Partial<{ label: string; value: string }>,
+  ) =>
+    request<ChildMemoryItem>(`/children/${childId}/memory/${itemId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteChildMemory: (childId: number, itemId: string) =>
+    request<{ ok: boolean }>(`/children/${childId}/memory/${itemId}`, {
+      method: "DELETE",
+    }),
+  wipeChildMemory: (childId: number) =>
+    request<{ ok: boolean }>(`/children/${childId}/memory`, { method: "DELETE" }),
   resumeSession: (childId: number) =>
     request<ResumableSession>(`/children/${childId}/sessions/resume`),
   verifyPin: (childId: number, pin: string) =>

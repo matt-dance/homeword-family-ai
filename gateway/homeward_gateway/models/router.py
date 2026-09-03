@@ -35,6 +35,7 @@ async def generate_response(
     ai_tone: str = "balanced",
     ai_verbosity: int = 3,
     quick_chat: bool = False,
+    memory_items: list[dict] | None = None,
 ) -> str:
     """Generate a non-streaming LLM response via Ollama (default) or cloud if enabled."""
     system = build_system_prompt(
@@ -44,6 +45,7 @@ async def generate_response(
         ai_tone=ai_tone,
         ai_verbosity=ai_verbosity,
         quick_chat=quick_chat,
+        memory_items=memory_items,
     )
     full_messages = [{"role": "system", "content": system}] + messages
 
@@ -83,6 +85,7 @@ async def stream_response(
     ai_tone: str = "balanced",
     ai_verbosity: int = 3,
     quick_chat: bool = False,
+    memory_items: list[dict] | None = None,
 ) -> AsyncIterator[str]:
     """Stream LLM response tokens."""
     system = build_system_prompt(
@@ -92,6 +95,7 @@ async def stream_response(
         ai_tone=ai_tone,
         ai_verbosity=ai_verbosity,
         quick_chat=quick_chat,
+        memory_items=memory_items,
     )
     full_messages = [{"role": "system", "content": system}] + messages
 

@@ -1,5 +1,7 @@
 """Database models and session management."""
 
+import json
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
@@ -7,6 +9,42 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from homeward_gateway.config import settings
+
+MEMORY_MAX_ITEMS = 20
+MEMORY_LABEL_MAX = 40
+MEMORY_VALUE_MAX = 160
+
+
+def parse_child_memory(raw: str | None) -> list[dict[str, str]]:
+    """Return parent-saved memory items. Never invents missing facts."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    items: list[dict[str, str]] = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        item_id = str(entry.get("id") or "").strip()
+        label = str(entry.get("label") or "").strip()
+        value = str(entry.get("value") or "").strip()
+        if item_id and label and value:
+            items.append({"id": item_id, "label": label, "value": value})
+        if len(items) >= MEMORY_MAX_ITEMS:
+            break
+    return items
+
+
+def dump_child_memory(items: list[dict[str, str]]) -> str:
+    return json.dumps(items, ensure_ascii=False)
+
+
+def new_memory_id() -> str:
+    return uuid.uuid4().hex[:12]
 
 
 class Base(DeclarativeBase):
@@ -55,6 +93,7 @@ class ChildProfile(Base):
     quiet_hours_end: Mapped[str | None] = mapped_column(String(5), nullable=True)
     quiet_hours_days: Mapped[str | None] = mapped_column(String(20), nullable=True)
     slug: Mapped[str] = mapped_column(String(100), nullable=False, default="child")
+    memory_items: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -171,6 +210,7 @@ def _migrate_child_columns(connection) -> None:
         ("quiet_hours_end", "VARCHAR(5)"),
         ("quiet_hours_days", "VARCHAR(20)"),
         ("slug", "VARCHAR(100)"),
+        ("memory_items", "TEXT"),
     ]
     for name, col_type in additions:
         if name not in columns:

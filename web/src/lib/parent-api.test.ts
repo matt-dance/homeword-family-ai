@@ -18,6 +18,10 @@ describe("isParentOnlyApi", () => {
     expect(isParentOnlyApi("/api/v1/ollama/recommendations", "GET")).toBe(true);
     expect(isParentOnlyApi("/api/v1/ollama/pull", "POST")).toBe(true);
     expect(isParentOnlyApi("/api/v1/children", "GET")).toBe(true);
+    expect(isParentOnlyApi("/api/v1/children/3/memory", "GET")).toBe(true);
+    expect(isParentOnlyApi("/api/v1/children/3/memory", "POST")).toBe(true);
+    expect(isParentOnlyApi("/api/v1/children/3/memory/abc123", "PATCH")).toBe(true);
+    expect(isParentOnlyApi("/api/v1/children/3/memory/abc123", "DELETE")).toBe(true);
     expect(isParentOnlyApi("/api/v1/auth/me", "GET")).toBe(true);
     expect(isParentOnlyApi("/api/v1/auth/logout", "POST")).toBe(true);
     expect(isParentOnlyApi("/api/v1/setup", "POST")).toBe(true);
