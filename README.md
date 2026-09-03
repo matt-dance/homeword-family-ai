@@ -1,18 +1,28 @@
 # Homeward
 
-**Homeward** is an open-source, local-first family AI safety gateway. It sits between your children and AI models, filtering every message in and out with a fail-closed safety pipeline. Parents get a simple setup wizard, age-based presets, and a dashboard to review conversations — no YAML required for basic use.
+**Homeward** is an open-source, local-first family AI gateway. It sits between your children and a local AI model and applies a parent-configured filter on messages in and out. Parents get a simple setup wizard, age-based presets, and a dashboard to review conversations — no YAML required for basic use.
+
+Homeward helps parents. It is not a babysitter, not fail-closed, and not a guarantee of “safe AI.”
 
 ## Design goals
 
 - **Super easy setup** — no terminal, no technical knowledge for day-to-day use
 - **Local AI included** — Ollama runs automatically (Docker today; native `.dmg` / `.exe` installer later)
 - **Simple model picking** — choose a model in the setup wizard and click Download
-- **Privacy first** — everything stays on your computer unless a parent enables cloud AI
+- **Privacy first** — chat and settings stay on your computer
+
+## What this is (and isn't)
+
+Homeward’s filter is a **local helper for parents**. It can miss things. Kids can still type or hear things you would not want. Review conversations. Do not treat this as a substitute for supervision.
+
+If you look at the internals, messages can pass through local rules, an optional classifier, a policy, the model, and an output check. None of those steps is complete: rules can be bypassed, the classifier can be wrong, and the pipeline is **not** fail-closed.
+
+See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## Features (Phase 1)
 
-- **Local AI first** — Ollama is the default; cloud/BYOK is hidden until a parent enables it
-- **Fail-closed safety pipeline** — normalize → rules → classifier → policy → LLM → output filter
+- **Local AI first** — Ollama is the default
+- **Parent-configured filter** — local rules, optional classifier, policy, and an output check (see the disclaimer above)
 - **Age presets** — Young Explorer (5–8), Curious Explorer (9–12), Teen Guided (13–17)
 - **Parent dashboard** — conversation sessions, blocked attempts, model management
 - **Kid chat UI** — simple streaming chat with profile picker and friendly blocked messages
@@ -25,11 +35,9 @@
 ### Get the code
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USERNAME/homeword-family-ai.git
+git clone https://github.com/matt-dance/homeword-family-ai.git
 cd homeword-family-ai
 ```
-
-Replace `YOUR_GITHUB_USERNAME` with your GitHub account after you create or clone the repo.
 
 ### Mac / Linux
 
@@ -43,26 +51,20 @@ Replace `YOUR_GITHUB_USERNAME` with your GitHub account after you create or clon
 .\scripts\install.ps1
 ```
 
-Then open **http://homeward.local** from any device on your Wi‑Fi.
+Then, on **this computer**, open **http://localhost** to finish setup and use the parent dashboard.
 
-### Local URL (`homeward.local`)
+Kids on the same Wi‑Fi open **http://homeward.local/chat**.
 
-Run once on the Homeward computer:
+### Who uses which URL
 
-```bash
-./scripts/setup-local-url.sh
-```
-
-This adds `127.0.0.1 homeward.local` to `/etc/hosts` so the parent dashboard on this computer resolves over loopback (the dashboard is host-only).
-
-On your network, the gateway broadcasts `homeward.local` via mDNS automatically when it starts, so phones and tablets on the same Wi‑Fi can open kid chat. (Docker runs a dedicated mDNS sidecar.)
+Install does **not** edit `/etc/hosts`. On this computer, use `localhost` for setup and the dashboard. Other devices resolve `homeward.local` via mDNS when the gateway is running (Docker includes an mDNS sidecar).
 
 | Who | URL | What works |
 |-----|-----|------------|
-| Parent on the Homeward computer | http://homeward.local | Dashboard, settings, kid chat |
+| Parent on the Homeward computer | http://localhost | Setup, dashboard, settings, kid chat |
 | Kids on other devices (same Wi‑Fi) | http://homeward.local/chat | Kid chat only |
 
-mDNS for other devices starts with the gateway — no separate step needed.
+Native development uses `http://localhost:43123` instead of port 80. mDNS for other devices starts with the gateway — no separate step needed.
 
 ### How access is protected
 
@@ -70,8 +72,6 @@ mDNS for other devices starts with the gateway — no separate step needed.
 - **Child PINs are enforced by the server.** A correct PIN gives that browser a signed, `HttpOnly` cookie for that child; chat, sessions and "continue last chat" refuse without it. PINs are stored hashed.
 - **Ports.** Only the web app (port 80) is reachable from the LAN. In Docker the gateway (8000) and Ollama (11434) are bound to `127.0.0.1` so kids' devices cannot bypass Homeward's filters by talking to the model directly. For native dev, run the gateway with `--host 127.0.0.1` for the same effect.
 - **Chat history is server-side.** The model only sees prior turns from Homeward's own log, never text supplied by the client.
-
-You can still use `http://localhost` (Docker) or `http://localhost:43123` (native dev) on the host if you prefer.
 
 That's it — Homeward starts **Ollama automatically** and begins downloading a recommended AI model on first launch.
 

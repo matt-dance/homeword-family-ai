@@ -15,8 +15,8 @@ docker compose up -d --build
 
 echo ""
 echo "Homeward is starting up."
-echo "Open http://homeward.local (mDNS starts automatically with Docker)."
-echo "Run ./scripts/setup-local-url.sh once if homeward.local does not work on this Mac."
+echo "On this computer, open http://localhost to finish setup and use the dashboard."
+echo "Kids on the same Wi-Fi can open http://homeward.local/chat"
 echo ""
 echo "On first launch, the setup wizard will help you:"
 echo "  1. Create a parent password"

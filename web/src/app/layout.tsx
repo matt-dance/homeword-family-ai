@@ -3,8 +3,8 @@ import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Homeward — Family AI Safety",
-  description: "Local-first AI safety gateway for families. Keep kids safe with age-appropriate AI chat.",
+  title: "Homeward — Local family AI",
+  description: "Local-first family AI gateway. A parent-configured filter for at-home chat — not a babysitter.",
 };
 
 const THEME_SCRIPT = `

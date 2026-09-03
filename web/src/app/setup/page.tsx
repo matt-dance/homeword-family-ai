@@ -303,7 +303,7 @@ export default function SetupPage() {
           <p className="text-sm text-muted-foreground max-w-md mx-auto">
             {step === "login" || step === "forgot"
               ? "Sign in to manage safety settings and review conversations."
-              : "Set up your family\u2019s local AI safety gateway in just a few minutes."}
+              : "Set up your family\u2019s local AI gateway in just a few minutes."}
           </p>
         </div>
 
@@ -675,7 +675,7 @@ export default function SetupPage() {
               </div>
               <CardTitle className="text-xl font-bold">You&apos;re all set!</CardTitle>
               <CardDescription>
-                Homeward is fully configured. Your kids can start chatting safely, and you can review conversations from the parent dashboard.
+                Homeward is fully configured. Your kids can start chatting, and you can review conversations from the parent dashboard.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
@@ -701,11 +701,13 @@ export default function SetupPage() {
                 <p className="font-semibold text-foreground">
                   Kids can chat from phones and tablets on your Wi‑Fi at{" "}
                   <code className="text-primary font-mono bg-primary/10 px-1.5 py-0.5 rounded">
-                    {DEFAULT_HOMEWARD_URL}
+                    {DEFAULT_HOMEWARD_URL}/chat
                   </code>
                 </p>
                 <p className="text-muted-foreground">
-                  The Parent Dashboard only opens on this computer.
+                  On this computer, use{" "}
+                  <code className="font-mono">http://localhost</code> for setup and the
+                  parent dashboard.
                 </p>
               </div>
               {error && (
