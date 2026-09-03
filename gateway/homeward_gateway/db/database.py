@@ -49,6 +49,7 @@ class ChildProfile(Base):
     pin: Mapped[str | None] = mapped_column(String(255), nullable=True)
     homework_mode: Mapped[bool] = mapped_column(Boolean, default=False)
     live_lookups: Mapped[bool] = mapped_column(Boolean, default=False)
+    voice_gender: Mapped[str] = mapped_column(String(10), default="female")
     allow_resume: Mapped[bool] = mapped_column(Boolean, default=True)
     quiet_hours_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     quiet_hours_start: Mapped[str | None] = mapped_column(String(5), nullable=True)
@@ -165,6 +166,7 @@ def _migrate_child_columns(connection) -> None:
     additions = [
         ("homework_mode", "BOOLEAN DEFAULT 0"),
         ("live_lookups", "BOOLEAN DEFAULT 0"),
+        ("voice_gender", "VARCHAR(10) DEFAULT 'female'"),
         ("allow_resume", "BOOLEAN DEFAULT 1"),
         ("quiet_hours_enabled", "BOOLEAN DEFAULT 0"),
         ("quiet_hours_start", "VARCHAR(5)"),

@@ -82,7 +82,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     speakMessage,
     stop: stopReadAloud,
     isSpeakingMessage,
-  } = useReadAloud();
+  } = useReadAloud(selectedChild.voice_gender);
 
   const handleVoiceTranscript = useCallback((text: string) => {
     autoReadNextRef.current = true;

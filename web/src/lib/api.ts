@@ -23,6 +23,7 @@ export interface Child {
   has_pin?: boolean;
   homework_mode?: boolean;
   live_lookups?: boolean;
+  voice_gender?: "female" | "male";
   allow_resume?: boolean;
   quiet_hours_enabled?: boolean;
   quiet_hours_start?: string | null;
@@ -205,6 +206,7 @@ export const api = {
     pin?: string;
     homework_mode?: boolean;
     live_lookups?: boolean;
+    voice_gender?: "female" | "male";
   }) =>
     request<Child>("/children", {
       method: "POST",
@@ -221,6 +223,7 @@ export const api = {
       clear_pin: boolean;
       homework_mode: boolean;
       live_lookups: boolean;
+      voice_gender: "female" | "male";
       allow_resume: boolean;
       quiet_hours_enabled: boolean;
       quiet_hours_start: string;
@@ -278,11 +281,11 @@ export const api = {
     request<{ available: boolean; ready: boolean; voice: string; message: string | null }>(
       "/chat/speak/status",
     ),
-  speakText: async (text: string) => {
+  speakText: async (text: string, voiceGender?: "female" | "male") => {
     const res = await fetch(`${API_BASE}/chat/speak`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, voice_gender: voiceGender }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));

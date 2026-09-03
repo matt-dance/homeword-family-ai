@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Annotated, AsyncIterator
+from typing import Annotated, AsyncIterator, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
@@ -37,10 +37,10 @@ from homeward_gateway.chat.starters import get_conversation_starters
 from homeward_gateway.chat.summary import summarize_session
 from homeward_gateway.voice.speak import (
     get_speak_status,
-    piper_available,
     run_speak_self_test,
     sanitize_for_speech,
     synthesize_speech_payload,
+    tts_available,
 )
 from homeward_gateway.voice.transcribe import (
     get_whisper_status,
@@ -106,6 +106,7 @@ class ChildCreate(BaseModel):
     pin: str | None = Field(default=None, pattern=PIN_PATTERN)
     homework_mode: bool = False
     live_lookups: bool = False
+    voice_gender: Literal["female", "male"] = "female"
 
 
 class ChildUpdate(BaseModel):
@@ -122,6 +123,7 @@ class ChildUpdate(BaseModel):
     quiet_hours_start: str | None = None
     quiet_hours_end: str | None = None
     quiet_hours_days: str | None = None
+    voice_gender: Literal["female", "male"] | None = None
 
 
 class ChatRequest(BaseModel):
@@ -149,6 +151,7 @@ class SessionCreateRequest(BaseModel):
 
 class SpeakRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
+    voice_gender: Literal["female", "male"] | None = None
 
 
 class CloudSettingsRequest(BaseModel):
@@ -440,6 +443,7 @@ def _serialize_child(c: ChildProfile) -> dict:
         "has_pin": c.pin is not None,
         "homework_mode": c.homework_mode,
         "live_lookups": c.live_lookups,
+        "voice_gender": c.voice_gender or "female",
         "allow_resume": c.allow_resume,
         "quiet_hours_enabled": c.quiet_hours_enabled,
         "quiet_hours_start": c.quiet_hours_start,
@@ -467,6 +471,7 @@ def _serialize_child_public(c: ChildProfile, *, is_default: bool = False) -> dic
         "chat_unavailable_message": unavailable_message,
         "homework_mode": c.homework_mode,
         "live_lookups": c.live_lookups,
+        "voice_gender": c.voice_gender or "female",
         "is_default": is_default,
     }
 
@@ -550,6 +555,7 @@ async def create_child(
         pin=hash_pin(body.pin) if body.pin else None,
         homework_mode=body.homework_mode,
         live_lookups=body.live_lookups,
+        voice_gender=body.voice_gender,
     )
     session.add(child)
     await session.flush()
@@ -600,6 +606,8 @@ async def update_child(
         child.homework_mode = body.homework_mode
     if body.live_lookups is not None:
         child.live_lookups = body.live_lookups
+    if body.voice_gender is not None:
+        child.voice_gender = body.voice_gender
     if body.allow_resume is not None:
         child.allow_resume = body.allow_resume
     if body.quiet_hours_enabled is not None:
@@ -792,7 +800,7 @@ async def speak_self_test(request: Request):
 
 @router.post("/chat/speak")
 async def speak_text(body: SpeakRequest, request: Request):
-    if not piper_available():
+    if not tts_available():
         raise HTTPException(
             status_code=503,
             detail="Local read-aloud is not available on this Homeward server.",
@@ -808,7 +816,11 @@ async def speak_text(body: SpeakRequest, request: Request):
         raise HTTPException(status_code=400, detail="Text is too long to read aloud")
 
     try:
-        payload = await asyncio.to_thread(synthesize_speech_payload, cleaned)
+        payload = await asyncio.to_thread(
+            synthesize_speech_payload,
+            cleaned,
+            voice_gender=body.voice_gender,
+        )
     except ValueError as exc:
         record_attempt(rate_key)
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { OllamaSetup } from "@/components/ollama-setup";
 import { LiveLookupsToggle } from "@/components/live-lookups-toggle";
+import { VoiceGenderPicker, type VoiceGender } from "@/components/voice-gender-picker";
 import { getAgeTheme, AGE_THEME_CONFIGS } from "@/lib/age-theme";
 import {
   Plus,
@@ -33,6 +34,7 @@ interface ChildForm {
   pin: string;
   homework_mode: boolean;
   live_lookups: boolean;
+  voice_gender: VoiceGender;
 }
 
 type Step = "login" | "password" | "recovery" | "children" | "model" | "review" | "forgot";
@@ -54,7 +56,7 @@ export default function SetupPage() {
   const [statusLoaded, setStatusLoaded] = useState(false);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [children, setChildren] = useState<ChildForm[]>([
-    { name: "", age: 8, preset_id: "young_explorer", strictness: 4, pin: "", homework_mode: false, live_lookups: false },
+    { name: "", age: 8, preset_id: "young_explorer", strictness: 4, pin: "", homework_mode: false, live_lookups: false, voice_gender: "female" },
   ]);
   const [ollamaReady, setOllamaReady] = useState(false);
 
@@ -216,7 +218,7 @@ export default function SetupPage() {
   const addChild = () => {
     setChildren([
       ...children,
-      { name: "", age: 10, preset_id: "curious_explorer", strictness: 3, pin: "", homework_mode: false, live_lookups: false },
+      { name: "", age: 10, preset_id: "curious_explorer", strictness: 3, pin: "", homework_mode: false, live_lookups: false, voice_gender: "female" },
     ]);
   };
 
@@ -224,7 +226,7 @@ export default function SetupPage() {
     setChildren(children.filter((_, idx) => idx !== i));
   };
 
-  const updateChild = (i: number, field: keyof ChildForm, value: string | number | boolean) => {
+  const updateChild = (i: number, field: keyof ChildForm, value: string | number | boolean | VoiceGender) => {
     const updated = [...children];
     updated[i] = { ...updated[i], [field]: value };
     if (field === "age") {
@@ -257,6 +259,7 @@ export default function SetupPage() {
           pin: child.pin.trim() || undefined,
           homework_mode: child.homework_mode,
           live_lookups: child.live_lookups,
+          voice_gender: child.voice_gender,
         });
       }
       setStep("model");
@@ -627,6 +630,10 @@ export default function SetupPage() {
                         </label>
                       </div>
                     </div>
+                    <VoiceGenderPicker
+                      value={child.voice_gender}
+                      onChange={(value) => updateChild(i, "voice_gender", value)}
+                    />
                     <LiveLookupsToggle
                       compact
                       checked={child.live_lookups}
