@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveLookupsToggle } from "@/components/live-lookups-toggle";
+import { VoiceGenderPicker, type VoiceGender } from "@/components/voice-gender-picker";
 import {
   ExternalLink,
   Users,
@@ -49,6 +50,7 @@ export default function ProfilesPage() {
     pin: "",
     homework_mode: false,
     live_lookups: false,
+    voice_gender: "female" as VoiceGender,
   });
   const [addError, setAddError] = useState("");
   const [addSaving, setAddSaving] = useState(false);
@@ -106,6 +108,7 @@ export default function ProfilesPage() {
         clear_pin: childDraft.clear_pin,
         homework_mode: childDraft.homework_mode,
         live_lookups: childDraft.live_lookups,
+        voice_gender: childDraft.voice_gender,
         allow_resume: childDraft.allow_resume,
         quiet_hours_enabled: childDraft.quiet_hours_enabled,
         quiet_hours_start: childDraft.quiet_hours_start || undefined,
@@ -127,6 +130,7 @@ export default function ProfilesPage() {
       pin: "",
       homework_mode: false,
       live_lookups: false,
+      voice_gender: "female" as VoiceGender,
     });
     setAddError("");
     setAddingChild(false);
@@ -156,6 +160,7 @@ export default function ProfilesPage() {
         pin: newChild.pin.trim() || undefined,
         homework_mode: newChild.homework_mode,
         live_lookups: newChild.live_lookups,
+        voice_gender: newChild.voice_gender,
       });
       setChildren((prev) => [...prev, created]);
       setMemoryByChild((prev) => ({ ...prev, [created.id]: [] }));
@@ -439,6 +444,10 @@ export default function ProfilesPage() {
                   </p>
                 </div>
               </label>
+              <VoiceGenderPicker
+                value={newChild.voice_gender}
+                onChange={(voice_gender) => setNewChild({ ...newChild, voice_gender })}
+              />
               <LiveLookupsToggle
                 checked={newChild.live_lookups}
                 onChange={(live_lookups) => setNewChild({ ...newChild, live_lookups })}
@@ -509,6 +518,7 @@ export default function ProfilesPage() {
                         <p className="text-xs text-muted-foreground mt-0.5">
                           Age {child.age} · Safety strictness {child.strictness ?? 3}/5
                           {child.homework_mode && " · 📚 Homework Mode"}
+                          {child.voice_gender === "male" ? " · Male voice" : " · Female voice"}
                           {child.live_lookups && " · Live lookups on"}
                           {child.quiet_hours_enabled && " · 🌙 Quiet Hours"}
                         </p>
@@ -882,6 +892,13 @@ export default function ProfilesPage() {
                           </div>
                         </label>
                       </div>
+
+                      <VoiceGenderPicker
+                        value={childDraft.voice_gender === "male" ? "male" : "female"}
+                        onChange={(voice_gender) =>
+                          setChildDraft({ ...childDraft, voice_gender })
+                        }
+                      />
 
                       <LiveLookupsToggle
                         checked={childDraft.live_lookups || false}

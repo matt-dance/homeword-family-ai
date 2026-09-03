@@ -4,8 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { createReadAloudController, type ReadAloudState } from "@/lib/read-aloud";
 
-export function useReadAloud() {
-  const controllerRef = useRef(createReadAloudController((text) => api.speakText(text)));
+export function useReadAloud(voiceGender?: "female" | "male") {
+  const voiceGenderRef = useRef(voiceGender);
+  voiceGenderRef.current = voiceGender;
+  const controllerRef = useRef(
+    createReadAloudController((text) => api.speakText(text, voiceGenderRef.current)),
+  );
   const [supported, setSupported] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<ReadAloudState>({

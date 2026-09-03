@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     # Packaging
     docker_mode: bool = False
 
-    # Local voice (Whisper + Piper TTS)
+    # Local voice (Whisper + Kokoro TTS, Piper fallback)
     whisper_model: str = "tiny.en"
     whisper_max_bytes: int = 5_000_000
     piper_voice: str = "en_US-lessac-medium"
