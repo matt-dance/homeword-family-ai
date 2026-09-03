@@ -373,7 +373,7 @@ export async function streamChat(
   message: string,
   childId: number,
   onToken: (token: string) => void,
-  onBlocked: (message: string) => void,
+  onBlocked: (message: string, tools?: ChatTool[]) => void,
   onDone: () => void,
   sessionId?: number,
   onTools?: (tools: ChatTool[]) => void,
@@ -429,7 +429,7 @@ export async function streamChat(
           try {
             const data = JSON.parse(line.slice(6));
             if (data.type === "token") onToken(data.content);
-            else if (data.type === "blocked") onBlocked(data.message);
+            else if (data.type === "blocked") onBlocked(data.message, data.tools);
             else if (data.type === "tools" && Array.isArray(data.tools)) onTools?.(data.tools);
             else if (data.type === "done") finish();
           } catch {

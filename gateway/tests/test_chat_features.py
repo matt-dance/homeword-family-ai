@@ -126,6 +126,48 @@ class TestChatFeaturesAPI:
         assert resume.status_code == 404
 
     @pytest.mark.asyncio
+    async def test_resume_empty_session_is_not_resumable(self, authenticated_client: AsyncClient):
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+        created = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        assert created.status_code == 200
+        resume = await authenticated_client.get(f"/api/v1/children/{child['id']}/sessions/resume")
+        assert resume.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_resume_skips_empty_latest_session(self, authenticated_client: AsyncClient, monkeypatch):
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Cats purr when they are happy.")
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+
+        first = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        first_id = first.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={"message": "Tell me about cats", "child_id": child["id"], "session_id": first_id},
+        )
+        empty = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        assert empty.status_code == 200
+
+        resume = await authenticated_client.get(f"/api/v1/children/{child['id']}/sessions/resume")
+        assert resume.status_code == 200
+        data = resume.json()
+        assert data["session_id"] == first_id
+        assert data["messages"]
+        assert any(m.get("content") for m in data["messages"])
+
+    @pytest.mark.asyncio
     async def test_chat_blocked_during_quiet_hours(self, authenticated_client: AsyncClient, monkeypatch):
         child = authenticated_client.test_child  # type: ignore[attr-defined]
         monkeypatch.setattr(

@@ -17,6 +17,7 @@ from homeward_gateway.chat.lookups import (
     weather_place_not_found_notes,
 )
 from homeward_gateway.chat.tools import (
+    ask_parent_card,
     clock_tool_hint,
     detect_intents,
     extract_model_tools,
@@ -33,6 +34,17 @@ class PipelineResult:
     content: str | None = None
     block_reason: str | None = None
     stage: str | None = None
+    tools: list[dict] | None = None
+
+
+def _blocked_result(result: PipelineResult) -> PipelineResult:
+    return PipelineResult(
+        allowed=False,
+        content=result.content,
+        block_reason=result.block_reason,
+        stage=result.stage,
+        tools=result.tools or [ask_parent_card(result.block_reason).to_dict()],
+    )
 
 
 @dataclass
@@ -246,7 +258,7 @@ async def process_chat(
         user_message, preset, strictness, classifier_model, classifier_enabled=classifier_enabled,
     )
     if not input_result.allowed:
-        return input_result
+        return _blocked_result(input_result)
 
     lookup_notes, _lookup_tools = await resolve_live_lookup(
         user_message,
@@ -280,7 +292,7 @@ async def process_chat(
         response, preset, strictness, classifier_model, classifier_enabled=classifier_enabled,
     )
     if not output_result.allowed:
-        return output_result
+        return _blocked_result(output_result)
 
     return PipelineResult(allowed=True, content=output_result.content)
 
@@ -307,7 +319,7 @@ async def process_chat_stream(
         user_message, preset, strictness, classifier_model, classifier_enabled=classifier_enabled,
     )
     if not input_result.allowed:
-        yield input_result
+        yield _blocked_result(input_result)
         return
 
     local_tools = [card.to_dict() for card in run_local_tools(user_message, timezone=home.timezone if home else None)]
@@ -358,4 +370,4 @@ async def process_chat_stream(
         full_response, preset, strictness, classifier_model, classifier_enabled=classifier_enabled,
     )
     if not output_result.allowed:
-        yield PipelineResult(allowed=False, block_reason=output_result.block_reason, stage=output_result.stage)
+        yield _blocked_result(output_result)
