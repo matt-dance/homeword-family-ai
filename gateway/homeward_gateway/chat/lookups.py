@@ -33,6 +33,37 @@ PLACE_PREFIX_RE = re.compile(
     r"^([A-Za-z][A-Za-z.'\-]+(?:\s+[A-Za-z][A-Za-z.'\-]+){0,2})\s+(?:weather|forecast|temperature)\b",
     re.IGNORECASE,
 )
+CITY_STATE_RE = re.compile(
+    r"\bin\s+([A-Za-z][A-Za-z .'-]+),\s*([A-Z]{2})\b"
+)
+SPORTS_VENUE_RE = re.compile(
+    r" — [^—\n]+,\s*([A-Za-z][A-Za-z .'-]+),\s*([A-Z]{2})(?:\s|—|$)"
+)
+EVENT_TIME_RE = re.compile(
+    r" — (?:Sat|Sun|Mon|Tue|Wed|Thu|Fri)[^—\n]+(?:AM|PM)[^—\n]*(?: —|$)"
+)
+VENUE_CITY_STATE_RE = re.compile(
+    r"(?:Venue:\s*)?[^,\n]*,\s*([A-Za-z][A-Za-z .'-]+),\s*([A-Z]{2})\b"
+)
+REFERENTIAL_RE = re.compile(
+    r"\b(that|this|those|these|there|then|it|they|them|their|"
+    r"the game|that game|a game|the team|that team|the stadium|that stadium|"
+    r"at the game|for the game|at that game|weather at the game|weather for the game)\b",
+    re.IGNORECASE,
+)
+REFERENTIAL_PLACES = {
+    "that game",
+    "the game",
+    "that stadium",
+    "the stadium",
+    "that team",
+    "the team",
+}
+SPORTS_FOLLOWUP_RE = re.compile(
+    r"\b(did they win|did we win|who won|what was the score|what(?:'s| is) the score|"
+    r"how did they do|did they lose|the score|final score)\b",
+    re.IGNORECASE,
+)
 _PLACE_STOP = {
     "a",
     "an",
@@ -93,14 +124,20 @@ _TEAM_STOP = {
     "college",
     "current",
     "football",
+    "he",
     "high",
+    "it",
     "my",
     "our",
     "school",
+    "she",
     "team",
     "the",
     "their",
+    "them",
+    "they",
     "this",
+    "we",
     "what",
     "when",
     "who",
@@ -110,6 +147,21 @@ NEWS_RE = re.compile(
     r"what(?:'s| is) (?:in )?the news)\b",
     re.IGNORECASE,
 )
+US_PRESIDENT_RE = re.compile(
+    r"\b("
+    r"president of (?:the )?(?:united states|usa|u\.s\.|america)|"
+    r"(?:u\.s\.|american|united states) president|"
+    r"who(?:'s| is) (?:the )?president(?: of (?:the )?(?:united states|usa|america))?|"
+    r"who is president(?: of (?:the )?(?:united states|usa|america))?"
+    r")\b",
+    re.IGNORECASE,
+)
+WIKI_OFFICES: dict[str, tuple[str, re.Pattern[str]]] = {
+    "President_of_the_United_States": (
+        "President of the United States",
+        US_PRESIDENT_RE,
+    ),
+}
 
 # nickname / city / full name → (sport path, league path)
 TEAM_LEAGUES: dict[str, tuple[str, str]] = {
@@ -216,6 +268,68 @@ class LookupResult:
     found: bool = True
 
 
+@dataclass(frozen=True)
+class SessionContext:
+    """Structured entities extracted from recent chat turns."""
+
+    place: str | None = None
+    team: str | None = None
+    venue: str | None = None
+    event_time: str | None = None
+    last_lookup_kind: str | None = None
+
+
+def is_referential(message: str) -> bool:
+    """True when the child is referring back to something from earlier in the chat."""
+    return bool(REFERENTIAL_RE.search(message or ""))
+
+
+def build_session_context(history: list[dict] | None, *, limit: int = 10) -> SessionContext:
+    """Rebuild session entities from recent chat history (newest facts win)."""
+    place = team = venue = event_time = last_kind = None
+    recent = (history or [])[-limit:]
+    for item in reversed(recent):
+        content = item.get("content") or ""
+        if not place:
+            found = _extract_location(content)
+            if found:
+                place = found
+        if not team:
+            found = _matching_team_key(content) or _extract_sports_team(content)
+            if found:
+                team = found
+        if not venue:
+            match = SPORTS_VENUE_RE.search(content)
+            if match:
+                venue = f"{match.group(1).strip()}, {match.group(2).strip()}"
+        if not event_time:
+            found = _extract_event_time(content)
+            if found:
+                event_time = found
+        if "<<<LOOKUP DATA" in content or "LIVE LOOKUP" in content:
+            if "schedule:" in content or "scores:" in content:
+                last_kind = "sports"
+            elif "Open-Meteo" in content or "Weather" in content:
+                last_kind = "weather"
+            elif "Wikipedia" in content or "headlines" in content.lower():
+                last_kind = "news"
+        elif team and not last_kind:
+            last_kind = "sports"
+        elif place and WEATHER_RE.search(content) and not last_kind:
+            last_kind = "weather"
+
+    if not place and venue:
+        place = venue
+
+    return SessionContext(
+        place=place,
+        team=team,
+        venue=venue,
+        event_time=event_time,
+        last_lookup_kind=last_kind,
+    )
+
+
 def detect_lookup_intent(message: str) -> LookupIntent | None:
     """Return at most one named lookup for this turn."""
     text = (message or "").strip()
@@ -255,18 +369,197 @@ def _normalize_place(candidate: str) -> str:
     return " ".join(words)
 
 
+def _looks_like_team(text: str) -> bool:
+    lowered = text.lower().strip()
+    if not lowered:
+        return False
+    return bool(_matching_team_key(lowered) or _extract_sports_team(lowered))
+
+
+def _is_valid_place(candidate: str) -> bool:
+    lowered = candidate.lower().strip()
+    if not _is_place(candidate):
+        return False
+    if lowered in REFERENTIAL_PLACES:
+        return False
+    return not _looks_like_team(candidate)
+
+
 def _extract_place(text: str) -> str:
     found = PLACE_IN_RE.search(text)
     if found:
         candidate = _normalize_place(found.group(1).strip())
-        if _is_place(candidate):
+        if _is_valid_place(candidate):
             return candidate
     prefixed = PLACE_PREFIX_RE.search(text)
     if prefixed:
         candidate = _normalize_place(prefixed.group(1).strip())
-        if _is_place(candidate):
+        if _is_valid_place(candidate):
             return candidate
     return ""
+
+
+def _extract_city_state(text: str) -> str:
+    """Pull a city from phrases like 'in Eugene, OR', venue bullets, or sports lines."""
+    for pattern in (CITY_STATE_RE, SPORTS_VENUE_RE, VENUE_CITY_STATE_RE):
+        match = pattern.search(text)
+        if match:
+            return f"{match.group(1).strip()}, {match.group(2).strip()}"
+    return ""
+
+
+def _extract_location(text: str) -> str:
+    """Best-effort city for weather — prefer city/state and never return team names."""
+    city = _extract_city_state(text)
+    if city:
+        return city
+    return _extract_place(text)
+
+
+def _extract_event_time(text: str) -> str:
+    match = EVENT_TIME_RE.search(text)
+    if not match:
+        return ""
+    return match.group(0).strip(" —")
+
+
+def _extract_place_from_user_history(history: list[dict] | None) -> str:
+    for item in reversed(history or []):
+        if item.get("role") != "user":
+            continue
+        content = item.get("content") or ""
+        place = _extract_location(content)
+        if place:
+            return place
+    return ""
+
+
+def _resolve_weather_place(
+    message: str,
+    context: SessionContext,
+    history: list[dict] | None,
+    *,
+    home_location: str | None,
+    referential: bool,
+) -> str:
+    place = _extract_place(message)
+    if place:
+        return place
+    if referential and context.place:
+        return context.place
+    place = _extract_place_from_user_history(history)
+    if place:
+        return place
+    return home_location or ""
+
+
+def _resolve_sports_intent(
+    message: str,
+    context: SessionContext,
+    referential: bool,
+) -> LookupIntent | None:
+    wants_sports = bool(SPORTS_ASK_RE.search(message) or SPORTS_FOLLOWUP_RE.search(message))
+    if referential and context.team and wants_sports:
+        date_range = _sports_date_range(message)
+        schedule = bool(
+            date_range
+            or SPORTS_FOLLOWUP_RE.search(message)
+            or re.search(r"\b(schedule|playing|games?|matchup|next game)\b", message, re.IGNORECASE)
+        )
+        return LookupIntent("sports", context.team, date_range=date_range, schedule=schedule)
+
+    team_key = _matching_team_key(message) or _extract_sports_team(message)
+    if team_key:
+        date_range = _sports_date_range(message)
+        schedule = bool(
+            date_range
+            or re.search(r"\b(schedule|playing|games?|matchup|next game)\b", message, re.IGNORECASE)
+        )
+        return LookupIntent("sports", team_key, date_range=date_range, schedule=schedule)
+
+    return None
+
+
+def detect_current_facts_intent(message: str) -> LookupIntent | None:
+    text = (message or "").strip()
+    if not text:
+        return None
+    for wiki_title, (label, pattern) in WIKI_OFFICES.items():
+        if pattern.search(text):
+            return LookupIntent("current_facts", wiki_title)
+    return None
+
+
+def resolve_lookup_intent(
+    message: str,
+    history: list[dict] | None = None,
+    *,
+    home_location: str | None = None,
+    context: SessionContext | None = None,
+) -> tuple[LookupIntent | None, SessionContext]:
+    """Detect a lookup and fill missing slots from session + recent chat context."""
+    text = (message or "").strip()
+    if not text:
+        return None, SessionContext()
+
+    inferred = build_session_context(history)
+    if context:
+        ctx = SessionContext(
+            place=context.place or inferred.place,
+            team=context.team or inferred.team,
+            venue=context.venue or inferred.venue,
+            event_time=context.event_time or inferred.event_time,
+            last_lookup_kind=context.last_lookup_kind or inferred.last_lookup_kind,
+        )
+    else:
+        ctx = inferred
+    referential = is_referential(text)
+
+    current = detect_current_facts_intent(text)
+    if current:
+        return current, ctx
+
+    if WEATHER_RE.search(text):
+        place = _resolve_weather_place(
+            text,
+            ctx,
+            history,
+            home_location=home_location,
+            referential=referential,
+        )
+        return LookupIntent("weather", place), ctx
+
+    if NEWS_RE.search(text):
+        return LookupIntent("news", "current events"), ctx
+
+    sports = _resolve_sports_intent(text, ctx, referential)
+    if sports:
+        return sports, ctx
+
+    return None, ctx
+
+
+def lookup_context_hint(
+    message: str,
+    intent: LookupIntent,
+    context: SessionContext,
+    *,
+    referential: bool,
+) -> str:
+    """Tell the model when a slot was inferred from earlier in the chat."""
+    if not referential:
+        return ""
+
+    hints: list[str] = []
+    if intent.kind == "weather" and context.place and not _extract_place(message):
+        hints.append(f"The child is asking about {context.place} from earlier in this chat.")
+    if intent.kind == "sports" and context.team and not (
+        _matching_team_key(message) or _extract_sports_team(message)
+    ):
+        hints.append(f"The child is asking about {context.team} from earlier in this chat.")
+    if context.event_time and intent.kind == "weather":
+        hints.append(f"The event time discussed earlier was {context.event_time}.")
+    return " ".join(hints)
 
 
 def resolve_weather_place(
@@ -275,20 +568,15 @@ def resolve_weather_place(
     *,
     home_location: str | None = None,
 ) -> str:
-    """Find a city in this turn, recent user messages, or the household home."""
-    place = _extract_place(message)
-    if place:
-        return place
-    for item in reversed(history or []):
-        if item.get("role") != "user":
-            continue
-        content = item.get("content") or ""
-        place = _extract_place(content)
-        if place:
-            return place
-    if home_location:
-        return home_location
-    return ""
+    """Find a city in this turn, recent chat context, or the household home."""
+    context = build_session_context(history)
+    return _resolve_weather_place(
+        message,
+        context,
+        history,
+        home_location=home_location,
+        referential=is_referential(message),
+    )
 
 
 def format_geo_label(geo: dict[str, Any]) -> str:
@@ -533,25 +821,38 @@ def lookup_card(result: LookupResult) -> ToolCard:
     )
 
 
-def lookup_prompt_notes(result: LookupResult) -> str:
+def lookup_prompt_notes(
+    result: LookupResult,
+    *,
+    context_hint: str = "",
+) -> str:
+    prefix = f"{context_hint} " if context_hint else ""
     if result.found:
         sports_hint = ""
+        facts_hint = ""
         if result.kind == "sports":
             sports_hint = (
                 "For sports, use the home/away and venue lines exactly as written. "
                 "Do not guess where a game is played or contradict the lookup. "
             )
+        if result.kind == "current_facts":
+            facts_hint = (
+                "These are current facts from Wikipedia — not from your training data. "
+                "Use the officeholder named below even if your training data says someone else. "
+            )
         return (
+            f"{prefix}"
             "LIVE LOOKUP RESULTS from a named source — not a generic web search. "
             f"Source: {result.source_label}. "
             "These facts were verified just now and ARE the answer. "
             "Summarize them clearly for the child. "
-            f"{sports_hint}"
+            f"{facts_hint}{sports_hint}"
             "Do NOT say you could not find information, could not check, or that a game "
             "was cancelled or postponed when results are listed below.\n\n"
             f"{result.notes}"
         )
     return (
+        f"{prefix}"
         "LIVE LOOKUP from a named source — not a generic web search. "
         f"Source: {result.source_label}. "
         "No matching results were found. Say you could not find that in the lookup source. "
@@ -750,6 +1051,8 @@ async def fetch_lookup(intent: LookupIntent) -> LookupResult | None:
         return await _fetch_sports(intent)
     if intent.kind == "news":
         return await _fetch_news()
+    if intent.kind == "current_facts":
+        return await _fetch_current_facts(intent.query)
     return None
 
 
@@ -840,4 +1143,51 @@ async def _fetch_news() -> LookupResult | None:
             return format_news_notes(parse_featured_headlines(resp.json()))
     except Exception as exc:
         logger.info("News lookup failed: %s", exc)
+        return None
+
+
+def _parse_wikipedia_incumbent(wikitext: str) -> tuple[str, str]:
+    incumbent = re.search(r"incumbent\s*=\s*\[\[([^|\]]+)", wikitext, re.IGNORECASE)
+    since = re.search(r"incumbentsince\s*=\s*(.+)", wikitext, re.IGNORECASE)
+    name = incumbent.group(1).strip() if incumbent else ""
+    since_text = since.group(1).strip() if since else ""
+    return name, since_text
+
+
+def format_current_facts_notes(label: str, officeholder: str, since: str = "") -> LookupResult:
+    lines = [f"{label}: The current officeholder is {officeholder}."]
+    if since:
+        lines.append(f"In office since {since}.")
+    notes = " ".join(lines)
+    return LookupResult(
+        kind="current_facts",
+        source="wikipedia",
+        source_label="Wikipedia",
+        query=label,
+        summary=f"{label}: {officeholder}",
+        notes=notes,
+    )
+
+
+async def _fetch_current_facts(wiki_title: str) -> LookupResult | None:
+    label = WIKI_OFFICES.get(wiki_title, (wiki_title.replace("_", " "), None))[0]
+    try:
+        async with _client() as client:
+            resp = await client.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={
+                    "action": "parse",
+                    "page": wiki_title,
+                    "prop": "wikitext",
+                    "format": "json",
+                },
+            )
+            resp.raise_for_status()
+            wikitext = (resp.json().get("parse") or {}).get("wikitext", {}).get("*", "")
+        officeholder, since = _parse_wikipedia_incumbent(wikitext)
+        if not officeholder:
+            return None
+        return format_current_facts_notes(label, officeholder, since)
+    except Exception as exc:
+        logger.info("Current facts lookup failed for %s: %s", wiki_title, exc)
         return None

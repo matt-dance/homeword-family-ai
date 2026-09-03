@@ -65,6 +65,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [chatSessionId, setChatSessionId] = useState<number | null>(null);
   const [starters, setStarters] = useState<ConversationStarter[]>([]);
   const [simpleMode, setSimpleMode] = useState(false);
@@ -243,6 +244,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       stopReadAloud();
       setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
       setStreaming(true);
+      setStreamStatus("Checking your message…");
 
       let assistantContent = "";
       const controller = new AbortController();
@@ -273,6 +275,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           },
           () => {
             setStreaming(false);
+            setStreamStatus(null);
             if (controller.signal.aborted) return;
             if (!assistantContent || assistantContent === CHAT_ERROR_MESSAGE) return;
             if (!autoReadNextRef.current) return;
@@ -306,10 +309,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           },
           controller.signal,
           quickChat,
+          (status) => setStreamStatus(status),
         );
       } catch (e) {
         if (controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) {
           setStreaming(false);
+          setStreamStatus(null);
           return;
         }
         console.error("Chat stream failed", e);
@@ -319,6 +324,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           return [...base, { role: "assistant", content: CHAT_ERROR_MESSAGE, blocked: true }];
         });
         setStreaming(false);
+        setStreamStatus(null);
       } finally {
         if (abortRef.current === controller) {
           abortRef.current = null;
@@ -332,6 +338,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     abortRef.current?.abort();
     abortRef.current = null;
     setStreaming(false);
+    setStreamStatus(null);
     stopReadAloud();
   }, [stopReadAloud]);
 
@@ -727,7 +734,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                   <span className="h-2 w-2 rounded-full bg-primary animate-bounce" />
                 </span>
                 <span className="text-xs text-muted-foreground font-medium pl-1">
-                  Thinking…
+                  {streamStatus || "Thinking…"}
                 </span>
                 <button
                   type="button"

@@ -72,6 +72,7 @@ class ChatSession(Base):
     child_id: Mapped[int] = mapped_column(ForeignKey("child_profiles.id"), nullable=False)
     preview: Mapped[str | None] = mapped_column(String(200), nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -216,6 +217,8 @@ def _migrate_chat_session_columns(connection) -> None:
     columns = {col["name"] for col in inspector.get_columns("chat_sessions")}
     if "summary" not in columns:
         connection.execute(sa.text("ALTER TABLE chat_sessions ADD COLUMN summary TEXT"))
+    if "context_state" not in columns:
+        connection.execute(sa.text("ALTER TABLE chat_sessions ADD COLUMN context_state TEXT"))
 
 
 def _migrate_session_columns(connection) -> None:

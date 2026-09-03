@@ -12,8 +12,12 @@ const SOURCES = [
     detail: "today's game scores for named leagues and teams",
   },
   {
+    name: "Wikipedia",
+    detail: "current facts like who holds an office (e.g. U.S. president)",
+  },
+  {
     name: "Wikipedia Current Events",
-    detail: "the day’s featured headlines",
+    detail: "the day's featured headlines",
   },
 ] as const;
 
@@ -47,8 +51,8 @@ export function LiveLookupsToggle({
         </p>
         <p className="text-xs text-muted-foreground leading-relaxed">
           Off unless you turn this on for this child. When they ask about weather,
-          sports scores, or current events, Homeward checks these named sources
-          — not a generic web search.
+          sports scores, current facts (like who is president), or current events,
+          Homeward checks these named sources — not a generic web search.
         </p>
         <ul
           className={`text-xs text-muted-foreground ${

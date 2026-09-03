@@ -35,6 +35,7 @@ from homeward_gateway.auth.recovery import (
 from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.chat.starters import get_conversation_starters
 from homeward_gateway.chat.summary import summarize_session
+from homeward_gateway.chat.session_state import SessionState
 from homeward_gateway.voice.speak import (
     get_speak_status,
     piper_available,
@@ -64,7 +65,7 @@ from homeward_gateway.ollama import service as ollama_service
 from homeward_gateway.ollama.catalog import pick_classifier_model
 from homeward_gateway.ollama.runtime import get_effective_models
 from homeward_gateway.models.router import strip_thinking
-from homeward_gateway.pipeline.pipeline import PipelineResult, ToolEvent, process_chat, process_chat_stream
+from homeward_gateway.pipeline.pipeline import PipelineResult, StatusEvent, ToolEvent, process_chat, process_chat_stream
 from homeward_gateway.pipeline.policy import load_all_presets, preset_for_age
 
 logger = logging.getLogger(__name__)
@@ -967,6 +968,29 @@ LLM_UNAVAILABLE_MESSAGE = (
 )
 
 
+async def _load_session_state(session: AsyncSession, chat_session_id: int | None) -> SessionState:
+    if not chat_session_id:
+        return SessionState()
+    chat_session = await session.get(ChatSession, chat_session_id)
+    if not chat_session:
+        return SessionState()
+    return SessionState.from_json(chat_session.context_state)
+
+
+async def _save_session_state(
+    session: AsyncSession,
+    chat_session_id: int | None,
+    state: SessionState | None,
+) -> None:
+    if not chat_session_id or not state:
+        return
+    chat_session = await session.get(ChatSession, chat_session_id)
+    if not chat_session:
+        return
+    chat_session.context_state = state.to_json()
+    await session.commit()
+
+
 async def _history_for_session(session: AsyncSession, chat_session_id: int | None) -> list[dict]:
     """Prior turns from the server log — never from the client, so history
     cannot be used to smuggle unfiltered text past the input filter."""
@@ -1017,6 +1041,7 @@ async def chat(
     record_attempt(rate_key, window_seconds=CHAT_RATE_WINDOW)
     chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
     history = await _history_for_session(session, chat_session_id)
+    chat_state = await _load_session_state(session, chat_session_id)
     chat_model, classifier_model = await get_effective_models(session)
     parent = await _load_parent_account(session, child.parent_id)
     home = home_context_from_parent(parent)
@@ -1037,6 +1062,7 @@ async def chat(
         ai_tone=ai_prefs["ai_tone"],
         ai_verbosity=ai_prefs["ai_verbosity"],
         quick_chat=body.quick_chat,
+        session_state=chat_state,
     )
 
     if not result.allowed:
@@ -1053,6 +1079,7 @@ async def chat(
 
     await _log_message(session, child.id, "input", body.message, chat_session_id=chat_session_id)
     await _log_message(session, child.id, "output", result.content or "", chat_session_id=chat_session_id)
+    await _save_session_state(session, chat_session_id, getattr(result, "session_state", None))
 
     return {
         "blocked": False,
@@ -1075,6 +1102,7 @@ async def chat_stream(
     record_attempt(rate_key, window_seconds=CHAT_RATE_WINDOW)
     chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
     history = await _history_for_session(session, chat_session_id)
+    chat_state = await _load_session_state(session, chat_session_id)
     chat_model, classifier_model = await get_effective_models(session)
     parent = await _load_parent_account(session, child.parent_id)
     home = home_context_from_parent(parent)
@@ -1118,12 +1146,17 @@ async def chat_stream(
                 ai_tone=ai_prefs["ai_tone"],
                 ai_verbosity=ai_prefs["ai_verbosity"],
                 quick_chat=body.quick_chat,
+                session_state=chat_state,
             ):
                 if await request.is_disconnected():
                     await persist_turn()
                     return
                 if isinstance(item, ToolEvent):
                     payload = json.dumps({"type": "tools", "tools": item.tools})
+                    yield f"data: {payload}\n\n"
+                    continue
+                if isinstance(item, StatusEvent):
+                    payload = json.dumps({"type": "status", "message": item.message})
                     yield f"data: {payload}\n\n"
                     continue
                 if isinstance(item, PipelineResult):
@@ -1140,6 +1173,8 @@ async def chat_stream(
                         })
                         yield f"data: {payload}\n\n"
                         return
+                    if item.session_state:
+                        await _save_session_state(log_session, chat_session_id, item.session_state)
                 else:
                     collected.append(item)
                     payload = json.dumps({"type": "token", "content": item})

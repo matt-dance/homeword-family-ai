@@ -379,6 +379,7 @@ export async function streamChat(
   onTools?: (tools: ChatTool[]) => void,
   signal?: AbortSignal,
   quickChat?: boolean,
+  onStatus?: (message: string) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/chat/stream`, {
     method: "POST",
@@ -430,6 +431,7 @@ export async function streamChat(
             const data = JSON.parse(line.slice(6));
             if (data.type === "token") onToken(data.content);
             else if (data.type === "blocked") onBlocked(data.message);
+            else if (data.type === "status" && typeof data.message === "string") onStatus?.(data.message);
             else if (data.type === "tools" && Array.isArray(data.tools)) onTools?.(data.tools);
             else if (data.type === "done") finish();
           } catch {
