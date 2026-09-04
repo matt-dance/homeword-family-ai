@@ -33,6 +33,7 @@ from homeward_gateway.auth.recovery import (
     hash_recovery_code,
     verify_recovery_code,
 )
+from homeward_gateway.chat.history import is_hard_safety_stage, model_visible_history
 from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.chat.starters import get_conversation_starters
 from homeward_gateway.chat.summary import summarize_session
@@ -154,6 +155,8 @@ class PinRequest(BaseModel):
 RESERVED_SLUGS = frozenset({"quick"})
 AUDIO_SUFFIXES = frozenset({".webm", ".mp4", ".m4a", ".wav", ".mp3", ".ogg", ".flac"})
 HISTORY_TURN_LIMIT = 20
+# Fetch extra rows so a blocked output can still be paired with its user prompt.
+HISTORY_FETCH_LIMIT = HISTORY_TURN_LIMIT * 3
 CHAT_RATE_MAX = 40
 CHAT_RATE_WINDOW = 300
 
@@ -1078,10 +1081,15 @@ async def _log_message(
     )
     session.add(log)
 
-    if chat_session_id and direction == "input":
+    chat_session = None
+    if chat_session_id:
         chat_session = await session.get(ChatSession, chat_session_id)
-        if chat_session and not chat_session.preview:
+        if chat_session and direction == "input" and not chat_session.preview:
             chat_session.preview = content[:200]
+        # Hard refusals must not keep topic/facts in the *model* context.
+        # Conversation logs and blocked_attempts stay intact for parents.
+        if blocked and is_hard_safety_stage(stage) and chat_session:
+            chat_session.context_state = None
 
     if blocked:
         attempt = BlockedAttempt(
@@ -1162,21 +1170,21 @@ async def _save_session_state(
 
 async def _history_for_session(session: AsyncSession, chat_session_id: int | None) -> list[dict]:
     """Prior turns from the server log — never from the client, so history
-    cannot be used to smuggle unfiltered text past the input filter."""
+    cannot be used to smuggle unfiltered text past the input filter.
+
+    Blocked/refused turns are stored for the parent dashboard but stripped
+    from the list the model sees on later benign prompts.
+    """
     if not chat_session_id:
         return []
     result = await session.execute(
         select(ConversationLog)
         .where(ConversationLog.session_id == chat_session_id)
-        .where(ConversationLog.blocked.is_(False))
         .order_by(ConversationLog.created_at.desc())
-        .limit(HISTORY_TURN_LIMIT)
+        .limit(HISTORY_FETCH_LIMIT)
     )
     logs = list(reversed(result.scalars().all()))
-    return [
-        {"role": "user" if log.direction == "input" else "assistant", "content": log.content}
-        for log in logs
-    ]
+    return model_visible_history(logs, limit=HISTORY_TURN_LIMIT)
 
 
 def user_facing_message(stage: str | None, block_reason: str | None = None) -> str:

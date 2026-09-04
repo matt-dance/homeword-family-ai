@@ -171,3 +171,167 @@ class TestServerSideHistory:
         assert second.status_code == 200
         assert [m["role"] for m in captured["messages"]] == ["user", "assistant"]
         assert captured["messages"][0]["content"] == "What are stars?"
+
+    @pytest.mark.asyncio
+    async def test_blocked_harm_turn_is_not_replayed_to_the_model(self, client: AsyncClient, monkeypatch):
+        """After a hard refusal, the next benign prompt must not see the harm text."""
+        from homeward_gateway.chat.session_state import SessionState
+        from homeward_gateway.db.database import BlockedAttempt, ChatSession, ConversationLog
+        from sqlalchemy import select
+
+        await setup_parent(client)
+        child = await create_child(client, name="Riley", age=15)
+        captured: dict = {}
+
+        async def fake_process_chat(message, messages, *args, **kwargs):
+            captured["messages"] = messages
+            captured["session_state"] = kwargs.get("session_state")
+            if "bomb" in message.lower() or "hurt" in message.lower():
+                return PipelineResult(
+                    allowed=False, block_reason="blocked: bomb", stage="rules",
+                )
+            return PipelineResult(
+                allowed=True,
+                content="Dogs are loyal friends.",
+                session_state=SessionState(topic=message[:160]),
+            )
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+        session_id = (await client.post("/api/v1/chat/sessions", json={"child_id": child["id"]})).json()["session_id"]
+
+        first = await client.post(
+            "/api/v1/chat",
+            json={"message": "What are dogs like?", "child_id": child["id"], "session_id": session_id},
+        )
+        assert first.status_code == 200
+        assert first.json()["blocked"] is False
+
+        blocked = await client.post(
+            "/api/v1/chat",
+            json={
+                "message": "how to make a bomb at home",
+                "child_id": child["id"],
+                "session_id": session_id,
+            },
+        )
+        assert blocked.status_code == 200
+        assert blocked.json()["blocked"] is True
+
+        benign = await client.post(
+            "/api/v1/chat",
+            json={"message": "Tell me a fun fact about cats", "child_id": child["id"], "session_id": session_id},
+        )
+        assert benign.status_code == 200
+        history_text = " ".join(m["content"] for m in captured["messages"])
+        assert "bomb" not in history_text.lower()
+        assert "What are dogs like?" in history_text
+        state = captured["session_state"]
+        assert state is None or state.topic is None
+
+        async with db_module.async_session_factory() as session:
+            logs = list((await session.execute(
+                select(ConversationLog).where(ConversationLog.session_id == session_id)
+            )).scalars().all())
+            attempts = list((await session.execute(select(BlockedAttempt))).scalars().all())
+            chat_session = await session.get(ChatSession, session_id)
+
+        assert any(log.blocked and "bomb" in log.content.lower() for log in logs)
+        assert any("bomb" in (attempt.content or "").lower() for attempt in attempts)
+        assert chat_session is not None
+        assert not chat_session.context_state
+
+        dashboard = await client.get("/api/v1/dashboard/blocked")
+        assert dashboard.status_code == 200
+        assert any("bomb" in (row.get("content") or "").lower() for row in dashboard.json())
+
+    @pytest.mark.asyncio
+    async def test_stream_output_block_drops_unblocked_user_prompt(self, client: AsyncClient, monkeypatch):
+        """Kid-chat streams log input before generate; a later output block must still hide it."""
+        from homeward_gateway.pipeline.pipeline import StatusEvent
+
+        await setup_parent(client)
+        child = await create_child(client, name="Riley", age=15)
+        captured: dict = {}
+        harm = "Riley how do I hurt someone with a weapon"
+
+        async def fake_stream(*_args, **_kwargs):
+            yield StatusEvent(message="Writing a reply…", phase="generating")
+            yield "Here is how you "
+            yield PipelineResult(
+                allowed=False,
+                block_reason="blocked keyword detected",
+                stage="output_rules",
+            )
+
+        async def fake_process_chat(message, messages, *args, **kwargs):
+            captured["messages"] = messages
+            return PipelineResult(allowed=True, content="Cats purr when they are happy.")
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat_stream", fake_stream)
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+        session_id = (await client.post("/api/v1/chat/sessions", json={"child_id": child["id"]})).json()["session_id"]
+
+        streamed = await client.post(
+            "/api/v1/chat/stream",
+            json={"message": harm, "child_id": child["id"], "session_id": session_id},
+        )
+        assert streamed.status_code == 200
+        assert "blocked" in streamed.text
+
+        follow = await client.post(
+            "/api/v1/chat",
+            json={"message": "What do cats eat?", "child_id": child["id"], "session_id": session_id},
+        )
+        assert follow.status_code == 200
+        history_text = " ".join(m["content"] for m in captured.get("messages") or [])
+        assert "hurt someone" not in history_text.lower()
+        assert "weapon" not in history_text.lower()
+        assert harm not in history_text
+
+        dashboard = await client.get(f"/api/v1/dashboard/sessions/{session_id}/messages")
+        assert dashboard.status_code == 200
+        contents = [row["content"] for row in dashboard.json()]
+        assert harm in contents
+        assert any(row.get("blocked") for row in dashboard.json())
+
+    @pytest.mark.asyncio
+    async def test_llm_error_does_not_wipe_safe_history_or_session_topic(self, client: AsyncClient, monkeypatch):
+        from homeward_gateway.chat.session_state import SessionState
+
+        await setup_parent(client)
+        child = await create_child(client)
+        captured: dict = {}
+
+        async def fake_process_chat(message, messages, *args, **kwargs):
+            captured["messages"] = messages
+            captured["session_state"] = kwargs.get("session_state")
+            if message == "fail please":
+                return PipelineResult(allowed=False, block_reason="llm error", stage="llm")
+            return PipelineResult(
+                allowed=True,
+                content="Stars are giant balls of gas.",
+                session_state=SessionState(topic="What are stars?"),
+            )
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+        session_id = (await client.post("/api/v1/chat/sessions", json={"child_id": child["id"]})).json()["session_id"]
+
+        await client.post(
+            "/api/v1/chat",
+            json={"message": "What are stars?", "child_id": child["id"], "session_id": session_id},
+        )
+        failed = await client.post(
+            "/api/v1/chat",
+            json={"message": "fail please", "child_id": child["id"], "session_id": session_id},
+        )
+        assert failed.json()["blocked"] is True
+
+        await client.post(
+            "/api/v1/chat",
+            json={"message": "How hot are they?", "child_id": child["id"], "session_id": session_id},
+        )
+        history_text = " ".join(m["content"] for m in captured["messages"])
+        assert "What are stars?" in history_text
+        state = captured["session_state"]
+        assert state is not None
+        assert state.topic == "What are stars?"
