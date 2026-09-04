@@ -845,7 +845,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                   <span className="h-2 w-2 rounded-full bg-primary animate-bounce" />
                 </span>
                 <span className="text-xs text-muted-foreground font-medium pl-1">
-                  {streamStatus || "Thinking…"}
+                  {streamStatus || "Writing a reply…"}
                 </span>
                 <button
                   type="button"

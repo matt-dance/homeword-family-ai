@@ -63,6 +63,7 @@ async def classify_with_ollama(text: str, model: str | None = None) -> Classifie
                     "model": model_name,
                     "prompt": prompt,
                     "stream": False,
+                    "keep_alive": "30m",
                     "options": {"temperature": 0, "num_predict": 10},
                 },
             )
