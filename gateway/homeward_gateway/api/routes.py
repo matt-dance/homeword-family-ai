@@ -1264,7 +1264,7 @@ async def chat(
             "blocked": True,
             "message": user_facing_message(result.stage, result.block_reason),
             "session_id": chat_session_id,
-            "tools": result.tools or [],
+            "tools": getattr(result, "tools", None) or [],
         }
 
     await _log_message(session, child.id, "input", body.message, chat_session_id=chat_session_id)
@@ -1275,7 +1275,7 @@ async def chat(
         "blocked": False,
         "message": result.content,
         "session_id": chat_session_id,
-        "tools": result.tools or [],
+        "tools": getattr(result, "tools", None) or [],
     }
 
 
