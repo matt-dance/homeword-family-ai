@@ -17,6 +17,11 @@ export interface ParentLockOverlayProps {
   submittingLabel?: string;
   /** Return a custom error, or null/empty to keep the default mismatch copy. */
   mapError?: (message: string) => string | null | undefined;
+  /**
+   * Defaults to a full parent login (dashboard idle lock).
+   * Homework camera passes a verify-only call that must not set a session cookie.
+   */
+  authenticate?: (password: string) => Promise<void>;
 }
 
 export function ParentLockOverlay({
@@ -27,6 +32,7 @@ export function ParentLockOverlay({
   submitLabel = "Unlock Dashboard",
   submittingLabel = "Unlocking…",
   mapError,
+  authenticate,
 }: ParentLockOverlayProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -38,7 +44,7 @@ export function ParentLockOverlay({
     setSubmitting(true);
     setError("");
     try {
-      await api.login(password);
+      await (authenticate ?? ((value: string) => api.login(value)))(password);
       onUnlock();
       setPassword("");
     } catch (e) {

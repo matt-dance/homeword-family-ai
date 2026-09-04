@@ -1,4 +1,8 @@
-"""Kid-chat homework camera routes — LAN-reachable, PIN-gated, not parent-only."""
+"""Kid-chat homework camera routes.
+
+Hint/status are LAN-reachable and PIN-gated, not parent-session-only.
+Unlock verifies the parent password on the host without minting a session cookie.
+"""
 
 from __future__ import annotations
 
@@ -6,14 +10,15 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from homeward_gateway.auth.local_host import client_ip_from_request
-from homeward_gateway.auth.parent_auth import has_child_access
+from homeward_gateway.auth.local_host import client_ip_from_request, require_local_request
+from homeward_gateway.auth.parent_auth import has_child_access, verify_password
 from homeward_gateway.auth.rate_limit import check_rate_limit, record_attempt, reset_attempts
 from homeward_gateway.chat.quiet_hours import is_chat_available
-from homeward_gateway.db.database import ChildProfile, get_session
+from homeward_gateway.db.database import ChildProfile, ParentAccount, get_session
 from homeward_gateway.vision.homework import (
     EXPECTED_VISION_MODEL,
     VISION_UNAVAILABLE_MESSAGE,
@@ -29,6 +34,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 HOMEWORK_OFF_DETAIL = "Homework camera is off for this profile. Ask a parent to turn on homework mode."
+
+
+class HomeworkUnlockRequest(BaseModel):
+    password: str = Field(min_length=1)
 
 
 def _rate_key(request: Request, scope: str) -> str:
@@ -54,6 +63,27 @@ def _ensure_chat_available(child: ChildProfile) -> None:
 def _require_homework_mode(child: ChildProfile) -> None:
     if not child.homework_mode:
         raise HTTPException(status_code=403, detail=HOMEWORK_OFF_DETAIL)
+
+
+@router.post("/chat/homework/unlock")
+async def homework_unlock(
+    body: HomeworkUnlockRequest,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Confirm the parent password for the camera gate. Does not set a session cookie."""
+    require_local_request(request)
+    rate_key = _rate_key(request, "homework-unlock")
+    check_rate_limit(rate_key)
+
+    result = await session.execute(select(ParentAccount).limit(1))
+    parent = result.scalar_one_or_none()
+    if not parent or not verify_password(body.password, parent.password_hash):
+        record_attempt(rate_key)
+        raise HTTPException(status_code=401, detail="Invalid password")
+
+    reset_attempts(rate_key)
+    return {"ok": True}
 
 
 async def _load_child(session: AsyncSession, child_id: int) -> ChildProfile:

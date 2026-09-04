@@ -8,6 +8,7 @@ import pytest
 from httpx import AsyncClient
 
 from homeward_gateway.auth import rate_limit
+from homeward_gateway.config import settings
 from homeward_gateway.vision.homework import (
     EXPECTED_VISION_MODEL,
     HOMEWORK_VISION_PROMPT,
@@ -18,7 +19,7 @@ from homeward_gateway.vision.homework import (
     pick_vision_model,
     validate_image,
 )
-from tests.conftest import create_child, setup_parent
+from tests.conftest import DEFAULT_PASSWORD, create_child, setup_parent
 
 LAN = {"X-Homeward-Client-Ip": "192.168.1.42"}
 
@@ -307,3 +308,43 @@ class TestHomeworkHintAPI:
             files=_hint_files(),
         )
         assert resp.status_code == 404
+
+
+class TestHomeworkUnlock:
+    @pytest.mark.asyncio
+    async def test_unlock_verifies_password_without_session_cookie(self, client: AsyncClient):
+        await setup_parent(client)
+        await client.post("/api/v1/auth/logout")
+        assert (await client.get("/api/v1/auth/me")).status_code == 401
+
+        resp = await client.post(
+            "/api/v1/chat/homework/unlock",
+            json={"password": DEFAULT_PASSWORD},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert settings.session_cookie_name not in resp.headers.get("set-cookie", "")
+        assert (await client.get("/api/v1/auth/me")).status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_unlock_rejects_wrong_password(self, client: AsyncClient):
+        await setup_parent(client)
+        await client.post("/api/v1/auth/logout")
+        resp = await client.post(
+            "/api/v1/chat/homework/unlock",
+            json={"password": "wrong-password"},
+        )
+        assert resp.status_code == 401
+        assert (await client.get("/api/v1/auth/me")).status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_unlock_rejects_lan(self, client: AsyncClient):
+        await setup_parent(client)
+        await client.post("/api/v1/auth/logout")
+        resp = await client.post(
+            "/api/v1/chat/homework/unlock",
+            json={"password": DEFAULT_PASSWORD},
+            headers=LAN,
+        )
+        assert resp.status_code == 403
+        assert (await client.get("/api/v1/auth/me")).status_code == 401
