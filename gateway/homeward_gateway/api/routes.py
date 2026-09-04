@@ -847,9 +847,13 @@ async def resume_child_session(
     if not child.allow_resume:
         raise HTTPException(status_code=404, detail="No resumable session")
 
+    # Named-profile resume must not offer guest Quick Chat as "continue last chat".
     sessions_result = await session.execute(
         select(ChatSession)
-        .where(ChatSession.child_id == child_id)
+        .where(
+            ChatSession.child_id == child_id,
+            ChatSession.quick_chat.is_(False),
+        )
         .order_by(ChatSession.started_at.desc())
         .limit(20)
     )

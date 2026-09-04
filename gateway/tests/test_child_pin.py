@@ -322,6 +322,79 @@ class TestPinAPI:
         )
         assert named.status_code == 404
 
+    @pytest.mark.asyncio
+    async def test_named_resume_skips_quick_chat_sessions(self, client: AsyncClient, monkeypatch):
+        """Guest Quick Chat must not become the default child's 'continue last chat'."""
+        child = await _pin_child(client)
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Hi there!")
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+
+        quick = await client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"], "quick_chat": True},
+            headers=LAN,
+        )
+        assert quick.status_code == 200
+        planted = await client.post(
+            "/api/v1/chat",
+            json={
+                "message": "guest planted",
+                "child_id": child["id"],
+                "session_id": quick.json()["session_id"],
+                "quick_chat": True,
+            },
+            headers=LAN,
+        )
+        assert planted.status_code == 200
+
+        rate_limit._attempts.clear()
+        unlock = await client.post(
+            f"/api/v1/children/{child['id']}/verify-pin", json={"pin": "1234"}, headers=LAN
+        )
+        assert unlock.status_code == 200
+        empty = await client.get(
+            f"/api/v1/children/{child['id']}/sessions/resume", headers=LAN
+        )
+        assert empty.status_code == 404
+
+        named = await client.post(
+            "/api/v1/chat/sessions", json={"child_id": child["id"]}, headers=LAN
+        )
+        named_id = named.json()["session_id"]
+        await client.post(
+            "/api/v1/chat",
+            json={"message": "named hello", "child_id": child["id"], "session_id": named_id},
+            headers=LAN,
+        )
+        later_quick = await client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"], "quick_chat": True},
+            headers=LAN,
+        )
+        await client.post(
+            "/api/v1/chat",
+            json={
+                "message": "newer guest",
+                "child_id": child["id"],
+                "session_id": later_quick.json()["session_id"],
+                "quick_chat": True,
+            },
+            headers=LAN,
+        )
+
+        resumed = await client.get(
+            f"/api/v1/children/{child['id']}/sessions/resume", headers=LAN
+        )
+        assert resumed.status_code == 200
+        data = resumed.json()
+        assert data["session_id"] == named_id
+        contents = " ".join(m["content"] for m in data["messages"])
+        assert "named hello" in contents
+        assert "guest" not in contents.lower()
+
 
 class TestServerSideHistory:
     @pytest.mark.asyncio
