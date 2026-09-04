@@ -4,6 +4,8 @@ WORKDIR /app
 COPY web/package.json web/package-lock.json* ./
 RUN npm install
 COPY web/ ./
+# Next.js may ship without a public/ folder; the runner COPY requires it.
+RUN mkdir -p public
 RUN npm run build
 
 FROM node:22-alpine AS runner
