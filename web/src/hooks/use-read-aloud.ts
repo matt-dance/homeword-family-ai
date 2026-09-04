@@ -4,8 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { createReadAloudController, type ReadAloudState } from "@/lib/read-aloud";
 
-export function useReadAloud() {
-  const controllerRef = useRef(createReadAloudController((text) => api.speakText(text)));
+export function useReadAloud(voiceGender?: "female" | "male") {
+  const voiceGenderRef = useRef(voiceGender);
+  voiceGenderRef.current = voiceGender;
+  const controllerRef = useRef(
+    createReadAloudController((text) => api.speakText(text, voiceGenderRef.current)),
+  );
   const [supported, setSupported] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<ReadAloudState>({
@@ -30,7 +34,11 @@ export function useReadAloud() {
   }, []);
 
   const speakMessage = useCallback(
-    (messageKey: string, text: string) => {
+    (
+      messageKey: string,
+      text: string,
+      options?: { onStart?: () => void; onEnd?: () => void },
+    ) => {
       if (!text.trim()) return;
 
       setError(null);
@@ -44,11 +52,18 @@ export function useReadAloud() {
       setState({ messageKey, isSpeaking: false, isLoading: true });
 
       void controllerRef.current.speak(text, {
-        onStart: () => setState({ messageKey, isSpeaking: true, isLoading: false }),
-        onEnd: () => setState({ messageKey: null, isSpeaking: false, isLoading: false }),
+        onStart: () => {
+          setState({ messageKey, isSpeaking: true, isLoading: false });
+          options?.onStart?.();
+        },
+        onEnd: () => {
+          setState({ messageKey: null, isSpeaking: false, isLoading: false });
+          options?.onEnd?.();
+        },
         onError: (message) => {
           setError(message);
           setState({ messageKey: null, isSpeaking: false, isLoading: false });
+          options?.onEnd?.();
         },
       });
     },

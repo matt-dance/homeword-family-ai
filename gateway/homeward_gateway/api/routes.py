@@ -3,8 +3,9 @@
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
-from typing import Annotated, AsyncIterator
+from typing import Annotated, AsyncIterator, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
@@ -35,12 +36,13 @@ from homeward_gateway.auth.recovery import (
 from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.chat.starters import get_conversation_starters
 from homeward_gateway.chat.summary import summarize_session
+from homeward_gateway.chat.session_state import SessionState
 from homeward_gateway.voice.speak import (
     get_speak_status,
-    piper_available,
     run_speak_self_test,
     sanitize_for_speech,
     synthesize_speech_payload,
+    tts_available,
 )
 from homeward_gateway.voice.transcribe import (
     get_whisper_status,
@@ -50,12 +52,18 @@ from homeward_gateway.voice.transcribe import (
 )
 from homeward_gateway.config import settings
 from homeward_gateway.db.database import (
+    MEMORY_LABEL_MAX,
+    MEMORY_MAX_ITEMS,
+    MEMORY_VALUE_MAX,
     BlockedAttempt,
     ChatSession,
     ChildProfile,
     ConversationLog,
     ParentAccount,
+    dump_child_memory,
     get_session,
+    new_memory_id,
+    parse_child_memory,
 )
 from homeward_gateway.dashboard.sessions import find_legacy_session, group_legacy_logs
 from homeward_gateway.home.location import home_context_from_parent
@@ -112,6 +120,7 @@ class ChildCreate(BaseModel):
     pin: str | None = Field(default=None, pattern=PIN_PATTERN)
     homework_mode: bool = False
     live_lookups: bool = False
+    voice_gender: Literal["female", "male"] = "female"
 
 
 class ChildUpdate(BaseModel):
@@ -128,6 +137,7 @@ class ChildUpdate(BaseModel):
     quiet_hours_start: str | None = None
     quiet_hours_end: str | None = None
     quiet_hours_days: str | None = None
+    voice_gender: Literal["female", "male"] | None = None
 
 
 class ChatRequest(BaseModel):
@@ -155,6 +165,7 @@ class SessionCreateRequest(BaseModel):
 
 class SpeakRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
+    voice_gender: Literal["female", "male"] | None = None
 
 
 class CloudSettingsRequest(BaseModel):
@@ -182,6 +193,16 @@ class AdvancedSettingsRequest(BaseModel):
     ai_verbosity: int | None = Field(default=None, ge=1, le=5)
 
 
+class MemoryItemCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=500)
+    value: str = Field(min_length=1, max_length=500)
+
+
+class MemoryItemUpdate(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=500)
+    value: str | None = Field(default=None, min_length=1, max_length=500)
+
+
 # --- Dependencies ---
 
 
@@ -204,6 +225,49 @@ def _rate_key(request: Request, scope: str) -> str:
 def _require_child_access(request: Request, child: ChildProfile) -> None:
     if not has_child_access(request, child):
         raise HTTPException(status_code=403, detail="PIN required")
+
+
+_UNSAFE_MEMORY = re.compile(
+    r"\b(password|passwd|ssn|social security|credit card|passport|bank account|driver'?s license)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_memory_field(text: str, max_len: int) -> str:
+    cleaned = " ".join(text.split())
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Label and value are required")
+    if len(cleaned) > max_len:
+        raise HTTPException(
+            status_code=400, detail=f"Must be {max_len} characters or fewer"
+        )
+    if _UNSAFE_MEMORY.search(cleaned):
+        raise HTTPException(
+            status_code=400,
+            detail="Don't save passwords, IDs, or other private details",
+        )
+    return cleaned
+
+
+def _prompt_memory_items(child: ChildProfile, *, quick_chat: bool) -> list[dict[str, str]]:
+    if quick_chat:
+        return []
+    return parse_child_memory(child.memory_items)
+
+
+async def _parent_child(
+    session: AsyncSession, parent: ParentAccount, child_id: int
+) -> ChildProfile:
+    result = await session.execute(
+        select(ChildProfile).where(
+            ChildProfile.id == child_id,
+            ChildProfile.parent_id == parent.id,
+        )
+    )
+    child = result.scalar_one_or_none()
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+    return child
 
 
 # --- Health ---
@@ -446,6 +510,7 @@ def _serialize_child(c: ChildProfile) -> dict:
         "has_pin": c.pin is not None,
         "homework_mode": c.homework_mode,
         "live_lookups": c.live_lookups,
+        "voice_gender": c.voice_gender or "female",
         "allow_resume": c.allow_resume,
         "quiet_hours_enabled": c.quiet_hours_enabled,
         "quiet_hours_start": c.quiet_hours_start,
@@ -475,6 +540,7 @@ def _serialize_child_public(c: ChildProfile, *, is_default: bool = False) -> dic
         "chat_unavailable_message": unavailable_message,
         "homework_mode": c.homework_mode,
         "live_lookups": c.live_lookups,
+        "voice_gender": c.voice_gender or "female",
         "is_default": is_default,
     }
 
@@ -558,6 +624,7 @@ async def create_child(
         pin=hash_pin(body.pin) if body.pin else None,
         homework_mode=body.homework_mode,
         live_lookups=body.live_lookups,
+        voice_gender=body.voice_gender,
     )
     session.add(child)
     await session.flush()
@@ -608,6 +675,8 @@ async def update_child(
         child.homework_mode = body.homework_mode
     if body.live_lookups is not None:
         child.live_lookups = body.live_lookups
+    if body.voice_gender is not None:
+        child.voice_gender = body.voice_gender
     if body.allow_resume is not None:
         child.allow_resume = body.allow_resume
     if body.quiet_hours_enabled is not None:
@@ -625,6 +694,92 @@ async def update_child(
     await session.commit()
     await session.refresh(child)
     return _serialize_child(child)
+
+
+@router.get("/children/{child_id}/memory")
+async def list_child_memory(
+    child_id: int,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    child = await _parent_child(session, parent, child_id)
+    return {"items": parse_child_memory(child.memory_items)}
+
+
+@router.post("/children/{child_id}/memory")
+async def add_child_memory(
+    child_id: int,
+    body: MemoryItemCreate,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    child = await _parent_child(session, parent, child_id)
+    items = parse_child_memory(child.memory_items)
+    if len(items) >= MEMORY_MAX_ITEMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {MEMORY_MAX_ITEMS} parent-approved notes per child",
+        )
+    item = {
+        "id": new_memory_id(),
+        "label": _normalize_memory_field(body.label, MEMORY_LABEL_MAX),
+        "value": _normalize_memory_field(body.value, MEMORY_VALUE_MAX),
+    }
+    items.append(item)
+    child.memory_items = dump_child_memory(items)
+    await session.commit()
+    return item
+
+
+@router.patch("/children/{child_id}/memory/{item_id}")
+async def update_child_memory(
+    child_id: int,
+    item_id: str,
+    body: MemoryItemUpdate,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    child = await _parent_child(session, parent, child_id)
+    items = parse_child_memory(child.memory_items)
+    target = next((item for item in items if item["id"] == item_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Memory note not found")
+    if body.label is not None:
+        target["label"] = _normalize_memory_field(body.label, MEMORY_LABEL_MAX)
+    if body.value is not None:
+        target["value"] = _normalize_memory_field(body.value, MEMORY_VALUE_MAX)
+    child.memory_items = dump_child_memory(items)
+    await session.commit()
+    return target
+
+
+@router.delete("/children/{child_id}/memory/{item_id}")
+async def delete_child_memory(
+    child_id: int,
+    item_id: str,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    child = await _parent_child(session, parent, child_id)
+    items = parse_child_memory(child.memory_items)
+    next_items = [item for item in items if item["id"] != item_id]
+    if len(next_items) == len(items):
+        raise HTTPException(status_code=404, detail="Memory note not found")
+    child.memory_items = dump_child_memory(next_items)
+    await session.commit()
+    return {"ok": True}
+
+
+@router.delete("/children/{child_id}/memory")
+async def wipe_child_memory(
+    child_id: int,
+    parent: Annotated[ParentAccount, Depends(require_parent)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    child = await _parent_child(session, parent, child_id)
+    child.memory_items = dump_child_memory([])
+    await session.commit()
+    return {"ok": True}
 
 
 @router.get("/children/public")
@@ -677,13 +832,7 @@ async def resume_child_session(
             .where(ConversationLog.session_id == chat_session.id)
             .order_by(ConversationLog.created_at.asc())
         )
-        logs = list(logs_result.scalars().all())
-        messages: list[dict] = []
-        for log in logs:
-            if log.blocked and log.direction == "input":
-                continue
-            role = "user" if log.direction == "input" else "assistant"
-            messages.append({"role": role, "content": log.content, "blocked": log.blocked})
+        messages = _resume_messages(list(logs_result.scalars().all()))
         if messages:
             return {
                 "session_id": chat_session.id,
@@ -800,7 +949,7 @@ async def speak_self_test(request: Request):
 
 @router.post("/chat/speak")
 async def speak_text(body: SpeakRequest, request: Request):
-    if not piper_available():
+    if not tts_available():
         raise HTTPException(
             status_code=503,
             detail="Local read-aloud is not available on this Homeward server.",
@@ -816,7 +965,11 @@ async def speak_text(body: SpeakRequest, request: Request):
         raise HTTPException(status_code=400, detail="Text is too long to read aloud")
 
     try:
-        payload = await asyncio.to_thread(synthesize_speech_payload, cleaned)
+        payload = await asyncio.to_thread(
+            synthesize_speech_payload,
+            cleaned,
+            voice_gender=body.voice_gender,
+        )
     except ValueError as exc:
         record_attempt(rate_key)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -984,6 +1137,29 @@ SSE_HEADERS = {
 }
 
 
+async def _load_session_state(session: AsyncSession, chat_session_id: int | None) -> SessionState:
+    if not chat_session_id:
+        return SessionState()
+    chat_session = await session.get(ChatSession, chat_session_id)
+    if not chat_session:
+        return SessionState()
+    return SessionState.from_json(chat_session.context_state)
+
+
+async def _save_session_state(
+    session: AsyncSession,
+    chat_session_id: int | None,
+    state: SessionState | None,
+) -> None:
+    if not chat_session_id or not state:
+        return
+    chat_session = await session.get(ChatSession, chat_session_id)
+    if not chat_session:
+        return
+    chat_session.context_state = state.to_json()
+    await session.commit()
+
+
 async def _history_for_session(session: AsyncSession, chat_session_id: int | None) -> list[dict]:
     """Prior turns from the server log — never from the client, so history
     cannot be used to smuggle unfiltered text past the input filter."""
@@ -1014,6 +1190,19 @@ def user_facing_message(stage: str | None, block_reason: str | None = None) -> s
     return BLOCKED_MESSAGE
 
 
+def _resume_messages(logs: list[ConversationLog]) -> list[dict]:
+    messages: list[dict] = []
+    for log in logs:
+        if log.blocked and log.direction == "input":
+            continue
+        content = (log.content or "").strip()
+        if not content:
+            continue
+        role = "user" if log.direction == "input" else "assistant"
+        messages.append({"role": role, "content": log.content, "blocked": log.blocked})
+    return messages
+
+
 def _ensure_chat_available(child: ChildProfile) -> None:
     available, message = is_chat_available(
         enabled=child.quiet_hours_enabled,
@@ -1039,6 +1228,7 @@ async def chat(
     record_attempt(rate_key, window_seconds=CHAT_RATE_WINDOW)
     chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
     history = await _history_for_session(session, chat_session_id)
+    chat_state = await _load_session_state(session, chat_session_id)
     chat_model, classifier_model = await get_effective_models(session)
     parent = await _load_parent_account(session, child.parent_id)
     home = home_context_from_parent(parent)
@@ -1059,6 +1249,8 @@ async def chat(
         ai_tone=ai_prefs["ai_tone"],
         ai_verbosity=ai_prefs["ai_verbosity"],
         quick_chat=body.quick_chat,
+        session_state=chat_state,
+        memory_items=_prompt_memory_items(child, quick_chat=body.quick_chat),
     )
 
     if not result.allowed:
@@ -1071,10 +1263,12 @@ async def chat(
             "blocked": True,
             "message": user_facing_message(result.stage, result.block_reason),
             "session_id": chat_session_id,
+            "tools": result.tools or [],
         }
 
     await _log_message(session, child.id, "input", body.message, chat_session_id=chat_session_id)
     await _log_message(session, child.id, "output", result.content or "", chat_session_id=chat_session_id)
+    await _save_session_state(session, chat_session_id, getattr(result, "session_state", None))
 
     return {
         "blocked": False,
@@ -1097,6 +1291,7 @@ async def chat_stream(
     record_attempt(rate_key, window_seconds=CHAT_RATE_WINDOW)
     chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
     history = await _history_for_session(session, chat_session_id)
+    chat_state = await _load_session_state(session, chat_session_id)
     chat_model, classifier_model = await get_effective_models(session)
     parent = await _load_parent_account(session, child.parent_id)
     home = home_context_from_parent(parent)
@@ -1146,6 +1341,8 @@ async def chat_stream(
                     ai_tone=ai_prefs["ai_tone"],
                     ai_verbosity=ai_prefs["ai_verbosity"],
                     quick_chat=body.quick_chat,
+                    session_state=chat_state,
+                    memory_items=_prompt_memory_items(child, quick_chat=body.quick_chat),
                 ):
                     if await request.is_disconnected():
                         await persist_turn()
@@ -1160,7 +1357,11 @@ async def chat_stream(
                                 chat_session_id=chat_session_id,
                             )
                             input_logged = True
-                        payload = json.dumps({"type": "status", "phase": item.phase})
+                        payload = json.dumps({
+                            "type": "status",
+                            "phase": item.phase,
+                            "message": item.message,
+                        })
                         yield f"data: {payload}\n\n"
                         continue
                     if isinstance(item, ToolEvent):
@@ -1193,9 +1394,12 @@ async def chat_stream(
                             payload = json.dumps({
                                 "type": event_type,
                                 "message": kid_message,
+                                "tools": item.tools or [],
                             })
                             yield f"data: {payload}\n\n"
                             return
+                        if item.session_state:
+                            await _save_session_state(log_session, chat_session_id, item.session_state)
                     else:
                         collected.append(item)
                         payload = json.dumps({"type": "token", "content": item})

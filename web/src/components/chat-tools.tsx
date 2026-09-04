@@ -1,38 +1,60 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { CardShell } from "@/components/chat-tool-shell";
+import { QuizCard } from "@/components/quiz-card";
+import { TimerCard } from "@/components/timer-card";
+import { StoryCard } from "@/components/story-card";
 import type {
+  AskParentTool,
   ChatTool,
   ClockTool,
+  ConvertTool,
   DefineTool,
   FactsTool,
+  HowToTool,
   LookupTool,
   MathTool,
-  QuizTool,
-  TimerTool,
+  PracticeTool,
+  RiddleTool,
 } from "@/lib/chat-tools";
 import {
+  ArrowRightLeft,
   BookOpen,
   Calculator,
-  Check,
   CheckCircle2,
+  Circle,
   Clock3,
   CloudSun,
+  Eye,
+  EyeOff,
   Globe,
-  HelpCircle,
   Lightbulb,
+  ListChecks,
   Newspaper,
-  Pause,
-  Play,
-  RotateCcw,
-  Sparkles,
-  TimerReset,
+  ShieldAlert,
   Trophy,
-  XCircle,
+  Users,
 } from "lucide-react";
 
-export function ChatToolCards({ tools }: { tools: ChatTool[] }) {
+export function ChatToolCards({
+  tools,
+  onSend,
+  onSpeak,
+  speakSupported,
+  isSpeaking,
+  speakLoading,
+  onStoryPageText,
+}: {
+  tools: ChatTool[];
+  onSend?: (message: string) => void;
+  onSpeak?: (text: string) => void;
+  speakSupported?: boolean;
+  isSpeaking?: boolean;
+  speakLoading?: boolean;
+  onStoryPageText?: (text: string) => void;
+}) {
   if (!tools.length) return null;
   return (
     <div className="space-y-3 pt-1 animate-slide-up">
@@ -45,43 +67,24 @@ export function ChatToolCards({ tools }: { tools: ChatTool[] }) {
           {tool.type === "quiz" && <QuizCard tool={tool} />}
           {tool.type === "facts" && <FactsCard tool={tool} />}
           {tool.type === "lookup" && <LookupCard tool={tool} />}
+          {tool.type === "story" && (
+            <StoryCard
+              tool={tool}
+              onSend={onSend}
+              onSpeak={onSpeak}
+              speakSupported={speakSupported}
+              isSpeaking={isSpeaking}
+              speakLoading={speakLoading}
+              onPageText={onStoryPageText}
+            />
+          )}
+          {tool.type === "riddle" && <RiddleCard tool={tool} />}
+          {tool.type === "convert" && <ConvertCard tool={tool} />}
+          {tool.type === "practice" && <PracticeCard tool={tool} />}
+          {tool.type === "ask_parent" && <AskParentCard tool={tool} />}
+          {tool.type === "howto" && <HowToCard tool={tool} />}
         </div>
       ))}
-    </div>
-  );
-}
-
-function CardShell({
-  icon,
-  title,
-  badge,
-  children,
-  className = "",
-}: {
-  icon: ReactNode;
-  title: string;
-  badge?: string;
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={`rounded-2xl border border-primary/25 bg-gradient-to-br from-card to-primary/5 p-4 sm:p-5 shadow-sm space-y-3.5 transition-all ${className}`}
-    >
-      <div className="flex items-center justify-between border-b border-border/50 pb-2.5">
-        <div className="flex items-center gap-2.5 font-semibold text-foreground text-sm sm:text-base">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            {icon}
-          </div>
-          <span>{title}</span>
-        </div>
-        {badge && (
-          <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary border border-primary/20">
-            {badge}
-          </span>
-        )}
-      </div>
-      {children}
     </div>
   );
 }
@@ -119,103 +122,6 @@ function MathCard({ tool }: { tool: MathTool }) {
           </ol>
         </div>
       ) : null}
-    </CardShell>
-  );
-}
-
-function TimerCard({ tool }: { tool: TimerTool }) {
-  const [left, setLeft] = useState(tool.seconds);
-  const [running, setRunning] = useState(true);
-
-  useEffect(() => {
-    if (!running) return;
-    const id = window.setInterval(() => {
-      setLeft((n) => {
-        if (n <= 1) {
-          window.clearInterval(id);
-          return 0;
-        }
-        return n - 1;
-      });
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [running]);
-
-  const label = useMemo(() => {
-    const m = Math.floor(left / 60);
-    const s = left % 60;
-    return `${m}:${s.toString().padStart(2, "0")}`;
-  }, [left]);
-
-  const progress = Math.max(0, Math.min(100, ((tool.seconds - left) / tool.seconds) * 100));
-  const isDone = left === 0;
-
-  return (
-    <CardShell
-      icon={<TimerReset className="h-4 w-4" />}
-      title={`Timer · ${tool.label}`}
-      badge={isDone ? "Completed" : running ? "Running" : "Paused"}
-      className={isDone ? "border-emerald-500/40 bg-emerald-500/5" : ""}
-    >
-      <div className="py-2 text-center space-y-3">
-        {/* Progress bar */}
-        <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className={`h-full transition-all duration-300 ${
-              isDone ? "bg-emerald-500" : "bg-gradient-to-r from-primary to-indigo-500"
-            }`}
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-
-        {isDone ? (
-          <div className="space-y-1 py-1 animate-bounce-gentle">
-            <p className="text-3xl sm:text-4xl font-extrabold text-emerald-600 dark:text-emerald-400 flex items-center justify-center gap-2">
-              <Sparkles className="h-7 w-7 text-amber-400" />
-              Time&apos;s up! 🎉
-            </p>
-            <p className="text-xs text-muted-foreground">Great job staying on task!</p>
-          </div>
-        ) : (
-          <p className="font-mono text-4xl sm:text-5xl font-extrabold tabular-nums tracking-tight text-foreground">
-            {label}
-          </p>
-        )}
-
-        <div className="flex justify-center gap-2.5 pt-1">
-          <Button
-            size="sm"
-            variant={running ? "outline" : "default"}
-            onClick={() => setRunning((v) => !v)}
-            disabled={isDone}
-            className="rounded-xl px-4 font-medium shadow-xs"
-          >
-            {running ? (
-              <>
-                <Pause className="mr-1.5 h-3.5 w-3.5" />
-                Pause
-              </>
-            ) : (
-              <>
-                <Play className="mr-1.5 h-3.5 w-3.5" />
-                Start
-              </>
-            )}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setLeft(tool.seconds);
-              setRunning(true);
-            }}
-            className="rounded-xl px-3 font-medium text-muted-foreground hover:text-foreground"
-          >
-            <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-            Reset
-          </Button>
-        </div>
-      </div>
     </CardShell>
   );
 }
@@ -326,87 +232,199 @@ function LookupCard({ tool }: { tool: LookupTool }) {
   );
 }
 
-function QuizCard({ tool }: { tool: QuizTool }) {
-  const [index, setIndex] = useState(0);
-  const [picked, setPicked] = useState<number | null>(null);
-  const questions = Array.isArray(tool.questions) ? tool.questions : [];
-  const question = questions[index];
-  if (!question) return null;
-
-  const correct = picked !== null && picked === question.answer;
-  const last = index === questions.length - 1;
+function RiddleCard({ tool }: { tool: RiddleTool }) {
+  const [showHint, setShowHint] = useState(false);
+  const [showAnswer, setShowAnswer] = useState(false);
 
   return (
     <CardShell
-      icon={<HelpCircle className="h-4 w-4 text-primary" />}
-      title={tool.title || "Quick Quiz"}
-      badge={`Question ${index + 1} of ${questions.length}`}
+      icon={<Lightbulb className="h-4 w-4 text-amber-500" />}
+      title="Riddle"
+      badge={showAnswer ? "Revealed" : "Think…"}
     >
-      <div className="space-y-3.5">
-        <p className="text-base sm:text-lg font-semibold text-foreground">
-          {question.q}
-        </p>
+      <p className="text-base sm:text-lg font-semibold text-foreground leading-relaxed">
+        {tool.riddle}
+      </p>
+      {tool.hint && (
         <div className="space-y-2">
-          {(question.choices ?? []).map((choice, i) => {
-            const show = picked !== null;
-            const isAnswer = i === question.answer;
-            const isPicked = picked === i;
-
-            let buttonStyle = "border-border/80 bg-background hover:bg-muted/70";
-            if (show && isAnswer) {
-              buttonStyle = "border-emerald-500 bg-emerald-500/15 text-emerald-950 dark:text-emerald-100 font-semibold shadow-xs";
-            } else if (show && isPicked && !isAnswer) {
-              buttonStyle = "border-destructive/70 bg-destructive/10 text-destructive";
-            }
-
-            return (
-              <Button
-                key={`${i}-${choice}`}
-                variant="outline"
-                className={`w-full justify-between h-auto py-3 px-4 rounded-xl text-left whitespace-normal text-sm sm:text-base transition-all ${buttonStyle}`}
-                disabled={picked !== null}
-                onClick={() => setPicked(i)}
-              >
-                <span>{choice}</span>
-                {show && isAnswer && (
-                  <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0 ml-2" />
-                )}
-                {show && isPicked && !isAnswer && (
-                  <XCircle className="h-4 w-4 text-destructive shrink-0 ml-2" />
-                )}
-              </Button>
-            );
-          })}
-        </div>
-
-        {picked !== null && (
-          <div
-            className={`rounded-xl p-3.5 border text-sm animate-pop-in ${
-              correct
-                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-900 dark:text-emerald-200"
-                : "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200"
-            }`}
-          >
-            <p className="font-semibold">{correct ? "🎉 Great job!" : "💡 Not quite!"}</p>
-            {question.explain && (
-              <p className="mt-1 text-xs sm:text-sm text-foreground/90">{question.explain}</p>
-            )}
-          </div>
-        )}
-
-        {picked !== null && !last && (
           <Button
             size="sm"
-            onClick={() => {
-              setIndex((n) => n + 1);
-              setPicked(null);
-            }}
-            className="rounded-xl font-medium shadow-xs"
+            variant="ghost"
+            className="rounded-xl"
+            onClick={() => setShowHint((v) => !v)}
           >
-            Next question →
+            {showHint ? "Hide hint" : "Need a hint?"}
           </Button>
+          {showHint && (
+            <p className="rounded-xl bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-sm text-foreground/90">
+              {tool.hint}
+            </p>
+          )}
+        </div>
+      )}
+      <Button
+        size="sm"
+        variant={showAnswer ? "outline" : "default"}
+        className="rounded-xl"
+        onClick={() => setShowAnswer((v) => !v)}
+      >
+        {showAnswer ? (
+          <>
+            <EyeOff className="mr-1.5 h-3.5 w-3.5" />
+            Hide answer
+          </>
+        ) : (
+          <>
+            <Eye className="mr-1.5 h-3.5 w-3.5" />
+            Show answer
+          </>
         )}
+      </Button>
+      {showAnswer && (
+        <p className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-900 dark:text-emerald-100 animate-pop-in">
+          {tool.answer}
+        </p>
+      )}
+    </CardShell>
+  );
+}
+
+function ConvertCard({ tool }: { tool: ConvertTool }) {
+  return (
+    <CardShell
+      icon={<ArrowRightLeft className="h-4 w-4" />}
+      title="Unit conversion"
+      badge="Local math"
+    >
+      <div className="flex items-center justify-between gap-3 rounded-xl bg-background/90 p-3.5 border border-border/60">
+        <span className="text-sm sm:text-base font-medium text-muted-foreground">
+          {tool.from_amount} {tool.from_unit}
+        </span>
+        <span className="text-xl sm:text-2xl font-bold text-primary font-mono">
+          = {tool.result} {tool.to_unit}
+        </span>
       </div>
+    </CardShell>
+  );
+}
+
+function PracticeCard({ tool }: { tool: PracticeTool }) {
+  const items = Array.isArray(tool.items) ? tool.items : [];
+  const [revealed, setRevealed] = useState<Record<number, boolean>>({});
+  const [marks, setMarks] = useState<Record<number, "yes" | "no">>({});
+  const scored = Object.keys(marks).length;
+  const correct = Object.values(marks).filter((m) => m === "yes").length;
+
+  return (
+    <CardShell
+      icon={<ListChecks className="h-4 w-4" />}
+      title={tool.title || "Practice"}
+      badge={tool.kind === "spelling" ? "Spelling" : tool.kind === "times" ? "Times tables" : "Practice"}
+    >
+      <ol className="space-y-2">
+        {items.map((item, idx) => {
+          const open = revealed[idx];
+          const mark = marks[idx];
+          return (
+            <li key={`${idx}-${item.prompt}`} className="rounded-xl border border-border/60 bg-background/80 p-3 space-y-2">
+              <button
+                type="button"
+                className="w-full text-left text-sm sm:text-base font-semibold text-foreground"
+                onClick={() => setRevealed((prev) => ({ ...prev, [idx]: !prev[idx] }))}
+              >
+                {item.prompt}
+              </button>
+              {open && (
+                <div className="space-y-2 animate-pop-in">
+                  <p className="text-sm text-primary font-semibold">{item.answer}</p>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant={mark === "yes" ? "default" : "outline"}
+                      className="rounded-xl"
+                      onClick={() => setMarks((prev) => ({ ...prev, [idx]: "yes" }))}
+                    >
+                      I got it
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={mark === "no" ? "destructive" : "ghost"}
+                      className="rounded-xl"
+                      onClick={() => setMarks((prev) => ({ ...prev, [idx]: "no" }))}
+                    >
+                      Not yet
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      {scored > 0 && (
+        <p className="text-xs font-medium text-muted-foreground">
+          Score: {correct} / {items.length}
+        </p>
+      )}
+    </CardShell>
+  );
+}
+
+function AskParentCard({ tool }: { tool: AskParentTool }) {
+  return (
+    <CardShell
+      icon={<Users className="h-4 w-4" />}
+      title={tool.title || "Ask a grown-up"}
+      badge="Parent help"
+      className="border-amber-500/30 bg-amber-500/5"
+    >
+      <div className="flex items-start gap-2.5">
+        <ShieldAlert className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+        <p className="text-sm sm:text-base text-foreground leading-relaxed">{tool.message}</p>
+      </div>
+    </CardShell>
+  );
+}
+
+function HowToCard({ tool }: { tool: HowToTool }) {
+  const steps = Array.isArray(tool.steps) ? tool.steps : [];
+  const [done, setDone] = useState<Record<number, boolean>>({});
+  const finished = steps.length > 0 && steps.every((_, i) => done[i]);
+
+  return (
+    <CardShell
+      icon={<ListChecks className="h-4 w-4" />}
+      title={tool.title || "How to"}
+      badge={finished ? "Done!" : `${Object.values(done).filter(Boolean).length}/${steps.length}`}
+    >
+      <ol className="space-y-2">
+        {steps.map((step, idx) => {
+          const checked = !!done[idx];
+          return (
+            <li key={`${idx}-${step}`}>
+              <button
+                type="button"
+                onClick={() => setDone((prev) => ({ ...prev, [idx]: !prev[idx] }))}
+                className={`flex w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-left text-sm sm:text-base transition-all ${
+                  checked
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-950 dark:text-emerald-100"
+                    : "border-border/60 bg-background/80 text-foreground"
+                }`}
+              >
+                {checked ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                ) : (
+                  <Circle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                )}
+                <span className={checked ? "line-through opacity-80" : ""}>
+                  <span className="font-semibold mr-1.5">{idx + 1}.</span>
+                  {step}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
     </CardShell>
   );
 }

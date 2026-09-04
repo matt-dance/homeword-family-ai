@@ -1,5 +1,7 @@
 """Database models and session management."""
 
+import json
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
@@ -7,6 +9,42 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from homeward_gateway.config import settings
+
+MEMORY_MAX_ITEMS = 20
+MEMORY_LABEL_MAX = 40
+MEMORY_VALUE_MAX = 160
+
+
+def parse_child_memory(raw: str | None) -> list[dict[str, str]]:
+    """Return parent-saved memory items. Never invents missing facts."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    items: list[dict[str, str]] = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        item_id = str(entry.get("id") or "").strip()
+        label = str(entry.get("label") or "").strip()
+        value = str(entry.get("value") or "").strip()
+        if item_id and label and value:
+            items.append({"id": item_id, "label": label, "value": value})
+        if len(items) >= MEMORY_MAX_ITEMS:
+            break
+    return items
+
+
+def dump_child_memory(items: list[dict[str, str]]) -> str:
+    return json.dumps(items, ensure_ascii=False)
+
+
+def new_memory_id() -> str:
+    return uuid.uuid4().hex[:12]
 
 
 class Base(DeclarativeBase):
@@ -49,12 +87,14 @@ class ChildProfile(Base):
     pin: Mapped[str | None] = mapped_column(String(255), nullable=True)
     homework_mode: Mapped[bool] = mapped_column(Boolean, default=False)
     live_lookups: Mapped[bool] = mapped_column(Boolean, default=False)
+    voice_gender: Mapped[str] = mapped_column(String(10), default="female")
     allow_resume: Mapped[bool] = mapped_column(Boolean, default=True)
     quiet_hours_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     quiet_hours_start: Mapped[str | None] = mapped_column(String(5), nullable=True)
     quiet_hours_end: Mapped[str | None] = mapped_column(String(5), nullable=True)
     quiet_hours_days: Mapped[str | None] = mapped_column(String(20), nullable=True)
     slug: Mapped[str] = mapped_column(String(100), nullable=False, default="child")
+    memory_items: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -72,6 +112,7 @@ class ChatSession(Base):
     child_id: Mapped[int] = mapped_column(ForeignKey("child_profiles.id"), nullable=False)
     preview: Mapped[str | None] = mapped_column(String(200), nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -165,12 +206,14 @@ def _migrate_child_columns(connection) -> None:
     additions = [
         ("homework_mode", "BOOLEAN DEFAULT 0"),
         ("live_lookups", "BOOLEAN DEFAULT 0"),
+        ("voice_gender", "VARCHAR(10) DEFAULT 'female'"),
         ("allow_resume", "BOOLEAN DEFAULT 1"),
         ("quiet_hours_enabled", "BOOLEAN DEFAULT 0"),
         ("quiet_hours_start", "VARCHAR(5)"),
         ("quiet_hours_end", "VARCHAR(5)"),
         ("quiet_hours_days", "VARCHAR(20)"),
         ("slug", "VARCHAR(100)"),
+        ("memory_items", "TEXT"),
     ]
     for name, col_type in additions:
         if name not in columns:
@@ -216,6 +259,8 @@ def _migrate_chat_session_columns(connection) -> None:
     columns = {col["name"] for col in inspector.get_columns("chat_sessions")}
     if "summary" not in columns:
         connection.execute(sa.text("ALTER TABLE chat_sessions ADD COLUMN summary TEXT"))
+    if "context_state" not in columns:
+        connection.execute(sa.text("ALTER TABLE chat_sessions ADD COLUMN context_state TEXT"))
 
 
 def _migrate_session_columns(connection) -> None:

@@ -7,6 +7,7 @@ import logging
 import litellm
 
 from homeward_gateway.config import settings
+from homeward_gateway.models.litellm_target import resolve_litellm_target
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +32,7 @@ async def summarize_session(
     if message_count == 0:
         return f"{child_name} opened chat but did not send any messages."
 
-    if settings.cloud_enabled and settings.openai_api_key:
-        llm_model = "gpt-4o-mini"
-        api_key = settings.openai_api_key
-        api_base = None
-    else:
-        llm_model = f"ollama/{chat_model or settings.ollama_model}"
-        api_key = "ollama"
-        api_base = settings.ollama_base_url
+    llm_model, api_key, api_base, llm_extra = resolve_litellm_target(chat_model)
 
     transcript_lines = []
     for user_msg, assistant_msg in exchanges[-6:]:
@@ -62,6 +56,7 @@ async def summarize_session(
             timeout=min(settings.llm_timeout, 30),
             max_tokens=80,
             temperature=0.3,
+            **llm_extra,
         )
         content = (response.choices[0].message.content or "").strip()
         if content:

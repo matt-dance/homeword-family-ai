@@ -4,16 +4,23 @@ import pytest
 
 from homeward_gateway.chat.lookups import (
     LookupResult,
+    build_session_context,
+    detect_current_facts_intent,
     detect_lookup_intent,
+    format_current_facts_notes,
     format_news_notes,
     format_sports_notes,
     format_weather_notes,
+    is_referential,
     lookup_card,
+    lookup_context_hint,
     lookup_prompt_notes,
     parse_featured_headlines,
     parse_scoreboard_events,
+    resolve_lookup_intent,
     resolve_weather_place,
     weather_missing_place_notes,
+    _parse_wikipedia_incumbent,
 )
 from homeward_gateway.pipeline.pipeline import (
     PipelineResult,
@@ -89,6 +96,55 @@ class TestDetectLookupIntent:
         )
         assert place == "Boulder, CO"
 
+    def test_resolve_weather_place_from_assistant_game_context(self):
+        history = [
+            {"role": "user", "content": "Who is Boise State playing this weekend?"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Boise State is playing the Oregon Ducks at Autzen Stadium "
+                    "in Eugene, OR, on Saturday, September 5th at 3:30 PM EDT."
+                ),
+            },
+        ]
+        place = resolve_weather_place(
+            "What will the weather be like at that game?",
+            history,
+        )
+        assert place == "Eugene, OR"
+
+    def test_resolve_weather_place_from_sports_lookup_line(self):
+        history = [
+            {"role": "user", "content": "Who is Boise State playing this weekend?"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Boise State Broncos at Oregon Ducks (Scheduled)"
+                    " — Autzen Stadium, Eugene, OR — Sat, September 5th at 3:30 PM EDT"
+                ),
+            },
+        ]
+        place = resolve_weather_place(
+            "What will the weather be like at the game?",
+            history,
+        )
+        assert place == "Eugene, OR"
+
+    def test_resolve_weather_place_does_not_use_stale_game_for_general_question(self):
+        history = [
+            {"role": "user", "content": "Who is Boise State playing this weekend?"},
+            {
+                "role": "assistant",
+                "content": "Boise State is playing at Autzen Stadium in Eugene, OR.",
+            },
+        ]
+        place = resolve_weather_place(
+            "What's the weather tomorrow?",
+            history,
+            home_location="Denver, CO",
+        )
+        assert place == "Denver, CO"
+
     def test_weather_missing_place_notes(self):
         assert "city or town" in weather_missing_place_notes().lower()
 
@@ -96,6 +152,15 @@ class TestDetectLookupIntent:
         intent = detect_lookup_intent("What's in the news today?")
         assert intent is not None
         assert intent.kind == "news"
+
+    def test_current_facts_president(self):
+        intent = detect_current_facts_intent("Who is the president of the United States right now?")
+        assert intent is not None
+        assert intent.kind == "current_facts"
+        assert intent.query == "President_of_the_United_States"
+        resolved, _ctx = resolve_lookup_intent("Who is the president of the United States right now?")
+        assert resolved is not None
+        assert resolved.kind == "current_facts"
 
     def test_sports_team(self):
         intent = detect_lookup_intent("Did the Broncos win last night?")
@@ -125,6 +190,95 @@ class TestDetectLookupIntent:
 
     def test_empty(self):
         assert detect_lookup_intent("") is None
+
+
+class TestSessionContext:
+    GAME_HISTORY = [
+        {"role": "user", "content": "Who is Boise State playing this weekend?"},
+        {
+            "role": "assistant",
+            "content": (
+                "Boise State Broncos at Oregon Ducks (Scheduled)"
+                " — Autzen Stadium, Eugene, OR — Sat, September 5th at 3:30 PM EDT"
+            ),
+        },
+    ]
+
+    def test_build_session_context_from_game_reply(self):
+        context = build_session_context(self.GAME_HISTORY)
+        assert context.team == "boise state"
+        assert context.place == "Eugene, OR"
+        assert context.venue == "Eugene, OR"
+        assert context.event_time is not None
+        assert "3:30 PM" in context.event_time
+
+    def test_is_referential(self):
+        assert is_referential("What will the weather be like at that game?")
+        assert is_referential("Did they win?")
+        assert not is_referential("What's the weather in Denver?")
+
+    def test_resolve_lookup_weather_from_game_context(self):
+        intent, context = resolve_lookup_intent(
+            "What will the weather be like at that game?",
+            self.GAME_HISTORY,
+        )
+        assert intent is not None
+        assert intent.kind == "weather"
+        assert intent.query == "Eugene, OR"
+        assert context.team == "boise state"
+
+    def test_resolve_lookup_sports_followup(self):
+        intent, context = resolve_lookup_intent("Did they win?", self.GAME_HISTORY)
+        assert intent is not None
+        assert intent.kind == "sports"
+        assert intent.query == "boise state"
+
+    def test_resolve_lookup_does_not_use_stale_place_for_general_weather(self):
+        intent, _context = resolve_lookup_intent(
+            "What's the weather tomorrow?",
+            self.GAME_HISTORY,
+            home_location="Denver, CO",
+        )
+        assert intent is not None
+        assert intent.kind == "weather"
+        assert intent.query == "Denver, CO"
+
+    def test_lookup_context_hint_for_referential_weather(self):
+        intent, context = resolve_lookup_intent(
+            "What will the weather be like there?",
+            self.GAME_HISTORY,
+        )
+        assert intent is not None
+        hint = lookup_context_hint(
+            "What will the weather be like there?",
+            intent,
+            context,
+            referential=True,
+        )
+        prompt = lookup_prompt_notes(format_weather_notes("Eugene", WEATHER_GEO, WEATHER_FORECAST), context_hint=hint)
+        assert "Eugene, OR" in hint or "earlier in this chat" in hint
+        assert "earlier in this chat" in prompt
+
+    def test_resolve_weather_from_paraphrased_game_bullets(self):
+        history = [
+            {"role": "user", "content": "Who is Boise State playing this weekend?"},
+            {
+                "role": "assistant",
+                "content": (
+                    "- Game: Boise State Broncos at Oregon Ducks\n"
+                    "- Venue: Autzen Stadium, Eugene, OR\n"
+                ),
+            },
+        ]
+        intent, context = resolve_lookup_intent(
+            "What will the weather be like at the game?",
+            history,
+        )
+        assert context.place == "Eugene, OR"
+        assert context.team == "boise state"
+        assert intent is not None
+        assert intent.kind == "weather"
+        assert intent.query == "Eugene, OR"
 
 
 class TestFormatters:
@@ -183,6 +337,18 @@ class TestFormatters:
         card = lookup_card(result)
         assert card.type == "lookup"
         assert card.data["source_label"] == "Wikipedia Current Events"
+
+    def test_parse_wikipedia_incumbent(self):
+        wikitext = "| office = President\n| incumbent = [[Donald Trump]]\n| incumbentsince = January 20, 2025\n"
+        name, since = _parse_wikipedia_incumbent(wikitext)
+        assert name == "Donald Trump"
+        assert "2025" in since
+
+    def test_current_facts_notes(self):
+        result = format_current_facts_notes("President of the United States", "Donald Trump", "January 20, 2025")
+        prompt = lookup_prompt_notes(result)
+        assert "Donald Trump" in result.summary
+        assert "training data" in prompt
 
 
 class TestParsers:
@@ -349,7 +515,7 @@ class TestResolveLiveLookup:
             return None
 
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
-        notes, tools = await resolve_live_lookup(
+        notes, tools, intent, result = await resolve_live_lookup(
             "What's the weather in Denver?",
             live_lookups=False,
             preset=YOUNG,
@@ -371,7 +537,7 @@ class TestResolveLiveLookup:
 
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
-        notes, tools = await resolve_live_lookup(
+        notes, tools, intent, result = await resolve_live_lookup(
             "What's the weather in Denver?",
             live_lookups=True,
             preset=YOUNG,
@@ -391,7 +557,7 @@ class TestResolveLiveLookup:
             return None
 
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
-        notes, tools = await resolve_live_lookup(
+        notes, tools, intent, result = await resolve_live_lookup(
             "What's the weather tomorrow?",
             live_lookups=True,
             preset=YOUNG,
@@ -415,7 +581,7 @@ class TestResolveLiveLookup:
 
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
-        notes, tools = await resolve_live_lookup(
+        notes, tools, intent, result = await resolve_live_lookup(
             "What's the weather tomorrow?",
             live_lookups=True,
             preset=YOUNG,
@@ -445,7 +611,7 @@ class TestResolveLiveLookup:
 
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
-        notes, tools = await resolve_live_lookup(
+        notes, tools, intent, result = await resolve_live_lookup(
             "What's in the news today?",
             live_lookups=True,
             preset=YOUNG,

@@ -6,10 +6,14 @@ import { useVoiceChat } from "@/hooks/use-voice-chat";
 import { useReadAloud } from "@/hooks/use-read-aloud";
 import { VoiceListener } from "@/components/voice-listener";
 import { SpeakingIndicator } from "@/components/speaking-indicator";
+import { HomeworkCamera } from "@/components/homework-camera";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { ChatToolCards } from "@/components/chat-tools";
+import { ReplyChips } from "@/components/reply-chips";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { extractChatTools, mergeChatTools, type ChatTool } from "@/lib/chat-tools";
+import { extractChatTools, mergeChatTools, type ChatTool, type StoryTool } from "@/lib/chat-tools";
+import { shouldShowReplyChips } from "@/lib/reply-chips";
+import { shouldOfferResume } from "@/lib/resume-session";
 import { getAgeTheme, AGE_THEME_CONFIGS } from "@/lib/age-theme";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +49,12 @@ function simpleModeKey(childId: number) {
   return `homeward-simple-mode-${childId}`;
 }
 
+function spokenTextForMessage(msg: Message) {
+  const parsed = extractChatTools(msg.content, msg.tools);
+  const story = parsed.tools.find((tool): tool is StoryTool => tool.type === "story");
+  return story?.pages?.[0]?.text || parsed.text;
+}
+
 const CHAT_ERROR_MESSAGE = "Oops — something got tangled up. Please try again in a moment!";
 const SESSION_ERROR_MESSAGE = "We couldn't start a chat right now. Try again, or pick a different profile.";
 
@@ -65,16 +75,24 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [chatSessionId, setChatSessionId] = useState<number | null>(null);
   const [starters, setStarters] = useState<ConversationStarter[]>([]);
   const [simpleMode, setSimpleMode] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [resumeOffered, setResumeOffered] = useState(false);
+  const [resumeChecking, setResumeChecking] = useState(false);
+  const [storyPageText, setStoryPageText] = useState<Record<number, string>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
   const sendRef = useRef<(text: string, fromVoice?: boolean) => Promise<void>>(async () => {});
   const autoReadNextRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Voice conversation loop: swap these two hooks for useVoiceConversation({
+  //   onTranscript: handleVoiceTranscript,
+  // }). After the assistant stream finishes, call notifyAssistantDone(spoken)
+  // when conversationActive (instead of speakMessage). Mic tap while TTS is
+  // playing should call bargeIn(). See hooks/use-voice-conversation.ts.
   const {
     supported: readAloudSupported,
     error: readAloudError,
@@ -82,7 +100,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     speakMessage,
     stop: stopReadAloud,
     isSpeakingMessage,
-  } = useReadAloud();
+  } = useReadAloud(selectedChild.voice_gender);
 
   const handleVoiceTranscript = useCallback((text: string) => {
     autoReadNextRef.current = true;
@@ -117,6 +135,8 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     setMessages([]);
     setSessionReady(false);
     setResumeOffered(false);
+    setResumeChecking(false);
+    setStoryPageText({});
     setStarters([]);
   }, [selectedChild.id, selectedChild.has_pin]);
 
@@ -173,12 +193,40 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
 
   useEffect(() => {
     if (!pinVerified || chatSessionId !== null) return;
+    let cancelled = false;
+
     // Quick Chat is anonymous and shared, so never offer another kid's last chat.
-    if (selectedChild.allow_resume !== false && !quickChat) {
-      setResumeOffered(true);
-    } else {
+    if (selectedChild.allow_resume === false || quickChat) {
+      setResumeOffered(false);
+      setResumeChecking(false);
       void initSession(false);
+      return;
     }
+
+    setResumeChecking(true);
+    setResumeOffered(false);
+
+    void api
+      .resumeSession(selectedChild.id)
+      .then((resumed) => {
+        if (cancelled) return;
+        if (shouldOfferResume({ allowResume: selectedChild.allow_resume, quickChat, session: resumed })) {
+          setResumeOffered(true);
+          setResumeChecking(false);
+          return;
+        }
+        setResumeChecking(false);
+        void initSession(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setResumeChecking(false);
+        void initSession(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedChild, pinVerified, chatSessionId, initSession, quickChat]);
 
   const handleNewChat = async () => {
@@ -189,6 +237,8 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     setMessages([]);
     setSessionReady(false);
     setResumeOffered(false);
+    setResumeChecking(false);
+    setStoryPageText({});
     try {
       const session = await api.createChatSession(selectedChild.id, previousSessionId ?? undefined);
       setChatSessionId(session.session_id);
@@ -208,6 +258,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       setMessages([]);
       setSessionReady(false);
       setResumeOffered(false);
+      setResumeChecking(false);
     } catch (e) {
       const message = e instanceof Error ? e.message : "";
       // The server explains lockouts ("Too many attempts…"); everything else is a mismatch.
@@ -248,6 +299,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       stopReadAloud();
       setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
       setStreaming(true);
+      setStreamStatus("Checking your message…");
 
       let assistantContent = "";
       const controller = new AbortController();
@@ -267,17 +319,26 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
               return [...prev, { role: "assistant", content: assistantContent }];
             });
           },
-          (blockedMsg) => {
+          (blockedMsg, blockedTools) => {
             assistantContent = blockedMsg;
             // Drop any half-streamed reply so the kid sees one clear message, not both.
             setMessages((prev) => {
               const last = prev[prev.length - 1];
               const base = last?.role === "assistant" ? prev.slice(0, -1) : prev;
-              return [...base, { role: "assistant", content: blockedMsg, blocked: true }];
+              return [
+                ...base,
+                {
+                  role: "assistant",
+                  content: blockedMsg,
+                  blocked: true,
+                  tools: mergeChatTools([], blockedTools),
+                },
+              ];
             });
           },
           () => {
             setStreaming(false);
+            setStreamStatus(null);
             if (controller.signal.aborted) return;
             if (!assistantContent || assistantContent === CHAT_ERROR_MESSAGE) return;
             if (!autoReadNextRef.current) return;
@@ -292,7 +353,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                   }
                 }
                 if (idx >= 0) {
-                  const spoken = extractChatTools(prev[idx].content).text;
+                  const spoken = spokenTextForMessage(prev[idx]);
                   if (spoken) speakMessage(`msg-${idx}`, spoken);
                 }
                 return prev;
@@ -311,10 +372,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           },
           controller.signal,
           quickChat,
+          (status) => setStreamStatus(status),
         );
       } catch (e) {
         if (controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) {
           setStreaming(false);
+          setStreamStatus(null);
           return;
         }
         console.error("Chat stream failed", e);
@@ -326,6 +389,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           return [...base, { role: "assistant", content: text, blocked: true }];
         });
         setStreaming(false);
+        setStreamStatus(null);
       } finally {
         if (abortRef.current === controller) {
           abortRef.current = null;
@@ -339,6 +403,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     abortRef.current?.abort();
     abortRef.current = null;
     setStreaming(false);
+    setStreamStatus(null);
     stopReadAloud();
   }, [stopReadAloud]);
 
@@ -403,6 +468,19 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             </CardContent>
           </Card>
         </main>
+      </div>
+    );
+  }
+
+  if (resumeChecking && chatSessionId === null && !resumeOffered) {
+    return (
+      <div className={`min-h-screen flex flex-col items-center justify-center p-6 ${ageConfig.ambientGradient}`}>
+        <div className="w-full max-w-sm text-center space-y-4 animate-pop-in">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-3xl shadow-inner">
+            {ageConfig.avatarEmoji}
+          </div>
+          <p className="text-sm font-medium text-muted-foreground">Getting your chat ready…</p>
+        </div>
       </div>
     );
   }
@@ -482,6 +560,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       ? messages.map((m, i) => ({ message: m, index: i })).slice(-2)
       : messages.map((m, i) => ({ message: m, index: i }))
   );
+  const lastAssistantIndex = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") return i;
+    }
+    return -1;
+  })();
 
   return (
     <div className={`flex min-h-screen flex-col transition-colors duration-300 ${ageConfig.ambientGradient}`}>
@@ -623,7 +707,13 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             const isReading = isSpeakingMessage(messageKey);
             const parsed = isAssistant && !msg.blocked ? extractChatTools(msg.content, msg.tools) : null;
             const displayText = parsed?.text ?? msg.content;
-            const tools = parsed?.tools ?? [];
+            const tools = parsed?.tools ?? msg.tools ?? [];
+            const listenText = storyPageText[i] || displayText;
+            const showChips = shouldShowReplyChips({
+              streaming,
+              blocked: msg.blocked,
+              isLastAssistant: isAssistant && i === lastAssistantIndex,
+            });
 
             return (
               <div
@@ -672,8 +762,20 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                   ) : null}
 
                   {/* Tool Cards */}
-                  {isAssistant && !msg.blocked && tools.length > 0 && (
-                    <ChatToolCards tools={tools} />
+                  {isAssistant && tools.length > 0 && (
+                    <ChatToolCards
+                      tools={tools}
+                      onSend={(text) => {
+                        void handleSend(text);
+                      }}
+                      onSpeak={(text) => speakMessage(`${messageKey}-story`, text)}
+                      speakSupported={readAloudSupported}
+                      isSpeaking={isSpeakingMessage(`${messageKey}-story`)}
+                      speakLoading={readAloudState.isLoading && readAloudState.messageKey === `${messageKey}-story`}
+                      onStoryPageText={(text) => {
+                        setStoryPageText((prev) => (prev[i] === text ? prev : { ...prev, [i]: text }));
+                      }}
+                    />
                   )}
 
                   {/* Speaking indicator / audio player */}
@@ -682,13 +784,13 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                   )}
 
                   {/* Listen button */}
-                  {isAssistant && readAloudSupported && !streaming && displayText && !msg.blocked && (
+                  {isAssistant && readAloudSupported && !streaming && listenText && !msg.blocked && (
                     <div className="pt-0.5">
                       <Button
                         variant="outline"
                         size="sm"
                         className="h-8 rounded-full px-3 gap-1.5 text-xs font-medium border-border/70 bg-card/80 hover:bg-card hover:border-primary/50 text-muted-foreground hover:text-foreground shadow-2xs"
-                        onClick={() => speakMessage(messageKey, displayText)}
+                        onClick={() => speakMessage(messageKey, listenText)}
                         disabled={readAloudState.isLoading && readAloudState.messageKey === messageKey}
                       >
                         {isReading ? (
@@ -712,6 +814,15 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                       </Button>
                     </div>
                   )}
+
+                  {showChips && (
+                    <ReplyChips
+                      disabled={streaming || !sessionReady}
+                      onSend={(text) => {
+                        void handleSend(text);
+                      }}
+                    />
+                  )}
                 </div>
               </div>
             );
@@ -734,7 +845,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                   <span className="h-2 w-2 rounded-full bg-primary animate-bounce" />
                 </span>
                 <span className="text-xs text-muted-foreground font-medium pl-1">
-                  Thinking…
+                  {streamStatus || "Thinking…"}
                 </span>
                 <button
                   type="button"
@@ -775,7 +886,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             </p>
           )}
 
-          <div className="flex items-center gap-2">
+          <div className="relative flex items-center gap-2">
             {voiceSupported && (
               <Button
                 type="button"
@@ -796,6 +907,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                 )}
               </Button>
             )}
+            <HomeworkCamera
+              childId={selectedChild.id}
+              enabled={Boolean(selectedChild.homework_mode)}
+              disabled={streaming || listening || transcribing || !sessionReady}
+              simpleMode={simpleMode}
+            />
             <Input
               placeholder={
                 displayName

@@ -20,6 +20,7 @@ dependencies = [
     "greenlet>=3.0.0",
     "faster-whisper>=1.0.0",
     "piper-tts>=1.2.0",
+    "kokoro-onnx>=0.4.9",
     "onnx>=1.16.0",
     "numpy>=1.26.0",
     "zeroconf>=0.131.0",

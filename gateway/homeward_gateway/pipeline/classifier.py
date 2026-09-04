@@ -106,11 +106,16 @@ async def classify(
     text: str,
     strictness: int = 3,
     model: str | None = None,
+    *,
+    rules_only: bool = False,
 ) -> ClassifierResult:
     """Classify content. Model timeouts/errors fall back to rules, not a blanket refusal."""
     # At low strictness, skip classifier for speed
     if strictness <= 1:
         return ClassifierResult(allowed=True, reason="strictness bypass")
+
+    if rules_only:
+        return classify_rules_fallback(text)
 
     ollama_up = await _check_ollama_available()
     if not ollama_up:

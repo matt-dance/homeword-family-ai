@@ -13,9 +13,56 @@ export type LookupTool = {
   query: string;
   summary: string;
 };
-export type ChatTool = MathTool | TimerTool | ClockTool | DefineTool | QuizTool | FactsTool | LookupTool;
+export type StoryChoice = { label: string; message: string };
+export type StoryPage = { text: string; choices?: StoryChoice[] };
+export type StoryTool = { type: "story"; title: string; pages: StoryPage[] };
+export type RiddleTool = { type: "riddle"; riddle: string; answer: string; hint?: string };
+export type ConvertTool = {
+  type: "convert";
+  from_amount: string;
+  from_unit: string;
+  to_unit: string;
+  result: string;
+};
+export type PracticeItem = { prompt: string; answer: string };
+export type PracticeTool = {
+  type: "practice";
+  title: string;
+  kind?: "spelling" | "times" | string;
+  items: PracticeItem[];
+};
+export type AskParentTool = { type: "ask_parent"; title: string; message: string; reason?: string };
+export type HowToTool = { type: "howto"; title: string; steps: string[] };
+export type ChatTool =
+  | MathTool
+  | TimerTool
+  | ClockTool
+  | DefineTool
+  | QuizTool
+  | FactsTool
+  | LookupTool
+  | StoryTool
+  | RiddleTool
+  | ConvertTool
+  | PracticeTool
+  | AskParentTool
+  | HowToTool;
 
-const TOOL_TYPES = new Set(["math", "timer", "clock", "define", "quiz", "facts", "lookup"]);
+const TOOL_TYPES = new Set([
+  "math",
+  "timer",
+  "clock",
+  "define",
+  "quiz",
+  "facts",
+  "lookup",
+  "story",
+  "riddle",
+  "convert",
+  "practice",
+  "ask_parent",
+  "howto",
+]);
 const FENCE_RE = /```homeward\s*(\{[\s\S]*?\})\s*```/gi;
 const INCOMPLETE_FENCE_RE = /```homeward[\s\S]*$/i;
 
