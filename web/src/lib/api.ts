@@ -369,6 +369,27 @@ export const api = {
     }),
 };
 
+/** Give up if the gateway goes silent — better a visible error than infinite Thinking. */
+export const CHAT_STREAM_IDLE_MS = 25_000;
+export const CHAT_STREAM_TOTAL_MS = 75_000;
+
+function combineAbortSignals(signals: Array<AbortSignal | undefined>): AbortSignal {
+  const active = signals.filter((s): s is AbortSignal => Boolean(s));
+  if (active.length === 1) return active[0];
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any(active);
+  }
+  const controller = new AbortController();
+  for (const signal of active) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      break;
+    }
+    signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+  }
+  return controller.signal;
+}
+
 export async function streamChat(
   message: string,
   childId: number,
@@ -381,35 +402,66 @@ export async function streamChat(
   quickChat?: boolean,
   onStatus?: (message: string) => void,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/stream`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message,
-      child_id: childId,
-      session_id: sessionId,
-      quick_chat: quickChat ?? false,
-    }),
-    signal,
-  });
+  const timeoutAbort = new AbortController();
+  const totalTimer = setTimeout(() => timeoutAbort.abort("total-timeout"), CHAT_STREAM_TOTAL_MS);
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const resetIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => timeoutAbort.abort("idle-timeout"), CHAT_STREAM_IDLE_MS);
+  };
+  resetIdle();
+
+  const combined = combineAbortSignals([signal, timeoutAbort.signal]);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/chat/stream`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        child_id: childId,
+        session_id: sessionId,
+        quick_chat: quickChat ?? false,
+      }),
+      signal: combined,
+    });
+  } catch (error) {
+    clearTimeout(totalTimer);
+    if (idleTimer) clearTimeout(idleTimer);
+    if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+      if (timeoutAbort.signal.aborted && !signal?.aborted) {
+        throw new Error("Homeward took too long to reply. Please try again.");
+      }
+      throw error;
+    }
+    throw error;
+  }
 
   if (!res.ok) {
+    clearTimeout(totalTimer);
+    if (idleTimer) clearTimeout(idleTimer);
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     const detail = err.detail;
-    const message =
+    const failMessage =
       typeof detail === "string"
         ? detail
         : "Stream failed";
-    throw new Error(message);
+    throw new Error(failMessage);
   }
 
   const reader = res.body?.getReader();
-  if (!reader) throw new Error("No reader");
+  if (!reader) {
+    clearTimeout(totalTimer);
+    if (idleTimer) clearTimeout(idleTimer);
+    throw new Error("No reader");
+  }
 
   const decoder = new TextDecoder();
   let buffer = "";
   let finished = false;
+  let sawReply = false;
   const finish = () => {
     if (finished) return;
     finished = true;
@@ -418,9 +470,10 @@ export async function streamChat(
 
   try {
     while (true) {
-      if (signal?.aborted) break;
+      if (combined.aborted) break;
       const { done, value } = await reader.read();
       if (done) break;
+      resetIdle();
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
@@ -429,23 +482,51 @@ export async function streamChat(
         if (line.startsWith("data: ")) {
           try {
             const data = JSON.parse(line.slice(6));
-            if (data.type === "token") onToken(data.content);
-            else if (data.type === "blocked") onBlocked(data.message);
-            else if (data.type === "status" && typeof data.message === "string") onStatus?.(data.message);
-            else if (data.type === "tools" && Array.isArray(data.tools)) onTools?.(data.tools);
-            else if (data.type === "done") finish();
+            if (data.type === "token") {
+              sawReply = true;
+              onToken(data.content);
+            } else if (data.type === "blocked" || data.type === "error") {
+              sawReply = true;
+              onBlocked(data.message);
+              if (data.type === "error") finish();
+            } else if (data.type === "status") {
+              const statusText =
+                typeof data.message === "string"
+                  ? data.message
+                  : typeof data.phase === "string"
+                    ? data.phase
+                    : "";
+              if (statusText) onStatus?.(statusText);
+            } else if (data.type === "tools" && Array.isArray(data.tools)) {
+              sawReply = true;
+              onTools?.(data.tools);
+            } else if (data.type === "done") {
+              finish();
+            }
           } catch {
             // skip malformed
           }
         }
       }
     }
+    if (timeoutAbort.signal.aborted && !signal?.aborted) {
+      throw new Error("Homeward took too long to reply. Please try again.");
+    }
+    if (!sawReply && !finished) {
+      throw new Error("Homeward took too long to reply. Please try again.");
+    }
     finish();
   } catch (error) {
     if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+      if (timeoutAbort.signal.aborted && !signal?.aborted) {
+        throw new Error("Homeward took too long to reply. Please try again.");
+      }
       finish();
       return;
     }
     throw error;
+  } finally {
+    clearTimeout(totalTimer);
+    if (idleTimer) clearTimeout(idleTimer);
   }
 }

@@ -20,12 +20,14 @@ export function getAgeTheme(child?: { age?: number; preset_id?: string }): AgeTh
   const preset = child.preset_id?.toLowerCase() || "";
   const age = child.age ?? 0;
 
-  if (preset.includes("young") || (age > 0 && age <= 8)) {
-    return "young";
-  }
-  if (preset.includes("teen") || age >= 13) {
-    return "teen";
-  }
+  // Explicit preset wins — kid chat loads profiles from the public API, which
+  // must include preset_id/age or every child defaults to curious.
+  if (preset.includes("young")) return "young";
+  if (preset.includes("teen")) return "teen";
+  if (preset.includes("curious")) return "curious";
+
+  if (age > 0 && age <= 8) return "young";
+  if (age >= 13) return "teen";
   return "curious";
 }
 

@@ -1,5 +1,6 @@
 """LLM model router — Ollama direct or cloud via LiteLLM."""
 
+import asyncio
 import logging
 from typing import AsyncIterator
 
@@ -122,6 +123,7 @@ async def stream_response(
     resolved_model = model or settings.ollama_model
 
     total = 0
+    first_token_timeout = getattr(settings, "llm_first_token_timeout", 25.0)
     try:
         if _use_cloud():
             llm_model, api_key, api_base, llm_extra = resolve_litellm_target(model)
@@ -136,7 +138,24 @@ async def stream_response(
                 stream=True,
                 **llm_extra,
             )
-            async for chunk in response:
+            stream_iter = response.__aiter__()
+
+            async def _next_chunk():
+                try:
+                    return await stream_iter.__anext__(), False
+                except StopAsyncIteration:
+                    return None, True
+
+            while True:
+                timeout = first_token_timeout if total == 0 else settings.llm_timeout
+                try:
+                    chunk, done = await asyncio.wait_for(_next_chunk(), timeout=timeout)
+                except (TimeoutError, asyncio.TimeoutError) as exc:
+                    if total == 0:
+                        raise RuntimeError("LLM stream produced no tokens before timeout") from exc
+                    raise RuntimeError("LLM stream stalled") from exc
+                if done:
+                    break
                 delta = chunk.choices[0].delta.content or ""
                 if delta:
                     total += len(delta)

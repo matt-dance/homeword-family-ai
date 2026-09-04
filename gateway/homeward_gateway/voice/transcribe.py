@@ -3,22 +3,48 @@
 from __future__ import annotations
 
 import logging
+import os
+import shutil
+import subprocess
 import tempfile
 import threading
 from pathlib import Path
+
+import numpy as np
 
 from homeward_gateway.config import settings
 
 logger = logging.getLogger(__name__)
 
-FIXTURES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
-SELF_TEST_FIXTURE = FIXTURES_DIR / "jfk-sample.flac"
-SELF_TEST_WEBM_FIXTURE = FIXTURES_DIR / "jfk-sample.webm"
+WHISPER_SAMPLE_RATE = 16_000
 SELF_TEST_SNIPPET = "ask not what your country can do for you"
 
 _model = None
 _model_lock = threading.Lock()
 _load_error: str | None = None
+
+
+def resolve_fixture(name: str, *, module_file: Path | None = None) -> Path:
+    """Locate a bundled speech sample in editable and installed layouts.
+
+    After ``pip install``, ``Path(__file__).parents[2] / "tests/fixtures"`` points
+    at ``site-packages/tests/fixtures``, which does not exist. Prefer package
+    data at ``homeward_gateway/fixtures/`` (wheel / Docker) and fall back to the
+    checkout path used by editable installs.
+    """
+    module_path = Path(module_file or __file__).resolve()
+    candidates = (
+        module_path.parents[1] / "fixtures" / name,
+        module_path.parents[2] / "tests" / "fixtures" / name,
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return candidates[0]
+
+
+SELF_TEST_FIXTURE = resolve_fixture("jfk-sample.flac")
+SELF_TEST_WEBM_FIXTURE = resolve_fixture("jfk-sample.webm")
 
 
 def whisper_available() -> bool:
@@ -28,6 +54,10 @@ def whisper_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+def ffmpeg_available() -> bool:
+    return shutil.which("ffmpeg") is not None
 
 
 def get_whisper_status() -> dict:
@@ -88,16 +118,67 @@ def ensure_model() -> None:
             raise RuntimeError(_load_error) from exc
 
 
-def transcribe_file(path: Path) -> str:
-    ensure_model()
+def decode_audio_16k_mono(path: Path) -> np.ndarray | None:
+    """Decode any container to 16 kHz mono float32 via system ffmpeg.
+
+    Browser MediaRecorder WebM/Opus (and some PyAV builds) is more reliable
+    through the ffmpeg CLI than faster-whisper's bundled decoder. Returns
+    ``None`` if ffmpeg is missing or decode fails so callers can fall back.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    cmd = [
+        ffmpeg,
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(path),
+        "-f",
+        "s16le",
+        "-acodec",
+        "pcm_s16le",
+        "-ac",
+        "1",
+        "-ar",
+        str(WHISPER_SAMPLE_RATE),
+        "-",
+    ]
+    try:
+        proc = subprocess.run(cmd, check=True, capture_output=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        stderr = ""
+        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
+            stderr = exc.stderr.decode("utf-8", errors="replace").strip()
+        logger.warning("ffmpeg could not decode %s: %s %s", path, exc, stderr)
+        return None
+    if not proc.stdout:
+        logger.warning("ffmpeg produced no audio from %s", path)
+        return None
+    return np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+
+
+def _whisper_text(source: str | np.ndarray, *, vad_filter: bool) -> str:
     assert _model is not None
     segments, _info = _model.transcribe(
-        str(path),
+        source,
         language="en",
         beam_size=1,
-        vad_filter=True,
+        vad_filter=vad_filter,
     )
-    text = " ".join(segment.text.strip() for segment in segments).strip()
+    return " ".join(segment.text.strip() for segment in segments).strip()
+
+
+def transcribe_file(path: Path) -> str:
+    ensure_model()
+    audio = decode_audio_16k_mono(path)
+    source: str | np.ndarray = audio if audio is not None and audio.size else str(path)
+    text = _whisper_text(source, vad_filter=True)
+    if not text:
+        logger.info("Empty transcript with VAD; retrying without VAD (%s)", path.name)
+        text = _whisper_text(source, vad_filter=False)
     return text
 
 
@@ -107,10 +188,15 @@ def transcribe_bytes(data: bytes, suffix: str = ".webm") -> str:
     if len(data) > settings.whisper_max_bytes:
         raise ValueError("Audio clip is too long")
 
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=True) as tmp:
-        tmp.write(data)
-        tmp.flush()
-        return transcribe_file(Path(tmp.name))
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(data)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        return transcribe_file(Path(tmp_path))
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
 
 def run_voice_self_test() -> dict:
@@ -127,6 +213,12 @@ def run_voice_self_test() -> dict:
             "ok": False,
             "stage": "fixture",
             "message": f"Missing test audio at {SELF_TEST_FIXTURE}",
+        }
+    if not SELF_TEST_WEBM_FIXTURE.is_file():
+        return {
+            "ok": False,
+            "stage": "fixture",
+            "message": f"Missing test audio at {SELF_TEST_WEBM_FIXTURE}",
         }
 
     try:
@@ -148,23 +240,21 @@ def run_voice_self_test() -> dict:
             "text": text,
         }
 
-    webm_ok = True
-    webm_message: str | None = None
-    if SELF_TEST_WEBM_FIXTURE.is_file():
-        try:
-            webm_text = transcribe_bytes(SELF_TEST_WEBM_FIXTURE.read_bytes(), suffix=".webm")
-            if SELF_TEST_SNIPPET not in webm_text.lower():
-                webm_ok = False
-                webm_message = f"WebM decode failed (got: {webm_text[:120]!r})"
-        except Exception as exc:
-            webm_ok = False
-            webm_message = str(exc)
-
-    if not webm_ok:
+    try:
+        webm_text = transcribe_bytes(SELF_TEST_WEBM_FIXTURE.read_bytes(), suffix=".webm")
+        if SELF_TEST_SNIPPET not in webm_text.lower():
+            return {
+                "ok": False,
+                "stage": "webm",
+                "message": f"WebM decode failed (got: {webm_text[:120]!r})",
+                "text": text,
+            }
+    except Exception as exc:
+        logger.exception("Voice self-test WebM transcription failed")
         return {
             "ok": False,
             "stage": "webm",
-            "message": webm_message or "WebM transcription failed",
+            "message": str(exc),
             "text": text,
         }
 

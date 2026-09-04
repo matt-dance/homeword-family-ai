@@ -7,7 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
     && pip install --no-cache-dir hatchling
 
 COPY gateway/pyproject.toml gateway/
+COPY gateway/README.md gateway/
 COPY gateway/homeward_gateway gateway/homeward_gateway
+COPY gateway/tests/fixtures gateway/tests/fixtures
 COPY policies /app/policies
 
 RUN pip install --no-cache-dir ./gateway

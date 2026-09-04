@@ -51,7 +51,8 @@ class ToolEvent:
 
 @dataclass
 class StatusEvent:
-    message: str
+    message: str | None = None
+    phase: str | None = None
 
 
 def _rules_only_classifier(chat_model: str | None) -> bool:
@@ -363,7 +364,7 @@ async def process_chat_stream(
 ) -> AsyncIterator[str | PipelineResult | ToolEvent | StatusEvent]:
     """Stream pipeline: filter input first, then stream LLM, filter output at end."""
     rules_only = _rules_only_classifier(chat_model)
-    yield StatusEvent("Checking your message…")
+    yield StatusEvent(message="Checking your message…", phase="checking")
     input_result = await filter_input(
         user_message, preset, strictness, classifier_model,
         classifier_enabled=classifier_enabled,
@@ -379,12 +380,14 @@ async def process_chat_stream(
         session_state,
         home_location=home.location if home else None,
     )
+    # Tell the client the safety check finished so Thinking is not a silent hang.
+    yield StatusEvent(message="Writing a reply…", phase="generating")
     local_tools = [card.to_dict() for card in run_local_tools(user_message, timezone=home.timezone if home else None)]
     if local_tools:
         yield ToolEvent(local_tools)
 
     if live_lookups:
-        yield StatusEvent("Looking that up…")
+        yield StatusEvent(message="Looking that up…", phase="lookup")
     lookup_notes, lookup_tools, intent, lookup_result = await resolve_live_lookup(
         resolved.expanded_message,
         live_lookups=live_lookups,
@@ -412,7 +415,7 @@ async def process_chat_stream(
         lookup_notes=lookup_notes,
     )
     collected = []
-    yield StatusEvent("Writing a reply…")
+    yield StatusEvent(message="Writing a reply…", phase="generating")
     try:
         async for token in stream_response(
             messages + [{"role": "user", "content": user_turn}],
@@ -431,6 +434,10 @@ async def process_chat_stream(
             yield token
     except Exception:
         yield PipelineResult(allowed=False, block_reason="llm stream error", stage="llm")
+        return
+
+    if not collected:
+        yield PipelineResult(allowed=False, block_reason="empty LLM stream", stage="llm")
         return
 
     full_response = "".join(collected)

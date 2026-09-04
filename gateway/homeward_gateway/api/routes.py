@@ -65,7 +65,13 @@ from homeward_gateway.ollama import service as ollama_service
 from homeward_gateway.ollama.catalog import pick_classifier_model
 from homeward_gateway.ollama.runtime import get_effective_models
 from homeward_gateway.models.router import strip_thinking
-from homeward_gateway.pipeline.pipeline import PipelineResult, StatusEvent, ToolEvent, process_chat, process_chat_stream
+from homeward_gateway.pipeline.pipeline import (
+    PipelineResult,
+    StatusEvent,
+    ToolEvent,
+    process_chat,
+    process_chat_stream,
+)
 from homeward_gateway.pipeline.policy import load_all_presets, preset_for_age
 
 logger = logging.getLogger(__name__)
@@ -462,6 +468,8 @@ def _serialize_child_public(c: ChildProfile, *, is_default: bool = False) -> dic
         "id": c.id,
         "name": c.name,
         "slug": c.slug,
+        "age": c.age,
+        "preset_id": c.preset_id,
         "has_pin": c.pin is not None,
         "allow_resume": c.allow_resume,
         "chat_available": available,
@@ -654,37 +662,37 @@ async def resume_child_session(
     if not child.allow_resume:
         raise HTTPException(status_code=404, detail="No resumable session")
 
-    session_result = await session.execute(
+    sessions_result = await session.execute(
         select(ChatSession)
         .where(ChatSession.child_id == child_id)
         .order_by(ChatSession.started_at.desc())
-        .limit(1)
+        .limit(20)
     )
-    chat_session = session_result.scalar_one_or_none()
-    if not chat_session:
+    chat_sessions = list(sessions_result.scalars().all())
+    if not chat_sessions:
         raise HTTPException(status_code=404, detail="No resumable session")
 
-    logs_result = await session.execute(
-        select(ConversationLog)
-        .where(ConversationLog.session_id == chat_session.id)
-        .order_by(ConversationLog.created_at.asc())
-    )
-    logs = list(logs_result.scalars().all())
-    if not logs:
-        raise HTTPException(status_code=404, detail="No resumable session")
+    for chat_session in chat_sessions:
+        logs_result = await session.execute(
+            select(ConversationLog)
+            .where(ConversationLog.session_id == chat_session.id)
+            .order_by(ConversationLog.created_at.asc())
+        )
+        logs = list(logs_result.scalars().all())
+        messages: list[dict] = []
+        for log in logs:
+            if log.blocked and log.direction == "input":
+                continue
+            role = "user" if log.direction == "input" else "assistant"
+            messages.append({"role": role, "content": log.content, "blocked": log.blocked})
+        if messages:
+            return {
+                "session_id": chat_session.id,
+                "messages": messages,
+                "preview": chat_session.preview,
+            }
 
-    messages: list[dict] = []
-    for log in logs:
-        if log.blocked and log.direction == "input":
-            continue
-        role = "user" if log.direction == "input" else "assistant"
-        messages.append({"role": role, "content": log.content, "blocked": log.blocked})
-
-    return {
-        "session_id": chat_session.id,
-        "messages": messages,
-        "preview": chat_session.preview,
-    }
+    raise HTTPException(status_code=404, detail="No resumable session")
 
 
 @router.post("/children/{child_id}/verify-pin")
@@ -966,6 +974,15 @@ LLM_UNAVAILABLE_MESSAGE = (
     "Homeward's brain is taking a nap right now. "
     "Ask a parent to check the AI status on the dashboard, then try again."
 )
+CLASSIFIER_UNAVAILABLE_MESSAGE = (
+    "Homeward had trouble checking that question. "
+    "Please try again in a moment — if it keeps happening, ask a parent to check the AI status."
+)
+SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
 
 
 async def _load_session_state(session: AsyncSession, chat_session_id: int | None) -> SessionState:
@@ -1010,9 +1027,14 @@ async def _history_for_session(session: AsyncSession, chat_session_id: int | Non
     ]
 
 
-def user_facing_message(stage: str | None) -> str:
+def user_facing_message(stage: str | None, block_reason: str | None = None) -> str:
     if stage and stage.startswith("llm"):
         return LLM_UNAVAILABLE_MESSAGE
+    reason = (block_reason or "").lower()
+    if stage and "classifier" in stage and any(
+        token in reason for token in ("timeout", "error", "ambiguous")
+    ):
+        return CLASSIFIER_UNAVAILABLE_MESSAGE
     return BLOCKED_MESSAGE
 
 
@@ -1073,7 +1095,7 @@ async def chat(
         )
         return {
             "blocked": True,
-            "message": user_facing_message(result.stage),
+            "message": user_facing_message(result.stage, result.block_reason),
             "session_id": chat_session_id,
         }
 
@@ -1111,79 +1133,138 @@ async def chat_stream(
     async def event_stream() -> AsyncIterator[str]:
         from homeward_gateway.db.database import async_session_factory
 
+        yield f"data: {json.dumps({'type': 'status', 'phase': 'checking'})}\n\n"
+
         async with async_session_factory() as log_session:
-            collected = []
+            collected: list[str] = []
             blocked_early = False
             persisted = False
+            input_logged = False
 
             async def persist_turn() -> None:
-                nonlocal persisted
+                nonlocal persisted, input_logged
                 if persisted or blocked_early:
                     return
                 persisted = True
                 full = strip_thinking("".join(collected))
-                await _log_message(
-                    log_session, child.id, "input", body.message, chat_session_id=chat_session_id
-                )
+                if not input_logged:
+                    await _log_message(
+                        log_session, child.id, "input", body.message, chat_session_id=chat_session_id
+                    )
+                    input_logged = True
                 if full:
                     await _log_message(
                         log_session, child.id, "output", full, chat_session_id=chat_session_id
                     )
 
-            async for item in process_chat_stream(
-                body.message,
-                history,
-                preset,
-                child.strictness,
-                child.name,
-                child.age,
-                chat_model=chat_model,
-                classifier_model=classifier_model,
-                homework_mode=child.homework_mode,
-                live_lookups=child.live_lookups,
-                home=home,
-                classifier_enabled=ai_prefs["classifier_enabled"],
-                ai_tone=ai_prefs["ai_tone"],
-                ai_verbosity=ai_prefs["ai_verbosity"],
-                quick_chat=body.quick_chat,
-                session_state=chat_state,
-            ):
-                if await request.is_disconnected():
-                    await persist_turn()
-                    return
-                if isinstance(item, ToolEvent):
-                    payload = json.dumps({"type": "tools", "tools": item.tools})
-                    yield f"data: {payload}\n\n"
-                    continue
-                if isinstance(item, StatusEvent):
-                    payload = json.dumps({"type": "status", "message": item.message})
-                    yield f"data: {payload}\n\n"
-                    continue
-                if isinstance(item, PipelineResult):
-                    if not item.allowed:
-                        blocked_early = True
-                        await _log_message(
-                            log_session, child.id, "input", body.message,
-                            blocked=True, block_reason=item.block_reason, stage=item.stage,
-                            chat_session_id=chat_session_id,
-                        )
+            try:
+                async for item in process_chat_stream(
+                    body.message,
+                    history,
+                    preset,
+                    child.strictness,
+                    child.name,
+                    child.age,
+                    chat_model=chat_model,
+                    classifier_model=classifier_model,
+                    homework_mode=child.homework_mode,
+                    live_lookups=child.live_lookups,
+                    home=home,
+                    classifier_enabled=ai_prefs["classifier_enabled"],
+                    ai_tone=ai_prefs["ai_tone"],
+                    ai_verbosity=ai_prefs["ai_verbosity"],
+                    quick_chat=body.quick_chat,
+                    session_state=chat_state,
+                ):
+                    if await request.is_disconnected():
+                        await persist_turn()
+                        return
+                    if isinstance(item, StatusEvent):
+                        if item.phase == "generating" and not input_logged:
+                            await _log_message(
+                                log_session,
+                                child.id,
+                                "input",
+                                body.message,
+                                chat_session_id=chat_session_id,
+                            )
+                            input_logged = True
                         payload = json.dumps({
-                            "type": "blocked",
-                            "message": user_facing_message(item.stage),
+                            "type": "status",
+                            "phase": item.phase,
+                            "message": item.message,
                         })
                         yield f"data: {payload}\n\n"
-                        return
-                    if item.session_state:
-                        await _save_session_state(log_session, chat_session_id, item.session_state)
+                        continue
+                    if isinstance(item, ToolEvent):
+                        payload = json.dumps({"type": "tools", "tools": item.tools})
+                        yield f"data: {payload}\n\n"
+                        continue
+                    if isinstance(item, PipelineResult):
+                        if not item.allowed:
+                            blocked_early = True
+                            kid_message = user_facing_message(item.stage, item.block_reason)
+                            if not input_logged:
+                                await _log_message(
+                                    log_session, child.id, "input", body.message,
+                                    blocked=True, block_reason=item.block_reason, stage=item.stage,
+                                    chat_session_id=chat_session_id,
+                                )
+                                input_logged = True
+                            else:
+                                await _log_message(
+                                    log_session,
+                                    child.id,
+                                    "output",
+                                    kid_message,
+                                    blocked=True,
+                                    block_reason=item.block_reason,
+                                    stage=item.stage,
+                                    chat_session_id=chat_session_id,
+                                )
+                            event_type = "error" if item.stage and item.stage.startswith("llm") else "blocked"
+                            payload = json.dumps({
+                                "type": event_type,
+                                "message": kid_message,
+                            })
+                            yield f"data: {payload}\n\n"
+                            return
+                        if item.session_state:
+                            await _save_session_state(log_session, chat_session_id, item.session_state)
+                    else:
+                        collected.append(item)
+                        payload = json.dumps({"type": "token", "content": item})
+                        yield f"data: {payload}\n\n"
+            except Exception:
+                logger.exception("Chat stream failed")
+                blocked_early = True
+                kid_message = LLM_UNAVAILABLE_MESSAGE
+                if not input_logged:
+                    await _log_message(
+                        log_session, child.id, "input", body.message,
+                        blocked=True, block_reason="stream exception", stage="llm",
+                        chat_session_id=chat_session_id,
+                    )
                 else:
-                    collected.append(item)
-                    payload = json.dumps({"type": "token", "content": item})
-                    yield f"data: {payload}\n\n"
+                    await _log_message(
+                        log_session, child.id, "output", kid_message,
+                        blocked=True, block_reason="stream exception", stage="llm",
+                        chat_session_id=chat_session_id,
+                    )
+                yield f"data: {json.dumps({'type': 'error', 'message': kid_message})}\n\n"
+                return
 
             await persist_turn()
+            if not collected:
+                yield f"data: {json.dumps({'type': 'error', 'message': LLM_UNAVAILABLE_MESSAGE})}\n\n"
+                return
             yield f"data: {json.dumps({'type': 'done', 'session_id': chat_session_id})}\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
 
 
 # --- Dashboard ---

@@ -139,17 +139,22 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       if (resume && selectedChild.allow_resume !== false) {
         try {
           const resumed = await api.resumeSession(selectedChild.id);
-          setChatSessionId(resumed.session_id);
-          setMessages(
-            resumed.messages.map((m) => ({
-              role: m.role as "user" | "assistant",
-              content: m.content,
-              blocked: m.blocked,
-            })),
+          const history = (resumed.messages ?? []).filter(
+            (m) => m.content && (m.role === "user" || m.role === "assistant"),
           );
-          setResumeOffered(false);
-          setSessionReady(true);
-          return;
+          if (history.length > 0) {
+            setChatSessionId(resumed.session_id);
+            setMessages(
+              history.map((m) => ({
+                role: m.role as "user" | "assistant",
+                content: m.content,
+                blocked: m.blocked,
+              })),
+            );
+            setResumeOffered(false);
+            setSessionReady(true);
+            return;
+          }
         } catch {
           // fall through to new session
         }
@@ -318,10 +323,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           return;
         }
         console.error("Chat stream failed", e);
+        const text =
+          e instanceof Error && e.message ? e.message : CHAT_ERROR_MESSAGE;
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           const base = last?.role === "assistant" && !last.content ? prev.slice(0, -1) : prev;
-          return [...base, { role: "assistant", content: CHAT_ERROR_MESSAGE, blocked: true }];
+          return [...base, { role: "assistant", content: text, blocked: true }];
         });
         setStreaming(false);
         setStreamStatus(null);
@@ -500,7 +507,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                   {displayName ?? `${selectedChild.name}'s Chat`}
                 </p>
                 <span className="hidden sm:inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary border border-primary/20">
-                  {ageConfig.ageRange}
+                  {ageConfig.title} · {ageConfig.ageRange}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
