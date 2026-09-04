@@ -5,7 +5,6 @@ import { Camera, Upload, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ParentLockOverlay } from "@/components/parent-lock-overlay";
-import { isParentLockExpired } from "@/lib/parent-lock";
 import {
   homeworkCameraCaptureAllowed,
   homeworkCameraClickAction,
@@ -19,7 +18,7 @@ import {
 const ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
 
 function readGateUnlocked(): boolean {
-  return homeworkCameraIsUnlocked(!isParentLockExpired(), !isHomeworkCameraUnlockExpired());
+  return homeworkCameraIsUnlocked(!isHomeworkCameraUnlockExpired());
 }
 
 export interface HomeworkCameraProps {
@@ -252,8 +251,8 @@ export function HomeworkCamera({
 
       {challengeOpen && (
         <ParentLockOverlay
-          title="Ask a parent"
-          description="A parent needs to unlock the worksheet camera. Photos are not saved."
+          title="Parent password required"
+          description="Enter the household parent password to open the worksheet camera. This is not the child's PIN. Photos are not saved."
           submitLabel="Unlock camera"
           authenticate={verifyParentForCamera}
           onUnlock={handleCameraUnlocked}
