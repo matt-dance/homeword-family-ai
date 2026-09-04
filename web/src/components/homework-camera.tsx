@@ -8,6 +8,7 @@ import { ParentLockOverlay } from "@/components/parent-lock-overlay";
 import {
   homeworkCameraCaptureAllowed,
   homeworkCameraClickAction,
+  clearHomeworkCameraUnlock,
   homeworkCameraIsUnlocked,
   isHomeworkCameraUnlockExpired,
   mapHomeworkParentError,
@@ -59,7 +60,17 @@ export function HomeworkCamera({
       .then((status) => {
         setVisionNote(status.available ? null : status.message);
       })
-      .catch(() => setVisionNote(null));
+      .catch((e) => {
+        const message = e instanceof Error ? e.message : "";
+        if (message.toLowerCase().includes("parent unlock")) {
+          clearHomeworkCameraUnlock();
+          setGateUnlocked(false);
+          setOpen(false);
+          setChallengeOpen(true);
+          return;
+        }
+        setVisionNote(null);
+      });
   }, [childId, enabled, open, gateUnlocked]);
 
   useEffect(
@@ -138,7 +149,15 @@ export function HomeworkCamera({
       }
       onHint?.(result.hint);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not get a hint from that photo.");
+      const message = e instanceof Error ? e.message : "Could not get a hint from that photo.";
+      if (message.toLowerCase().includes("parent unlock")) {
+        clearHomeworkCameraUnlock();
+        setGateUnlocked(false);
+        setOpen(false);
+        setChallengeOpen(true);
+        return;
+      }
+      setError(message);
     } finally {
       setBusy(false);
     }

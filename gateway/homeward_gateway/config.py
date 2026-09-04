@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     session_cookie_name: str = "homeward_session"
     session_max_age: int = 86400 * 7
     child_access_max_age: int = 86400  # one PIN unlock per device per day
+    homework_unlock_cookie_name: str = "homeward_homework"
+    homework_unlock_max_age: int = 5 * 60  # camera-only grant; not a dashboard session
 
     # Ollama / LLM
     ollama_base_url: str = "http://127.0.0.1:11434"

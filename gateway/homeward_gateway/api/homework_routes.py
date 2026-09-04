@@ -1,7 +1,8 @@
 """Kid-chat homework camera routes.
 
-Hint/status are LAN-reachable and PIN-gated, not parent-session-only.
-Unlock verifies the parent password on the host without minting a session cookie.
+Unlock verifies the parent password on the host and sets a short-lived
+homework cookie (not a dashboard session). Hint/status require that cookie
+plus child PIN when the profile has one.
 """
 
 from __future__ import annotations
@@ -9,13 +10,18 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from homeward_gateway.auth.local_host import client_ip_from_request, require_local_request
-from homeward_gateway.auth.parent_auth import has_child_access, verify_password
+from homeward_gateway.auth.parent_auth import (
+    has_child_access,
+    has_homework_unlock,
+    set_homework_unlock_cookie,
+    verify_password,
+)
 from homeward_gateway.auth.rate_limit import check_rate_limit, record_attempt, reset_attempts
 from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.db.database import ChildProfile, ParentAccount, get_session
@@ -34,6 +40,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 HOMEWORK_OFF_DETAIL = "Homework camera is off for this profile. Ask a parent to turn on homework mode."
+HOMEWORK_UNLOCK_DETAIL = "Parent unlock required"
 
 
 class HomeworkUnlockRequest(BaseModel):
@@ -65,13 +72,19 @@ def _require_homework_mode(child: ChildProfile) -> None:
         raise HTTPException(status_code=403, detail=HOMEWORK_OFF_DETAIL)
 
 
+def _require_homework_unlock(request: Request) -> None:
+    if not has_homework_unlock(request):
+        raise HTTPException(status_code=403, detail=HOMEWORK_UNLOCK_DETAIL)
+
+
 @router.post("/chat/homework/unlock")
 async def homework_unlock(
     body: HomeworkUnlockRequest,
     request: Request,
+    response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    """Confirm the parent password for the camera gate. Does not set a session cookie."""
+    """Confirm the parent password and mint a camera-only cookie (not a dashboard session)."""
     require_local_request(request)
     rate_key = _rate_key(request, "homework-unlock")
     check_rate_limit(rate_key)
@@ -83,6 +96,7 @@ async def homework_unlock(
         raise HTTPException(status_code=401, detail="Invalid password")
 
     reset_attempts(rate_key)
+    set_homework_unlock_cookie(response)
     return {"ok": True}
 
 
@@ -101,8 +115,9 @@ async def homework_status(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     child = await _load_child(session, child_id)
-    _require_child_access(request, child)
     _require_homework_mode(child)
+    _require_child_access(request, child)
+    _require_homework_unlock(request)
     vision = await get_vision_status()
     return {
         "homework_mode": True,
@@ -123,8 +138,9 @@ async def homework_hint(
     image: UploadFile = File(...),
 ):
     child = await _load_child(session, child_id)
-    _require_child_access(request, child)
     _require_homework_mode(child)
+    _require_child_access(request, child)
+    _require_homework_unlock(request)
     _ensure_chat_available(child)
 
     rate_key = _rate_key(request, "homework")

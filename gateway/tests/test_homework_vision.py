@@ -31,6 +31,14 @@ TINY_PNG = (
 )
 
 
+async def _unlock_homework(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/v1/chat/homework/unlock",
+        json={"password": DEFAULT_PASSWORD},
+    )
+    assert resp.status_code == 200
+
+
 async def _homework_child(client: AsyncClient, *, pin: str | None = None) -> dict:
     await setup_parent(client)
     payload: dict = {
@@ -154,6 +162,7 @@ class TestHomeworkHintAPI:
     @pytest.mark.asyncio
     async def test_status_ok_when_homework_mode_on(self, client: AsyncClient):
         child = await _homework_child(client)
+        await _unlock_homework(client)
         with patch(
             "homeward_gateway.vision.homework.list_installed_models",
             new=AsyncMock(return_value=[]),
@@ -179,8 +188,36 @@ class TestHomeworkHintAPI:
         assert "homework" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
+    async def test_hint_requires_parent_unlock_cookie(self, client: AsyncClient):
+        child = await _homework_child(client)
+        resp = await client.post(
+            "/api/v1/chat/homework/hint",
+            data={"child_id": child["id"]},
+            files=_hint_files(),
+        )
+        assert resp.status_code == 403
+        assert "parent unlock" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_hint_requires_parent_unlock_even_after_kid_pin(self, client: AsyncClient):
+        child = await _homework_child(client, pin="1234")
+        pin = await client.post(
+            f"/api/v1/children/{child['id']}/verify-pin",
+            json={"pin": "1234"},
+        )
+        assert pin.status_code == 200
+        resp = await client.post(
+            "/api/v1/chat/homework/hint",
+            data={"child_id": child["id"]},
+            files=_hint_files(),
+        )
+        assert resp.status_code == 403
+        assert "parent unlock" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
     async def test_hint_requires_pin_unlock(self, client: AsyncClient):
         child = await _homework_child(client, pin="1234")
+        await _unlock_homework(client)
         resp = await client.post(
             "/api/v1/chat/homework/hint",
             data={"child_id": child["id"]},
@@ -193,6 +230,7 @@ class TestHomeworkHintAPI:
     @pytest.mark.asyncio
     async def test_hint_rejects_oversized_image(self, client: AsyncClient):
         child = await _homework_child(client)
+        await _unlock_homework(client)
         huge = b"\x89PNG" + b"x" * (MAX_IMAGE_BYTES + 10)
         resp = await client.post(
             "/api/v1/chat/homework/hint",
@@ -205,6 +243,7 @@ class TestHomeworkHintAPI:
     @pytest.mark.asyncio
     async def test_hint_rejects_non_image_type(self, client: AsyncClient):
         child = await _homework_child(client)
+        await _unlock_homework(client)
         resp = await client.post(
             "/api/v1/chat/homework/hint",
             data={"child_id": child["id"]},
@@ -215,6 +254,7 @@ class TestHomeworkHintAPI:
     @pytest.mark.asyncio
     async def test_hint_without_vision_model_returns_clear_message(self, client: AsyncClient):
         child = await _homework_child(client)
+        await _unlock_homework(client)
         with patch(
             "homeward_gateway.api.homework_routes.generate_homework_hint",
             new=AsyncMock(),
@@ -239,6 +279,7 @@ class TestHomeworkHintAPI:
     @pytest.mark.asyncio
     async def test_hint_with_mocked_vision_returns_guiding_hint(self, client: AsyncClient):
         child = await _homework_child(client)
+        await _unlock_homework(client)
         with patch(
             "homeward_gateway.api.homework_routes.list_installed_models",
             new=AsyncMock(return_value=["llava:7b"]),
@@ -268,6 +309,7 @@ class TestHomeworkHintAPI:
     @pytest.mark.asyncio
     async def test_hint_is_rate_limited_like_transcribe(self, client: AsyncClient):
         child = await _homework_child(client)
+        await _unlock_homework(client)
         rate_limit._attempts.clear()
         for _ in range(rate_limit._MAX_ATTEMPTS):
             resp = await client.post(
@@ -284,8 +326,23 @@ class TestHomeworkHintAPI:
         assert locked.status_code == 429
 
     @pytest.mark.asyncio
-    async def test_hint_reachable_from_lan_not_parent_only(self, client: AsyncClient):
+    async def test_hint_from_lan_without_unlock_is_forbidden(self, client: AsyncClient):
         child = await _homework_child(client)
+        resp = await client.post(
+            "/api/v1/chat/homework/hint",
+            data={"child_id": child["id"]},
+            files=_hint_files(),
+            headers=LAN,
+        )
+        assert resp.status_code == 403
+        assert "parent unlock" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_hint_after_unlock_works_without_parent_session(self, client: AsyncClient):
+        child = await _homework_child(client)
+        await client.post("/api/v1/auth/logout")
+        await _unlock_homework(client)
+        assert (await client.get("/api/v1/auth/me")).status_code == 401
         with patch(
             "homeward_gateway.api.homework_routes.list_installed_models",
             new=AsyncMock(return_value=[]),
@@ -294,7 +351,6 @@ class TestHomeworkHintAPI:
                 "/api/v1/chat/homework/hint",
                 data={"child_id": child["id"]},
                 files=_hint_files(),
-                headers=LAN,
             )
         assert resp.status_code == 200
         assert "vision model" in resp.json()["hint"].lower()
@@ -323,7 +379,10 @@ class TestHomeworkUnlock:
         )
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
-        assert settings.session_cookie_name not in resp.headers.get("set-cookie", "")
+        cookie = resp.headers.get("set-cookie", "")
+        assert settings.session_cookie_name not in cookie
+        assert settings.homework_unlock_cookie_name in cookie
+        assert "httponly" in cookie.lower()
         assert (await client.get("/api/v1/auth/me")).status_code == 401
 
     @pytest.mark.asyncio
