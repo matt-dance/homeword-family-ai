@@ -41,6 +41,12 @@ describe("categorizeBlockedAttempt", () => {
     expect(categorizeBlockedAttempt("classifier", "classifier: error (ReadTimeout)")).toBe(
       "classifier_infra",
     );
+    expect(
+      describeBlockedAttempt({
+        stage: "classifier",
+        reason: "classifier: error (ReadTimeout)",
+      }).categoryLabel,
+    ).toBe("Classifier error");
     expect(categorizeBlockedAttempt("classifier", "classifier: ambiguous response")).toBe(
       "classifier_infra",
     );
@@ -101,6 +107,12 @@ describe("describeBlockedAttempt", () => {
     });
     expect(timeout.category).toBe("classifier_infra");
     expect(timeout.categoryLabel).toBe("Classifier timeout");
+    expect(
+      describeBlockedAttempt({
+        stage: "classifier",
+        reason: "classifier: error (ReadTimeout)",
+      }).categoryLabel,
+    ).toBe("Classifier error");
     expect(timeout.summary).toMatch(/timed out/i);
     expect(timeout.summary).not.toMatch(/\\/);
     expect(timeout.rawReason).toContain("classifier: timeout");

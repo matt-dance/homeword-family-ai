@@ -158,8 +158,11 @@ export function blockedCategoryLabel(
   if (category === "policy") return "Policy";
   if (category === "llm_error") return "AI model error";
   if (category === "filter_error") return "Filter error";
-  const reasonText = (reason || "").toLowerCase();
-  if (reasonText.includes("timeout")) return "Classifier timeout";
+  const reasonText = unescapeReasonTokens((reason || "").toLowerCase());
+  // Match `classifier: timeout`, not exception names like ReadTimeout.
+  if (/classifier:\s*timeout\b/.test(reasonText) || /(?:^|;\s*)timeout(?:\s|;|$)/.test(reasonText)) {
+    return "Classifier timeout";
+  }
   return "Classifier error";
 }
 
