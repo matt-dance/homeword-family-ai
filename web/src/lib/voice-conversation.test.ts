@@ -78,4 +78,24 @@ describe("reduceVoiceConversation", () => {
     const { actions } = apply(transcribing, { type: "TRANSCRIBE_EMPTY" });
     expect(actions).toEqual([{ type: "start_listening" }]);
   });
+
+  it("empty assistant reply listens again instead of speaking", () => {
+    const waiting: VoiceConversationState = { active: true, phase: "waiting" };
+    const { state, actions } = apply(waiting, { type: "ASSISTANT_DONE", text: "  " });
+    expect(state.phase).toBe("ready");
+    expect(actions).toEqual([{ type: "start_listening" }]);
+  });
+
+  it("ERROR stays in the loop so the kid can tap the mic again", () => {
+    const listening: VoiceConversationState = { active: true, phase: "listening" };
+    const { state, actions } = apply(listening, { type: "ERROR" });
+    expect(state).toEqual({ active: true, phase: "ready" });
+    expect(actions).toEqual([]);
+  });
+
+  it("LISTENING_STOPPED marks transcribing", () => {
+    const listening: VoiceConversationState = { active: true, phase: "listening" };
+    const { state } = apply(listening, { type: "LISTENING_STOPPED" });
+    expect(state.phase).toBe("transcribing");
+  });
 });
