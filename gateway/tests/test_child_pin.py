@@ -6,7 +6,7 @@ from httpx import AsyncClient
 from homeward_gateway.auth import rate_limit
 from homeward_gateway.auth.parent_auth import hash_pin, verify_child_pin
 from homeward_gateway.db import database as db_module
-from homeward_gateway.db.database import ChildProfile, hash_legacy_child_pins
+from homeward_gateway.db.database import ChatSession, ChildProfile, hash_legacy_child_pins
 from homeward_gateway.pipeline.pipeline import PipelineResult
 from tests.conftest import create_child, setup_parent
 
@@ -221,6 +221,106 @@ class TestPinAPI:
             headers=LAN,
         )
         assert named.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_quick_chat_cannot_attach_named_session(self, client: AsyncClient, monkeypatch):
+        """PIN skip is only for a Quick Chat session, not the default child's named history."""
+        child = await _pin_child(client)
+        rate_limit._attempts.clear()
+        unlock = await client.post(
+            f"/api/v1/children/{child['id']}/verify-pin", json={"pin": "1234"}, headers=LAN
+        )
+        assert unlock.status_code == 200
+
+        named = await client.post(
+            "/api/v1/chat/sessions", json={"child_id": child["id"]}, headers=LAN
+        )
+        assert named.status_code == 200
+        named_id = named.json()["session_id"]
+
+        captured: dict = {}
+
+        async def fake_process_chat(message, messages, *_args, **_kwargs):
+            captured.setdefault("calls", []).append({"message": message, "history": messages})
+            return PipelineResult(allowed=True, content="Noted.")
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+        seeded = await client.post(
+            "/api/v1/chat",
+            json={"message": "named secret", "child_id": child["id"], "session_id": named_id},
+            headers=LAN,
+        )
+        assert seeded.status_code == 200
+        captured.clear()
+
+        client.cookies.clear()
+        hijack = await client.post(
+            "/api/v1/chat",
+            json={
+                "message": "hello",
+                "child_id": child["id"],
+                "session_id": named_id,
+                "quick_chat": True,
+            },
+            headers=LAN,
+        )
+        assert hijack.status_code == 404
+        assert not captured
+
+        stream = await client.post(
+            "/api/v1/chat/stream",
+            json={
+                "message": "hello",
+                "child_id": child["id"],
+                "session_id": named_id,
+                "quick_chat": True,
+            },
+            headers=LAN,
+        )
+        assert stream.status_code == 404
+
+        create = await client.post(
+            "/api/v1/chat/sessions",
+            json={
+                "child_id": child["id"],
+                "quick_chat": True,
+                "end_session_id": named_id,
+            },
+            headers=LAN,
+        )
+        assert create.status_code == 200
+        async with db_module.async_session_factory() as db:
+            row = await db.get(ChatSession, named_id)
+            assert row is not None
+            assert row.summary is None
+            assert row.quick_chat is not True
+
+    @pytest.mark.asyncio
+    async def test_quick_chat_session_cannot_be_used_as_named_chat(
+        self, client: AsyncClient
+    ):
+        child = await _pin_child(client)
+        quick = await client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"], "quick_chat": True},
+            headers=LAN,
+        )
+        assert quick.status_code == 200
+        rate_limit._attempts.clear()
+        unlock = await client.post(
+            f"/api/v1/children/{child['id']}/verify-pin", json={"pin": "1234"}, headers=LAN
+        )
+        assert unlock.status_code == 200
+        named = await client.post(
+            "/api/v1/chat",
+            json={
+                "message": "hi",
+                "child_id": child["id"],
+                "session_id": quick.json()["session_id"],
+            },
+            headers=LAN,
+        )
+        assert named.status_code == 404
 
 
 class TestServerSideHistory:

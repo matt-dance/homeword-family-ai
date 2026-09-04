@@ -250,6 +250,8 @@ async def _require_chat_access(
 
     `quick_chat=True` cannot unlock a non-default child's PIN. Resume and homework
     keep using `_require_child_access` so those named-kid paths stay locked.
+    Quick Chat may only attach to sessions created as Quick Chat, never a named
+    profile's existing conversation.
     """
     if quick_chat and await _is_quick_chat_default(session, child):
         return
@@ -1033,10 +1035,12 @@ async def create_chat_session(
                 ChatSession.child_id == child.id,
             )
         )
-        if end_result.scalar_one_or_none():
+        ending = end_result.scalar_one_or_none()
+        # Quick Chat must not summarize a named-profile session (and vice versa).
+        if ending and bool(ending.quick_chat) == bool(body.quick_chat):
             await _summarize_chat_session(session, body.end_session_id, child, chat_model)
 
-    chat_session = ChatSession(child_id=child.id)
+    chat_session = ChatSession(child_id=child.id, quick_chat=body.quick_chat)
     session.add(chat_session)
     await session.commit()
     await session.refresh(chat_session)
@@ -1127,6 +1131,8 @@ async def _resolve_chat_session(
     session: AsyncSession,
     child_id: int,
     session_id: int | None,
+    *,
+    quick_chat: bool = False,
 ) -> int | None:
     if session_id:
         result = await session.execute(
@@ -1136,11 +1142,11 @@ async def _resolve_chat_session(
             )
         )
         chat_session = result.scalar_one_or_none()
-        if not chat_session:
+        if not chat_session or bool(chat_session.quick_chat) != bool(quick_chat):
             raise HTTPException(status_code=404, detail="Chat session not found")
         return chat_session.id
 
-    chat_session = ChatSession(child_id=child_id)
+    chat_session = ChatSession(child_id=child_id, quick_chat=quick_chat)
     session.add(chat_session)
     await session.commit()
     await session.refresh(chat_session)
@@ -1255,7 +1261,9 @@ async def chat(
     rate_key = _rate_key(request, f"chat:{child.id}")
     check_rate_limit(rate_key, max_attempts=CHAT_RATE_MAX, window_seconds=CHAT_RATE_WINDOW)
     record_attempt(rate_key, window_seconds=CHAT_RATE_WINDOW)
-    chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
+    chat_session_id = await _resolve_chat_session(
+        session, child.id, body.session_id, quick_chat=body.quick_chat
+    )
     history = await _history_for_session(session, chat_session_id)
     chat_state = await _load_session_state(session, chat_session_id)
     chat_model, classifier_model = await get_effective_models(session)
@@ -1318,7 +1326,9 @@ async def chat_stream(
     rate_key = _rate_key(request, f"chat:{child.id}")
     check_rate_limit(rate_key, max_attempts=CHAT_RATE_MAX, window_seconds=CHAT_RATE_WINDOW)
     record_attempt(rate_key, window_seconds=CHAT_RATE_WINDOW)
-    chat_session_id = await _resolve_chat_session(session, child.id, body.session_id)
+    chat_session_id = await _resolve_chat_session(
+        session, child.id, body.session_id, quick_chat=body.quick_chat
+    )
     history = await _history_for_session(session, chat_session_id)
     chat_state = await _load_session_state(session, chat_session_id)
     chat_model, classifier_model = await get_effective_models(session)
