@@ -79,6 +79,25 @@ _HOMEWORK_MODE = (
     "Help the child learn step by step."
 )
 
+_MEMORY_INTRO = (
+    "Parent-approved notes: Use only these facts the parent saved. "
+    "Never invent other personal details about this child or anyone else."
+)
+
+
+def _memory_notes_block(items: list[dict] | None) -> str:
+    if not items:
+        return ""
+    facts: list[str] = []
+    for item in items:
+        label = str(item.get("label") or "").strip()
+        value = str(item.get("value") or "").strip()
+        if label and value:
+            facts.append(f"{label}: {value}")
+    if not facts:
+        return ""
+    return _MEMORY_INTRO + " " + " ".join(facts)
+
 
 def build_system_prompt(
     child_name: str,
@@ -91,6 +110,7 @@ def build_system_prompt(
     ai_tone: str = "balanced",
     ai_verbosity: int = 3,
     quick_chat: bool = False,
+    memory_items: list[dict] | None = None,
 ) -> str:
     style = _PRESET_STYLE.get(
         preset.id,
@@ -127,6 +147,10 @@ def build_system_prompt(
         parts.append(home_hint)
     if homework_mode:
         parts.append(_HOMEWORK_MODE)
+    if not quick_chat:
+        memory_block = _memory_notes_block(memory_items)
+        if memory_block:
+            parts.append(memory_block)
     if tool_hint:
         parts.append(tool_hint)
     return " ".join(parts)

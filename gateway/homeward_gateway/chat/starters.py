@@ -46,6 +46,7 @@ def get_conversation_starters(preset: PolicyPreset, limit: int = 6) -> list[dict
         {"label": "Fun facts", "message": "Give me 3 fun facts about space!"},
         {"label": "Timer", "message": "Set a timer for 2 minutes."},
         {"label": "Word help", "message": "What does photosynthesis mean?"},
+        {"label": "Story", "message": "Tell me a short story about a curious fox!"},
     ]
     existing = {s["label"] for s in starters}
     for extra in extras:

@@ -43,7 +43,7 @@ export function HomewardLogo({
         </span>
         {showTagline && (
           <span className="text-[11px] font-medium text-muted-foreground -mt-0.5">
-            Family AI Safety
+            Local family AI
           </span>
         )}
       </div>

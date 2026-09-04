@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { OllamaSetup } from "@/components/ollama-setup";
 import {
-  Cloud,
   KeyRound,
   MapPin,
   Server,
@@ -24,9 +23,6 @@ import {
 
 export default function SettingsPage() {
   const [loadError, setLoadError] = useState("");
-  const [cloudEnabled, setCloudEnabled] = useState(false);
-  const [openaiKey, setOpenaiKey] = useState("");
-  const [cloudMessage, setCloudMessage] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [passwordMessage, setPasswordMessage] = useState("");
@@ -53,8 +49,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     Promise.all([api.me(), api.homeLocation(), api.advancedSettings()])
-      .then(([me, home, advanced]) => {
-        setCloudEnabled(me.cloud_enabled);
+      .then(([, home, advanced]) => {
         setHomeLocation(home.location || "");
         setHomeLabel(home.label);
         setHomeTimezone(home.timezone);
@@ -85,16 +80,6 @@ export default function SettingsPage() {
       setPasswordError(e instanceof Error ? e.message : "Could not change password");
     } finally {
       setPasswordSaving(false);
-    }
-  };
-
-  const handleCloudSave = async () => {
-    setCloudMessage("");
-    try {
-      await api.cloudSettings(cloudEnabled, openaiKey || undefined);
-      setCloudMessage("Cloud settings saved successfully.");
-    } catch (e) {
-      setCloudMessage(e instanceof Error ? e.message : "Could not save settings");
     }
   };
 
@@ -160,7 +145,7 @@ export default function SettingsPage() {
           System & AI Settings
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Manage local Ollama models, parent dashboard password, and optional cloud fallbacks.
+          Manage local Ollama models and the parent dashboard password.
         </p>
         {loadError && (
           <p className="mt-3 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive">
@@ -292,66 +277,6 @@ export default function SettingsPage() {
             className="rounded-xl font-medium shadow-xs"
           >
             {homeSaving ? "Saving…" : "Save Home Location"}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Cloud Fallback */}
-      <Card className="border-border/80 shadow-xs">
-        <CardHeader className="pb-4">
-          <CardTitle className="text-lg font-bold flex items-center gap-2">
-            <Cloud className="h-5 w-5 text-primary" />
-            Cloud AI Models (Optional)
-          </CardTitle>
-          <CardDescription>
-            Homeward defaults to private local AI. You can optionally route to cloud providers with your own API key.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4 max-w-lg">
-          <label className="flex items-center gap-2.5 rounded-xl border border-border/80 p-3.5 text-sm cursor-pointer hover:bg-muted/40 transition-colors">
-            <input
-              type="checkbox"
-              checked={cloudEnabled}
-              onChange={(e) => setCloudEnabled(e.target.checked)}
-              className="accent-primary rounded h-4 w-4"
-            />
-            <div>
-              <p className="font-semibold text-foreground">
-                Enable Cloud AI
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Bring your own OpenAI API key
-              </p>
-            </div>
-          </label>
-
-          {cloudEnabled && (
-            <div className="space-y-1.5 animate-slide-down">
-              <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                OpenAI API Key
-              </label>
-              <Input
-                type="password"
-                placeholder="sk-..."
-                value={openaiKey}
-                onChange={(e) => setOpenaiKey(e.target.value)}
-                className="rounded-xl font-mono text-xs"
-              />
-            </div>
-          )}
-
-          {cloudMessage && (
-            <p className="text-xs font-semibold text-primary animate-slide-down">
-              {cloudMessage}
-            </p>
-          )}
-
-          <Button
-            onClick={handleCloudSave}
-            size="sm"
-            className="rounded-xl font-medium shadow-xs"
-          >
-            Save Cloud Settings
           </Button>
         </CardContent>
       </Card>
@@ -497,14 +422,15 @@ export default function SettingsPage() {
         <CardContent>
           <div className="rounded-xl bg-muted/40 p-4 border border-border/60 text-xs sm:text-sm text-muted-foreground leading-relaxed space-y-1">
             <p className="font-semibold text-foreground">
-              Connect family devices at:{" "}
+              Kids on Wi‑Fi:{" "}
               <code className="text-primary font-mono bg-primary/10 px-1.5 py-0.5 rounded">
-                {DEFAULT_HOMEWARD_URL}
+                {DEFAULT_HOMEWARD_URL}/chat
               </code>
             </p>
             <p>
-              Kids can chat from any device on your home network. The Parent Dashboard only opens on
-              this computer.
+              On this computer, use{" "}
+              <code className="font-mono text-foreground">http://localhost</code> for setup and the
+              parent dashboard. Kid chat is the only page that opens from other devices.
             </p>
           </div>
         </CardContent>

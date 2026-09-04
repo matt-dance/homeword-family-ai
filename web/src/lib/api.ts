@@ -23,6 +23,7 @@ export interface Child {
   has_pin?: boolean;
   homework_mode?: boolean;
   live_lookups?: boolean;
+  voice_gender?: "female" | "male";
   allow_resume?: boolean;
   quiet_hours_enabled?: boolean;
   quiet_hours_start?: string | null;
@@ -31,6 +32,12 @@ export interface Child {
   chat_available?: boolean;
   chat_unavailable_message?: string | null;
   is_default?: boolean;
+}
+
+export interface ChildMemoryItem {
+  id: string;
+  label: string;
+  value: string;
 }
 
 export interface ConversationStarter {
@@ -205,6 +212,7 @@ export const api = {
     pin?: string;
     homework_mode?: boolean;
     live_lookups?: boolean;
+    voice_gender?: "female" | "male";
   }) =>
     request<Child>("/children", {
       method: "POST",
@@ -221,6 +229,7 @@ export const api = {
       clear_pin: boolean;
       homework_mode: boolean;
       live_lookups: boolean;
+      voice_gender: "female" | "male";
       allow_resume: boolean;
       quiet_hours_enabled: boolean;
       quiet_hours_start: string;
@@ -234,6 +243,28 @@ export const api = {
     }),
   conversationStarters: (childId: number) =>
     request<ConversationStarter[]>(`/children/${childId}/starters`),
+  childMemory: (childId: number) =>
+    request<{ items: ChildMemoryItem[] }>(`/children/${childId}/memory`),
+  addChildMemory: (childId: number, data: { label: string; value: string }) =>
+    request<ChildMemoryItem>(`/children/${childId}/memory`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateChildMemory: (
+    childId: number,
+    itemId: string,
+    data: Partial<{ label: string; value: string }>,
+  ) =>
+    request<ChildMemoryItem>(`/children/${childId}/memory/${itemId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteChildMemory: (childId: number, itemId: string) =>
+    request<{ ok: boolean }>(`/children/${childId}/memory/${itemId}`, {
+      method: "DELETE",
+    }),
+  wipeChildMemory: (childId: number) =>
+    request<{ ok: boolean }>(`/children/${childId}/memory`, { method: "DELETE" }),
   resumeSession: (childId: number) =>
     request<ResumableSession>(`/children/${childId}/sessions/resume`),
   verifyPin: (childId: number, pin: string) =>
@@ -278,11 +309,47 @@ export const api = {
     request<{ available: boolean; ready: boolean; voice: string; message: string | null }>(
       "/chat/speak/status",
     ),
-  speakText: async (text: string) => {
+  homeworkStatus: (childId: number) =>
+    request<{
+      homework_mode: boolean;
+      available: boolean;
+      ready: boolean;
+      model: string | null;
+      expected_model: string;
+      message: string | null;
+    }>(`/chat/homework/status?child_id=${childId}`),
+  homeworkHint: async (childId: number, blob: Blob, question?: string) => {
+    const form = new FormData();
+    const ext = blob.type.includes("jpeg") || blob.type.includes("jpg")
+      ? "jpg"
+      : blob.type.includes("webp")
+        ? "webp"
+        : "png";
+    form.append("image", blob, `worksheet.${ext}`);
+    form.append("child_id", String(childId));
+    if (question?.trim()) form.append("question", question.trim());
+    const res = await fetch(`${API_BASE}/chat/homework/hint`, {
+      method: "POST",
+      body: form,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const detail = err.detail;
+      throw new Error(typeof detail === "string" ? detail : "Could not get a homework hint");
+    }
+    return res.json() as Promise<{
+      hint: string;
+      vision_available: boolean;
+      model: string | null;
+      expected_model: string;
+    }>;
+  },
+  speakText: async (text: string, voiceGender?: "female" | "male") => {
     const res = await fetch(`${API_BASE}/chat/speak`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, voice_gender: voiceGender }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -394,7 +461,7 @@ export async function streamChat(
   message: string,
   childId: number,
   onToken: (token: string) => void,
-  onBlocked: (message: string) => void,
+  onBlocked: (message: string, tools?: ChatTool[]) => void,
   onDone: () => void,
   sessionId?: number,
   onTools?: (tools: ChatTool[]) => void,
@@ -487,7 +554,7 @@ export async function streamChat(
               onToken(data.content);
             } else if (data.type === "blocked" || data.type === "error") {
               sawReply = true;
-              onBlocked(data.message);
+              onBlocked(data.message, data.tools);
               if (data.type === "error") finish();
             } else if (data.type === "status") {
               const statusText =

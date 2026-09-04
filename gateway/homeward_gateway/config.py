@@ -42,11 +42,15 @@ class Settings(BaseSettings):
     # Packaging
     docker_mode: bool = False
 
-    # Local voice (Whisper + Piper TTS)
+    # Local voice (Whisper + Kokoro TTS, Piper fallback)
     whisper_model: str = "tiny.en"
     whisper_max_bytes: int = 5_000_000
     piper_voice: str = "en_US-lessac-medium"
     speak_max_chars: int = 4_000
+
+    # Local homework camera (Ollama vision). Ask parents to: ollama pull llava:7b
+    vision_model: str = "llava:7b"
+    vision_max_bytes: int = 4_000_000
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./homeward.db"

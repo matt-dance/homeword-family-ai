@@ -25,6 +25,7 @@ from homeward_gateway.chat.session_state import (
     resolve_turn,
 )
 from homeward_gateway.chat.tools import (
+    ask_parent_card,
     clock_tool_hint,
     detect_intents,
     extract_model_tools,
@@ -42,6 +43,17 @@ class PipelineResult:
     block_reason: str | None = None
     stage: str | None = None
     session_state: SessionState | None = None
+    tools: list[dict] | None = None
+
+
+def _blocked_result(result: PipelineResult) -> PipelineResult:
+    return PipelineResult(
+        allowed=False,
+        content=result.content,
+        block_reason=result.block_reason,
+        stage=result.stage,
+        tools=result.tools or [ask_parent_card(result.block_reason).to_dict()],
+    )
 
 
 @dataclass
@@ -272,6 +284,7 @@ async def process_chat(
     ai_verbosity: int = 3,
     quick_chat: bool = False,
     session_state: SessionState | None = None,
+    memory_items: list[dict] | None = None,
 ) -> PipelineResult:
     """Full pipeline: filter input → LLM → filter output."""
     rules_only = _rules_only_classifier(chat_model)
@@ -281,7 +294,7 @@ async def process_chat(
         rules_only_classifier=rules_only,
     )
     if not input_result.allowed:
-        return input_result
+        return _blocked_result(input_result)
 
     resolved = resolve_turn(
         user_message,
@@ -325,6 +338,7 @@ async def process_chat(
             ai_tone=ai_tone,
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
+            memory_items=memory_items,
         )
     except Exception:
         return PipelineResult(allowed=False, block_reason="llm error", stage="llm")
@@ -335,7 +349,7 @@ async def process_chat(
         rules_only_classifier=rules_only,
     )
     if not output_result.allowed:
-        return output_result
+        return _blocked_result(output_result)
 
     return PipelineResult(
         allowed=True,
@@ -361,6 +375,7 @@ async def process_chat_stream(
     ai_verbosity: int = 3,
     quick_chat: bool = False,
     session_state: SessionState | None = None,
+    memory_items: list[dict] | None = None,
 ) -> AsyncIterator[str | PipelineResult | ToolEvent | StatusEvent]:
     """Stream pipeline: filter input first, then stream LLM, filter output at end."""
     rules_only = _rules_only_classifier(chat_model)
@@ -371,7 +386,7 @@ async def process_chat_stream(
         rules_only_classifier=rules_only,
     )
     if not input_result.allowed:
-        yield input_result
+        yield _blocked_result(input_result)
         return
 
     resolved = resolve_turn(
@@ -429,6 +444,7 @@ async def process_chat_stream(
             ai_tone=ai_tone,
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
+            memory_items=memory_items,
         ):
             collected.append(token)
             yield token
@@ -451,11 +467,7 @@ async def process_chat_stream(
         rules_only_classifier=rules_only,
     )
     if not output_result.allowed:
-        yield PipelineResult(
-            allowed=False,
-            block_reason=output_result.block_reason,
-            stage=output_result.stage,
-        )
+        yield _blocked_result(output_result)
         return
 
     yield PipelineResult(

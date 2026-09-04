@@ -80,3 +80,31 @@ def test_quick_chat_never_uses_personal_name():
     assert prompts._QUICK_CHAT_GREETING in fresh
     assert prompts._QUICK_CHAT_CONTINUE in ongoing
     assert prompts._QUICK_CHAT_GREETING not in ongoing
+
+
+def test_parent_approved_memory_is_included_only_when_saved():
+    preset = PRESETS["curious_explorer"]
+    items = [{"label": "Pets", "value": "Luna the cat"}, {"label": "Hobbies", "value": "soccer"}]
+    with_notes = build_system_prompt("Sam", 10, preset, memory_items=items)
+    without = build_system_prompt("Sam", 10, preset)
+    assert prompts._MEMORY_INTRO in with_notes
+    assert "Pets: Luna the cat" in with_notes
+    assert "Hobbies: soccer" in with_notes
+    assert "never invent" in with_notes.lower()
+    assert prompts._MEMORY_INTRO not in without
+    assert "Luna the cat" not in without
+
+
+def test_empty_memory_items_do_not_add_notes_block():
+    preset = PRESETS["young_explorer"]
+    prompt = build_system_prompt("Emma", 7, preset, memory_items=[])
+    assert prompts._MEMORY_INTRO not in prompt
+
+
+def test_quick_chat_omits_memory_even_when_items_are_passed():
+    preset = PRESETS["young_explorer"]
+    items = [{"label": "Pets", "value": "Luna the cat"}]
+    prompt = build_system_prompt("Lincoln", 8, preset, quick_chat=True, memory_items=items)
+    assert "Lincoln" not in prompt
+    assert prompts._MEMORY_INTRO not in prompt
+    assert "Luna the cat" not in prompt
