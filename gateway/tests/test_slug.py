@@ -55,6 +55,8 @@ class TestChildSlugs:
         assert len(public) == 1
         assert public[0]["slug"] == "maya"
         assert public[0]["name"] == child["name"]
+        assert public[0]["age"] == child["age"]
+        assert public[0]["preset_id"] == child["preset_id"]
 
 
 @pytest.mark.asyncio

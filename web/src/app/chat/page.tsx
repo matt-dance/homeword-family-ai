@@ -190,7 +190,7 @@ function ChatPickerContent() {
                       )}
                     </div>
                     <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
-                      <span>{theme.title}</span>
+                      <span>{theme.title} · {theme.ageRange}</span>
                       {child.homework_mode && (
                         <span className="font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
                           · <BookOpen className="h-3 w-3" /> Homework
