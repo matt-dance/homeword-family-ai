@@ -32,8 +32,9 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "llama3.2:3b"
     classifier_model: str = "llama3.2:3b"
-    classifier_timeout: float = 10.0
+    classifier_timeout: float = 5.0
     llm_timeout: float = 60.0
+    llm_first_token_timeout: float = 25.0
     lookup_timeout: float = 8.0
     cloud_enabled: bool = False
     openai_api_key: str = ""

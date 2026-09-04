@@ -17,6 +17,7 @@ class ClassifierResult:
     reason: str | None = None
     stage: str = "classifier"
     used_fallback: bool = False
+    model_unavailable: bool = False
 
 
 CLASSIFIER_PROMPT = """You are a content safety classifier for children. Analyze the message and respond with ONLY one word: SAFE or UNSAFE.
@@ -29,9 +30,21 @@ Message: {message}
 Response (SAFE or UNSAFE only):"""
 
 
+def _with_fallback(primary_reason: str, text: str) -> ClassifierResult:
+    """Keep keyword safety when the model times out, errors, or is unclear."""
+    fallback = classify_rules_fallback(text)
+    detail = fallback.reason or "rules fallback"
+    return ClassifierResult(
+        allowed=fallback.allowed,
+        reason=f"{primary_reason}; {detail}",
+        used_fallback=True,
+        model_unavailable=True,
+    )
+
+
 async def _check_ollama_available() -> bool:
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        async with httpx.AsyncClient(timeout=2.0) as client:
             resp = await client.get(f"{settings.ollama_base_url}/api/tags")
             return resp.status_code == 200
     except Exception:
@@ -62,13 +75,14 @@ async def classify_with_ollama(text: str, model: str | None = None) -> Classifie
                 return ClassifierResult(allowed=False, reason="classifier: unsafe content")
             if "SAFE" in result:
                 return ClassifierResult(allowed=True)
-            # Ambiguous response — fail closed
-            return ClassifierResult(allowed=False, reason="classifier: ambiguous response")
-    except asyncio.TimeoutError:
-        return ClassifierResult(allowed=False, reason="classifier: timeout")
+            logger.warning("Classifier returned an ambiguous reply: %r", result[:80])
+            return _with_fallback("classifier: ambiguous response", text)
+    except (httpx.TimeoutException, asyncio.TimeoutError) as e:
+        logger.warning("Classifier timeout: %s", e)
+        return _with_fallback("classifier: timeout", text)
     except Exception as e:
         logger.warning("Classifier error: %s", e)
-        return ClassifierResult(allowed=False, reason=f"classifier: error ({type(e).__name__})")
+        return _with_fallback(f"classifier: error ({type(e).__name__})", text)
 
 
 def classify_rules_fallback(text: str) -> ClassifierResult:
@@ -93,7 +107,7 @@ async def classify(
     strictness: int = 3,
     model: str | None = None,
 ) -> ClassifierResult:
-    """Classify content. Fail-closed on errors. Uses fallback if Ollama unavailable."""
+    """Classify content. Model timeouts/errors fall back to rules, not a blanket refusal."""
     # At low strictness, skip classifier for speed
     if strictness <= 1:
         return ClassifierResult(allowed=True, reason="strictness bypass")

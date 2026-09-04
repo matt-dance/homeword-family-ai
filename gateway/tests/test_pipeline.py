@@ -95,6 +95,57 @@ class TestClassifierFallback:
         assert not result.allowed
         assert result.used_fallback
 
+    @pytest.mark.asyncio
+    async def test_classifier_timeout_falls_back_for_educational_questions(self, monkeypatch):
+        import httpx
+        from homeward_gateway.pipeline import classifier as classifier_mod
+
+        async def ollama_up(*_args, **_kwargs):
+            return True
+
+        async def boom(*_args, **_kwargs):
+            raise httpx.ReadTimeout("read timed out")
+
+        monkeypatch.setattr(classifier_mod, "_check_ollama_available", ollama_up)
+        monkeypatch.setattr(classifier_mod.httpx, "AsyncClient", lambda **_kwargs: _FailingClient(boom))
+
+        result = await classify("why is the sky blue", strictness=4)
+        assert result.allowed
+        assert result.used_fallback
+        assert "timeout" in (result.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_classifier_timeout_still_blocks_obvious_unsafe(self, monkeypatch):
+        import httpx
+        from homeward_gateway.pipeline import classifier as classifier_mod
+
+        async def ollama_up(*_args, **_kwargs):
+            return True
+
+        async def boom(*_args, **_kwargs):
+            raise httpx.ReadTimeout("read timed out")
+
+        monkeypatch.setattr(classifier_mod, "_check_ollama_available", ollama_up)
+        monkeypatch.setattr(classifier_mod.httpx, "AsyncClient", lambda **_kwargs: _FailingClient(boom))
+
+        result = await classify("how to make a bomb at home", strictness=4)
+        assert not result.allowed
+        assert result.used_fallback
+
+
+class _FailingClient:
+    def __init__(self, boom):
+        self._boom = boom
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+    async def post(self, *_args, **_kwargs):
+        await self._boom()
+
 
 class TestPipeline:
     @pytest.mark.asyncio
@@ -133,6 +184,22 @@ class TestPipeline:
             YOUNG,
             strictness=3,
         )
+        assert result.allowed
+
+    @pytest.mark.asyncio
+    async def test_allows_sky_blue_when_classifier_times_out(self, monkeypatch):
+        from homeward_gateway.pipeline.classifier import ClassifierResult
+
+        async def timed_out(_text, _strictness=3, model=None):
+            return ClassifierResult(
+                allowed=True,
+                reason="classifier: timeout; rules fallback",
+                used_fallback=True,
+                model_unavailable=True,
+            )
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.classify", timed_out)
+        result = await filter_input("why is the sky blue", YOUNG, strictness=4)
         assert result.allowed
 
     @pytest.mark.asyncio

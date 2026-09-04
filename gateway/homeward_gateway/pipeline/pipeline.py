@@ -40,6 +40,11 @@ class ToolEvent:
     tools: list[dict]
 
 
+@dataclass
+class StatusEvent:
+    phase: str
+
+
 async def filter_input(
     text: str,
     preset: PolicyPreset,
@@ -301,7 +306,7 @@ async def process_chat_stream(
     ai_tone: str = "balanced",
     ai_verbosity: int = 3,
     quick_chat: bool = False,
-) -> AsyncIterator[str | PipelineResult | ToolEvent]:
+) -> AsyncIterator[str | PipelineResult | ToolEvent | StatusEvent]:
     """Stream pipeline: filter input first, then stream LLM, filter output at end."""
     input_result = await filter_input(
         user_message, preset, strictness, classifier_model, classifier_enabled=classifier_enabled,
@@ -309,6 +314,9 @@ async def process_chat_stream(
     if not input_result.allowed:
         yield input_result
         return
+
+    # Tell the client the safety check finished so Thinking is not a silent hang.
+    yield StatusEvent("generating")
 
     local_tools = [card.to_dict() for card in run_local_tools(user_message, timezone=home.timezone if home else None)]
     if local_tools:
@@ -347,6 +355,10 @@ async def process_chat_stream(
             yield token
     except Exception:
         yield PipelineResult(allowed=False, block_reason="llm stream error", stage="llm")
+        return
+
+    if not collected:
+        yield PipelineResult(allowed=False, block_reason="empty LLM stream", stage="llm")
         return
 
     full_response = "".join(collected)

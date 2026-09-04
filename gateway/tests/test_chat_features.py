@@ -119,6 +119,37 @@ class TestChatFeaturesAPI:
         assert [m["role"] for m in data["messages"]] == ["user", "assistant"]
 
     @pytest.mark.asyncio
+    async def test_resume_skips_empty_newer_session(self, authenticated_client: AsyncClient, monkeypatch):
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Stars are giant glowing balls of gas.")
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+
+        first = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        session_id = first.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={"message": "Hello stars", "child_id": child["id"], "session_id": session_id},
+        )
+        empty = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        assert empty.json()["session_id"] != session_id
+
+        resume = await authenticated_client.get(f"/api/v1/children/{child['id']}/sessions/resume")
+        assert resume.status_code == 200
+        data = resume.json()
+        assert data["session_id"] == session_id
+        assert [m["content"] for m in data["messages"]]
+        assert data["messages"][0]["content"] == "Hello stars"
+
+    @pytest.mark.asyncio
     async def test_resume_disabled_when_parent_turns_it_off(self, authenticated_client: AsyncClient):
         child = authenticated_client.test_child  # type: ignore[attr-defined]
         await authenticated_client.patch(f"/api/v1/children/{child['id']}", json={"allow_resume": False})

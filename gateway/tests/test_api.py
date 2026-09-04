@@ -143,6 +143,28 @@ class TestChildren:
         assert resp.status_code == 401
 
 
+class TestUserFacingMessage:
+    def test_policy_block_keeps_refusal_copy(self):
+        from homeward_gateway.api.routes import user_facing_message
+
+        text = user_facing_message("policy", "blocked topic: violence")
+        assert "can't help" in text.lower() or "fun" in text.lower()
+
+    def test_llm_failure_is_not_a_policy_refusal(self):
+        from homeward_gateway.api.routes import user_facing_message
+
+        text = user_facing_message("llm", "empty LLM stream")
+        assert "nap" in text.lower() or "try again" in text.lower()
+        assert "can't help" not in text.lower()
+
+    def test_classifier_timeout_is_not_a_policy_refusal(self):
+        from homeward_gateway.api.routes import user_facing_message
+
+        text = user_facing_message("classifier", "classifier: timeout")
+        assert "trouble checking" in text.lower()
+        assert "can't help" not in text.lower()
+
+
 class TestChat:
     @pytest.mark.asyncio
     async def test_chat_blocks_jailbreak(self, client: AsyncClient):
@@ -208,3 +230,41 @@ class TestChat:
             json={"message": "hello again", "child_id": child["id"]},
         )
         assert locked.status_code == 429
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_reports_llm_error_instead_of_hanging(
+        self, client: AsyncClient, monkeypatch
+    ):
+        from homeward_gateway.api import routes as api_routes
+        from homeward_gateway.pipeline.pipeline import PipelineResult
+
+        await setup_parent(client)
+        child = await create_child(client)
+
+        async def fake_stream(*_args, **_kwargs):
+            yield PipelineResult(allowed=False, block_reason="llm stream error", stage="llm")
+
+        monkeypatch.setattr(api_routes, "process_chat_stream", fake_stream)
+        resp = await client.post(
+            "/api/v1/chat/stream",
+            json={"message": "hello there", "child_id": child["id"]},
+        )
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers.get("content-type", "")
+        text = resp.text
+        assert '"type": "status"' in text or '"type":"status"' in text
+        assert '"type": "error"' in text or '"type":"error"' in text
+        assert "nap" in text.lower() or "try again" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_public_children_include_age_and_preset(self, client: AsyncClient):
+        await setup_parent(client)
+        await create_child(client, name="Avery", age=7)
+        await create_child(client, name="Riley", age=15)
+        resp = await client.get("/api/v1/children/public")
+        assert resp.status_code == 200
+        by_name = {row["name"]: row for row in resp.json()}
+        assert by_name["Avery"]["age"] == 7
+        assert by_name["Avery"]["preset_id"] == "young_explorer"
+        assert by_name["Riley"]["age"] == 15
+        assert by_name["Riley"]["preset_id"] == "teen_guided"
