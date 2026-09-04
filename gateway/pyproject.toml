@@ -39,6 +39,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["homeward_gateway"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"tests/fixtures/jfk-sample.flac" = "homeward_gateway/fixtures/jfk-sample.flac"
+"tests/fixtures/jfk-sample.webm" = "homeward_gateway/fixtures/jfk-sample.webm"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
