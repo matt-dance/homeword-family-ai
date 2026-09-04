@@ -4,6 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera, Upload, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { ParentLockOverlay } from "@/components/parent-lock-overlay";
+import { useParentLock } from "@/hooks/use-parent-lock";
+import {
+  homeworkCameraCaptureAllowed,
+  homeworkCameraClickAction,
+  mapHomeworkParentError,
+} from "@/lib/homework-camera-gate";
 
 /** Parent-gated worksheet camera. Vision model expected by the gateway: llava:7b */
 const ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
@@ -26,7 +33,11 @@ export function HomeworkCamera({
 }: HomeworkCameraProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef<string | null>(null);
+  const { locked, refreshActivity } = useParentLock();
+  const parentUnlocked = !locked;
   const [open, setOpen] = useState(false);
+  const panelOpen = open && parentUnlocked;
+  const [challengeOpen, setChallengeOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
@@ -36,14 +47,14 @@ export function HomeworkCamera({
   const [visionNote, setVisionNote] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!enabled || !open) return;
+    if (!enabled || !open || !parentUnlocked) return;
     api
       .homeworkStatus(childId)
       .then((status) => {
         setVisionNote(status.available ? null : status.message);
       })
       .catch(() => setVisionNote(null));
-  }, [childId, enabled, open]);
+  }, [childId, enabled, open, parentUnlocked]);
 
   useEffect(
     () => () => {
@@ -72,8 +83,38 @@ export function HomeworkCamera({
     setPreviewUrl(url);
   };
 
+  const requestParentUnlock = useCallback(() => {
+    setChallengeOpen(true);
+  }, []);
+
+  const handleCameraClick = () => {
+    const action = homeworkCameraClickAction(panelOpen, parentUnlocked);
+    if (action === "close") {
+      setOpen(false);
+      return;
+    }
+    if (action === "open") {
+      setOpen(true);
+      return;
+    }
+    requestParentUnlock();
+  };
+
+  const handleParentUnlocked = () => {
+    refreshActivity();
+    setChallengeOpen(false);
+    setOpen(true);
+  };
+
+  const ensureCaptureUnlocked = () => {
+    if (homeworkCameraCaptureAllowed(parentUnlocked)) return true;
+    requestParentUnlock();
+    return false;
+  };
+
   const handleSubmit = async () => {
     if (!file || busy) return;
+    if (!ensureCaptureUnlocked()) return;
     setBusy(true);
     setError(null);
     try {
@@ -96,19 +137,19 @@ export function HomeworkCamera({
     <div className="relative shrink-0">
       <Button
         type="button"
-        variant={open ? "default" : "outline"}
+        variant={panelOpen ? "default" : "outline"}
         size="icon"
         disabled={disabled}
         title="Homework camera — snap a worksheet for a hint"
         aria-label="Homework camera"
-        aria-pressed={open}
-        onClick={() => setOpen((prev) => !prev)}
+        aria-pressed={panelOpen}
+        onClick={handleCameraClick}
         className={`rounded-2xl border-border/80 ${simpleMode ? "h-14 w-14" : "h-11 w-11"}`}
       >
-        <Camera className={`h-5 w-5 ${open ? "" : "text-amber-600 dark:text-amber-400"}`} />
+        <Camera className={`h-5 w-5 ${panelOpen ? "" : "text-amber-600 dark:text-amber-400"}`} />
       </Button>
 
-      {open && (
+      {panelOpen && (
         <div className="absolute bottom-full left-0 z-30 mb-2 w-[min(20rem,calc(100vw-2rem))] rounded-2xl border border-amber-500/30 bg-card/95 p-3 shadow-lg backdrop-blur-md">
           <div className="mb-2 flex items-center justify-between gap-2">
             <p className={`font-semibold text-amber-700 dark:text-amber-300 ${simpleMode ? "text-base" : "text-sm"}`}>
@@ -143,7 +184,10 @@ export function HomeworkCamera({
               variant="outline"
               size="sm"
               disabled={disabled || busy}
-              onClick={() => inputRef.current?.click()}
+              onClick={() => {
+                if (!ensureCaptureUnlocked()) return;
+                inputRef.current?.click();
+              }}
               className="rounded-xl"
             >
               <Upload className="mr-1.5 h-3.5 w-3.5" />
@@ -190,6 +234,17 @@ export function HomeworkCamera({
             </div>
           )}
         </div>
+      )}
+
+      {challengeOpen && (
+        <ParentLockOverlay
+          title="Ask a parent"
+          description="A parent needs to unlock the worksheet camera. Photos are not saved."
+          submitLabel="Unlock camera"
+          onUnlock={handleParentUnlocked}
+          onCancel={() => setChallengeOpen(false)}
+          mapError={mapHomeworkParentError}
+        />
       )}
     </div>
   );
