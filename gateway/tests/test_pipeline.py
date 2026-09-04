@@ -6,7 +6,7 @@ from homeward_gateway.pipeline.classifier import classify, classify_rules_fallba
 from homeward_gateway.pipeline.normalize import normalize
 from homeward_gateway.pipeline.policy import load_all_presets, check_policy_match
 from homeward_gateway.pipeline.rules import check_rules
-from homeward_gateway.pipeline.pipeline import filter_input, filter_output
+from homeward_gateway.pipeline.pipeline import PipelineResult, filter_input, filter_output, process_chat
 
 
 PRESETS = load_all_presets()
@@ -215,4 +215,36 @@ class TestPipeline:
     async def test_empty_message_blocked(self):
         result = await filter_input("", YOUNG, strictness=3)
         assert not result.allowed
+
+    @pytest.mark.asyncio
+    async def test_process_chat_maps_llm_timeout_to_llm_stage(self, monkeypatch):
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="why is the sky blue")
+
+        async def timed_out(*_args, **_kwargs):
+            raise TimeoutError("LLM produced no tokens before timeout")
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.generate_response", timed_out)
+
+        result = await process_chat("why is the sky blue", [], YOUNG, 3, "Emma", 7)
+        assert result.allowed is False
+        assert result.stage == "llm"
+        assert "timeout" in (result.block_reason or "")
+
+    @pytest.mark.asyncio
+    async def test_process_chat_maps_wrapped_timeout_to_llm_stage(self, monkeypatch):
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="hello")
+
+        async def timed_out(*_args, **_kwargs):
+            raise RuntimeError("LLM produced no tokens before timeout")
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.generate_response", timed_out)
+
+        result = await process_chat("hello", [], YOUNG, 3, "Emma", 7)
+        assert result.allowed is False
+        assert result.stage == "llm"
+        assert result.block_reason == "llm timeout"
 

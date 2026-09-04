@@ -46,6 +46,14 @@ class PipelineResult:
     tools: list[dict] | None = None
 
 
+def _is_llm_timeout(exc: BaseException) -> bool:
+    """True when the model never produced a reply before a timeout."""
+    if isinstance(exc, TimeoutError):
+        return True
+    message = str(exc).lower()
+    return "timeout" in message or "timed out" in message
+
+
 def _blocked_result(result: PipelineResult) -> PipelineResult:
     return PipelineResult(
         allowed=False,
@@ -340,8 +348,11 @@ async def process_chat(
             quick_chat=quick_chat,
             memory_items=memory_items,
         )
-    except Exception:
-        return PipelineResult(allowed=False, block_reason="llm error", stage="llm")
+    except TimeoutError:
+        return PipelineResult(allowed=False, block_reason="llm timeout", stage="llm")
+    except Exception as exc:
+        reason = "llm timeout" if _is_llm_timeout(exc) else "llm error"
+        return PipelineResult(allowed=False, block_reason=reason, stage="llm")
 
     output_result = await filter_output(
         response, preset, strictness, classifier_model,

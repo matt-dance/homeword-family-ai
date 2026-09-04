@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import AsyncIterator
@@ -46,16 +47,29 @@ async def chat_completion(
     *,
     temperature: float = 0.7,
 ) -> str:
-    timeout = httpx.Timeout(llm_timeout_for_model(model), connect=10.0)
-    url = f"{settings.ollama_base_url.rstrip('/')}/api/chat"
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(
-            url,
-            json=_chat_payload(model, messages, stream=False, temperature=temperature),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return (data.get("message") or {}).get("content") or ""
+    """Collect a full reply, failing closed if the model stays silent.
+
+    Non-stream POST /api/v1/chat used to wait on a single Ollama response for
+    60–180s. Next.js rewrites typically die around 30s with a bare HTTP 500
+    before the gateway could return kid-safe JSON. Stream internally so a
+    first-token miss matches stream-path timeout semantics.
+    """
+    first_token_timeout = getattr(settings, "llm_first_token_timeout", 25.0)
+    collected: list[str] = []
+    stream = stream_chat_completion(model, messages, temperature=temperature)
+    try:
+        try:
+            first = await asyncio.wait_for(anext(stream), timeout=first_token_timeout)
+        except StopAsyncIteration:
+            return ""
+        except TimeoutError as exc:
+            raise RuntimeError("LLM produced no tokens before timeout") from exc
+        collected.append(first)
+        async for token in stream:
+            collected.append(token)
+        return "".join(collected)
+    finally:
+        await stream.aclose()
 
 
 async def stream_chat_completion(

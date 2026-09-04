@@ -1190,6 +1190,16 @@ def user_facing_message(stage: str | None, block_reason: str | None = None) -> s
     return BLOCKED_MESSAGE
 
 
+def _llm_unavailable_payload(session_id: int | None, tools: list | None = None) -> dict:
+    """Kid-safe JSON for LLM miss/timeout — never a bare HTTP 500."""
+    return {
+        "blocked": True,
+        "message": LLM_UNAVAILABLE_MESSAGE,
+        "session_id": session_id,
+        "tools": tools or [],
+    }
+
+
 def _resume_messages(logs: list[ConversationLog]) -> list[dict]:
     messages: list[dict] = []
     for log in logs:
@@ -1233,25 +1243,40 @@ async def chat(
     parent = await _load_parent_account(session, child.parent_id)
     home = home_context_from_parent(parent)
     ai_prefs = _serialize_ai_preferences(parent)
-    result = await process_chat(
-        body.message,
-        history,
-        preset,
-        child.strictness,
-        child.name,
-        child.age,
-        chat_model=chat_model,
-        classifier_model=classifier_model,
-        homework_mode=child.homework_mode,
-        live_lookups=child.live_lookups,
-        home=home,
-        classifier_enabled=ai_prefs["classifier_enabled"],
-        ai_tone=ai_prefs["ai_tone"],
-        ai_verbosity=ai_prefs["ai_verbosity"],
-        quick_chat=body.quick_chat,
-        session_state=chat_state,
-        memory_items=_prompt_memory_items(child, quick_chat=body.quick_chat),
-    )
+
+    try:
+        result = await process_chat(
+            body.message,
+            history,
+            preset,
+            child.strictness,
+            child.name,
+            child.age,
+            chat_model=chat_model,
+            classifier_model=classifier_model,
+            homework_mode=child.homework_mode,
+            live_lookups=child.live_lookups,
+            home=home,
+            classifier_enabled=ai_prefs["classifier_enabled"],
+            ai_tone=ai_prefs["ai_tone"],
+            ai_verbosity=ai_prefs["ai_verbosity"],
+            quick_chat=body.quick_chat,
+            session_state=chat_state,
+            memory_items=_prompt_memory_items(child, quick_chat=body.quick_chat),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Non-stream chat failed")
+        try:
+            await _log_message(
+                session, child.id, "input", body.message,
+                blocked=True, block_reason="llm error", stage="llm",
+                chat_session_id=chat_session_id,
+            )
+        except Exception:
+            logger.exception("Failed to log non-stream chat error")
+        return _llm_unavailable_payload(chat_session_id)
 
     if not result.allowed:
         await _log_message(
@@ -1263,7 +1288,7 @@ async def chat(
             "blocked": True,
             "message": user_facing_message(result.stage, result.block_reason),
             "session_id": chat_session_id,
-            "tools": result.tools or [],
+            "tools": getattr(result, "tools", None) or [],
         }
 
     await _log_message(session, child.id, "input", body.message, chat_session_id=chat_session_id)
