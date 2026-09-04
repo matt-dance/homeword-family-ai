@@ -161,6 +161,7 @@ CHAT_RATE_WINDOW = 300
 class SessionCreateRequest(BaseModel):
     child_id: int
     end_session_id: int | None = None
+    quick_chat: bool = False
 
 
 class SpeakRequest(BaseModel):
@@ -225,6 +226,34 @@ def _rate_key(request: Request, scope: str) -> str:
 def _require_child_access(request: Request, child: ChildProfile) -> None:
     if not has_child_access(request, child):
         raise HTTPException(status_code=403, detail="PIN required")
+
+
+async def _is_quick_chat_default(session: AsyncSession, child: ChildProfile) -> bool:
+    """True when this child is the household default used by anonymous Quick Chat."""
+    parent = await _load_household_parent(session)
+    result = await session.execute(select(ChildProfile))
+    children = list(result.scalars().all())
+    default = resolve_default_child(
+        children, parent.default_profile_child_id if parent else None
+    )
+    return default is not None and default.id == child.id
+
+
+async def _require_chat_access(
+    request: Request,
+    child: ChildProfile,
+    session: AsyncSession,
+    *,
+    quick_chat: bool = False,
+) -> None:
+    """Named profiles stay PIN-gated. Quick Chat on the household default does not.
+
+    `quick_chat=True` cannot unlock a non-default child's PIN. Resume and homework
+    keep using `_require_child_access` so those named-kid paths stay locked.
+    """
+    if quick_chat and await _is_quick_chat_default(session, child):
+        return
+    _require_child_access(request, child)
 
 
 _UNSAFE_MEMORY = re.compile(
@@ -994,7 +1023,7 @@ async def create_chat_session(
     child = result.scalar_one_or_none()
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
-    _require_child_access(request, child)
+    await _require_chat_access(request, child, session, quick_chat=body.quick_chat)
 
     chat_model, _ = await get_effective_models(session)
     if body.end_session_id:
@@ -1221,7 +1250,7 @@ async def chat(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     child, preset = await _get_child_context(body.child_id, session)
-    _require_child_access(request, child)
+    await _require_chat_access(request, child, session, quick_chat=body.quick_chat)
     _ensure_chat_available(child)
     rate_key = _rate_key(request, f"chat:{child.id}")
     check_rate_limit(rate_key, max_attempts=CHAT_RATE_MAX, window_seconds=CHAT_RATE_WINDOW)
@@ -1284,7 +1313,7 @@ async def chat_stream(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     child, preset = await _get_child_context(body.child_id, session)
-    _require_child_access(request, child)
+    await _require_chat_access(request, child, session, quick_chat=body.quick_chat)
     _ensure_chat_available(child)
     rate_key = _rate_key(request, f"chat:{child.id}")
     check_rate_limit(rate_key, max_attempts=CHAT_RATE_MAX, window_seconds=CHAT_RATE_WINDOW)

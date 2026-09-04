@@ -69,7 +69,8 @@ Native development uses `http://localhost:43123` instead of port 80. mDNS for ot
 ### How access is protected
 
 - **Parent dashboard is host-only.** Every parent API route requires both the parent session cookie *and* a request from this computer. Login, setup and password reset are rate limited.
-- **Child PINs are enforced by the server.** A correct PIN gives that browser a signed, `HttpOnly` cookie for that child; chat, sessions and "continue last chat" refuse without it. PINs are stored hashed.
+- **Child PINs are enforced by the server.** A correct PIN gives that browser a signed, `HttpOnly` cookie for that child; named-profile chat, sessions, homework, and "continue last chat" refuse without it. PINs are stored hashed.
+- **Quick Chat is anonymous.** `/chat/quick` uses the household default profile's age and safety settings, but does **not** require that child's PIN and does **not** inject named-kid memory. Named profiles (`/chat/avery`, and so on) stay PIN-gated.
 - **Ports.** Only the web app (port 80) is reachable from the LAN. In Docker the gateway (8000) and Ollama (11434) are bound to `127.0.0.1` so kids' devices cannot bypass Homeward's filters by talking to the model directly. For native dev, run the gateway with `--host 127.0.0.1` for the same effect.
 - **Chat history is server-side.** The model only sees prior turns from Homeward's own log, never text supplied by the client.
 
@@ -166,7 +167,7 @@ pytest -v
 |------|-------|
 | **Safety pipeline** | Rules, policy, classifier fallback, input/output filtering |
 | **Auth** | PBKDF2 password hashing, cookie flags, login rate limit, host-only parent routes |
-| **Child PINs** | Hashed at rest, server-enforced on chat/resume, rate-limited attempts |
+| **Child PINs** | Hashed at rest, server-enforced on named-profile chat/resume/homework, rate-limited attempts. Quick Chat on the household default skips that PIN (still no named memory). |
 | **Setup flow** | Create/resume/complete setup, validation |
 | **Chat** | Jailbreak blocking, dangerous content, session logging |
 | **Dashboard** | Session grouping, message drill-down, blocked attempts |

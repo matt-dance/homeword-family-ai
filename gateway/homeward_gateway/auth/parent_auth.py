@@ -112,8 +112,10 @@ async def get_parent_from_request(request: Request, session: AsyncSession) -> Op
 # --- Child unlock (PIN) ---
 #
 # A correct PIN grants this browser a signed, httponly cookie for that child.
-# Chat, session, and resume endpoints require it for PIN-protected profiles so
-# the PIN cannot be skipped by calling the API directly from another device.
+# Named-profile chat, session, resume, and homework require it so the PIN cannot
+# be skipped by calling the API directly. Anonymous Quick Chat
+# (`quick_chat=true` on the household default child) is the exception: it uses
+# that profile's safety settings without unlocking named-kid identity or memory.
 
 
 def _child_cookie_name(child_id: int) -> str:

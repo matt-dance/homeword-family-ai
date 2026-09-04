@@ -14,6 +14,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { extractChatTools, mergeChatTools, type ChatTool, type StoryTool } from "@/lib/chat-tools";
 import { shouldShowReplyChips } from "@/lib/reply-chips";
 import { shouldOfferResume } from "@/lib/resume-session";
+import { chatRequiresPin } from "@/lib/chat-pin";
 import { getAgeTheme, AGE_THEME_CONFIGS } from "@/lib/age-theme";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -68,10 +69,11 @@ interface KidChatViewProps {
 export function KidChatView({ selectedChild, onSwitchProfile, displayName, quickChat = false }: KidChatViewProps) {
   const ageThemeKey = getAgeTheme(selectedChild);
   const ageConfig = AGE_THEME_CONFIGS[ageThemeKey];
+  const pinRequired = chatRequiresPin({ hasPin: selectedChild.has_pin, quickChat });
 
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState("");
-  const [pinVerified, setPinVerified] = useState(!selectedChild.has_pin);
+  const [pinVerified, setPinVerified] = useState(!pinRequired);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -128,7 +130,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
   };
 
   useEffect(() => {
-    setPinVerified(!selectedChild.has_pin);
+    setPinVerified(!pinRequired);
     setPin("");
     setPinError("");
     setChatSessionId(null);
@@ -138,7 +140,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     setResumeChecking(false);
     setStoryPageText({});
     setStarters([]);
-  }, [selectedChild.id, selectedChild.has_pin]);
+  }, [selectedChild.id, pinRequired]);
 
   useEffect(() => {
     if (!pinVerified) return;
@@ -180,7 +182,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       }
 
       try {
-        const session = await api.createChatSession(selectedChild.id);
+        const session = await api.createChatSession(selectedChild.id, undefined, quickChat);
         setChatSessionId(session.session_id);
         setMessages([]);
         setSessionReady(true);
@@ -188,7 +190,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
         setPinError(SESSION_ERROR_MESSAGE);
       }
     },
-    [selectedChild],
+    [selectedChild, quickChat],
   );
 
   useEffect(() => {
@@ -240,7 +242,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     setResumeChecking(false);
     setStoryPageText({});
     try {
-      const session = await api.createChatSession(selectedChild.id, previousSessionId ?? undefined);
+      const session = await api.createChatSession(selectedChild.id, previousSessionId ?? undefined, quickChat);
       setChatSessionId(session.session_id);
       setSessionReady(true);
     } catch {
@@ -285,7 +287,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
         setPinError(selectedChild.chat_unavailable_message || "Chat is not available right now.");
         return;
       }
-      if (selectedChild.has_pin && !pinVerified) {
+      if (pinRequired && !pinVerified) {
         setPinError("Please enter your PIN first");
         return;
       }
@@ -396,7 +398,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
         }
       }
     },
-    [input, selectedChild, streaming, pinVerified, chatSessionId, sessionReady, speakMessage, stopReadAloud, quickChat],
+    [input, selectedChild, streaming, pinRequired, pinVerified, chatSessionId, sessionReady, speakMessage, stopReadAloud, quickChat],
   );
 
   const handleStop = useCallback(() => {
@@ -416,8 +418,8 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     onSwitchProfile();
   };
 
-  // PIN screen
-  if (selectedChild.has_pin && !pinVerified) {
+  // PIN screen — named profiles only. Quick Chat is anonymous and skips this gate.
+  if (pinRequired && !pinVerified) {
     return (
       <div className={`min-h-screen flex items-center justify-center p-4 ${ageConfig.ambientGradient}`}>
         <main className="w-full max-w-md animate-pop-in">
@@ -429,9 +431,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
               {displayName ?? `Hi, ${selectedChild.name}!`}
             </h1>
             <p className="text-muted-foreground mt-1.5 text-sm">
-              {displayName
-                ? "This shared chat is PIN protected. Ask a parent for the household PIN."
-                : "Enter your secret PIN to unlock your chat"}
+              Enter your secret PIN to unlock your chat
             </p>
           </div>
           <Card className="border-border/80 bg-card/95 shadow-xl backdrop-blur-md rounded-2xl">
@@ -909,7 +909,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             )}
             <HomeworkCamera
               childId={selectedChild.id}
-              enabled={Boolean(selectedChild.homework_mode)}
+              enabled={Boolean(selectedChild.homework_mode) && !(quickChat && selectedChild.has_pin)}
               disabled={streaming || listening || transcribing || !sessionReady}
               simpleMode={simpleMode}
             />

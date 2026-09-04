@@ -282,10 +282,14 @@ export const api = {
     request<{ ok: boolean }>(`/dashboard/sessions/${sessionId}`, { method: "DELETE" }),
   deleteChildSessions: (childId: number) =>
     request<{ ok: boolean }>(`/dashboard/sessions?child_id=${childId}`, { method: "DELETE" }),
-  createChatSession: (childId: number, endSessionId?: number) =>
+  createChatSession: (childId: number, endSessionId?: number, quickChat?: boolean) =>
     request<{ session_id: number; started_at: string }>("/chat/sessions", {
       method: "POST",
-      body: JSON.stringify({ child_id: childId, end_session_id: endSessionId ?? null }),
+      body: JSON.stringify({
+        child_id: childId,
+        end_session_id: endSessionId ?? null,
+        quick_chat: quickChat ?? false,
+      }),
     }),
   transcribeStatus: () =>
     request<{ available: boolean; ready: boolean; model: string; message: string | null }>(

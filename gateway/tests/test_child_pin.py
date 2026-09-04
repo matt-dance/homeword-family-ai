@@ -140,6 +140,88 @@ class TestPinAPI:
         session = await client.post("/api/v1/chat/sessions", json={"child_id": child["id"]}, headers=LAN)
         assert session.status_code == 200
 
+    @pytest.mark.asyncio
+    async def test_quick_chat_skips_pin_on_default_profile(self, client: AsyncClient, monkeypatch):
+        """Anonymous Quick Chat uses the default child's safety settings without that PIN."""
+        child = await _pin_child(client)
+
+        locked = await client.post(
+            "/api/v1/chat/sessions", json={"child_id": child["id"]}, headers=LAN
+        )
+        assert locked.status_code == 403
+
+        session = await client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"], "quick_chat": True},
+            headers=LAN,
+        )
+        assert session.status_code == 200
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Hi there!")
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+        chat = await client.post(
+            "/api/v1/chat",
+            json={"message": "hi", "child_id": child["id"], "quick_chat": True},
+            headers=LAN,
+        )
+        assert chat.status_code == 200
+
+        named = await client.post(
+            "/api/v1/chat",
+            json={"message": "hi", "child_id": child["id"]},
+            headers=LAN,
+        )
+        assert named.status_code == 403
+
+        resume = await client.get(
+            f"/api/v1/children/{child['id']}/sessions/resume", headers=LAN
+        )
+        assert resume.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_quick_chat_cannot_bypass_non_default_pin(self, client: AsyncClient):
+        await _pin_child(client, pin="1111")
+        other = await client.post(
+            "/api/v1/children",
+            json={"name": "Jordan", "age": 9, "strictness": 3, "pin": "2222"},
+        )
+        assert other.status_code == 200
+        bypass = await client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": other.json()["id"], "quick_chat": True},
+            headers=LAN,
+        )
+        assert bypass.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_quick_chat_stream_skips_pin_on_default_profile(
+        self, client: AsyncClient, monkeypatch
+    ):
+        child = await _pin_child(client)
+
+        async def fake_process_chat_stream(*_args, **_kwargs):
+            if False:
+                yield ""
+
+        monkeypatch.setattr(
+            "homeward_gateway.api.routes.process_chat_stream", fake_process_chat_stream
+        )
+        stream = await client.post(
+            "/api/v1/chat/stream",
+            json={"message": "hi", "child_id": child["id"], "quick_chat": True},
+            headers=LAN,
+        )
+        assert stream.status_code == 200
+
+        named = await client.post(
+            "/api/v1/chat/stream",
+            json={"message": "hi", "child_id": child["id"]},
+            headers=LAN,
+        )
+        assert named.status_code == 403
+
 
 class TestServerSideHistory:
     @pytest.mark.asyncio
