@@ -217,6 +217,11 @@ class TestServerSideHistory:
         assert blocked.status_code == 200
         assert blocked.json()["blocked"] is True
 
+        async with db_module.async_session_factory() as session:
+            cleared = await session.get(ChatSession, session_id)
+            assert cleared is not None
+            assert not cleared.context_state
+
         benign = await client.post(
             "/api/v1/chat",
             json={"message": "Tell me a fun fact about cats", "child_id": child["id"], "session_id": session_id},
@@ -225,8 +230,8 @@ class TestServerSideHistory:
         history_text = " ".join(m["content"] for m in captured["messages"])
         assert "bomb" not in history_text.lower()
         assert "What are dogs like?" in history_text
-        state = captured["session_state"]
-        assert state is None or state.topic is None
+        loaded = captured["session_state"]
+        assert loaded is None or loaded.topic is None
 
         async with db_module.async_session_factory() as session:
             logs = list((await session.execute(
@@ -238,7 +243,7 @@ class TestServerSideHistory:
         assert any(log.blocked and "bomb" in log.content.lower() for log in logs)
         assert any("bomb" in (attempt.content or "").lower() for attempt in attempts)
         assert chat_session is not None
-        assert not chat_session.context_state
+        assert "bomb" not in (chat_session.context_state or "").lower()
 
         dashboard = await client.get("/api/v1/dashboard/blocked")
         assert dashboard.status_code == 200
