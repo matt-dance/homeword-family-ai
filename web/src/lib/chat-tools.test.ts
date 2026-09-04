@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asChatTool, extractChatTools, mergeChatTools } from "./chat-tools";
+import { asChatTool, constrainChatTools, extractChatTools, mergeChatTools } from "./chat-tools";
 
 describe("extractChatTools", () => {
   it("strips a complete homeward fence and parses the card", () => {
@@ -89,5 +89,23 @@ describe("extractChatTools", () => {
       "```",
     ].join("\n");
     expect(extractChatTools(fenced).tools[0]).toEqual(story);
+  });
+
+  it("drops a quiz fence when the route only allows timer", () => {
+    const content =
+      'Go!\n\n```homeward\n{"type":"quiz","title":"Animal Quiz Time!","questions":[]}\n```\n';
+    const extra = [{ type: "timer" as const, seconds: 10, label: "10 seconds" }];
+    const { tools } = extractChatTools(content, extra, { allow: ["timer", "lookup"], storyPages: null });
+    expect(tools).toEqual(extra);
+  });
+
+  it("trims extra story pages to the requested count", () => {
+    const story = {
+      type: "story" as const,
+      title: "Fox",
+      pages: [{ text: "One" }, { text: "Two" }, { text: "Three" }],
+    };
+    const routed = constrainChatTools([story], { allow: ["story"], storyPages: 2 });
+    expect(routed[0]).toEqual({ ...story, pages: [{ text: "One" }, { text: "Two" }] });
   });
 });

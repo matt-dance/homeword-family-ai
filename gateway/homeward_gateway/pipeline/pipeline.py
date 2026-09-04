@@ -25,10 +25,13 @@ from homeward_gateway.chat.session_state import (
     resolve_turn,
 )
 from homeward_gateway.chat.tools import (
+    apply_card_routing,
     ask_parent_card,
+    card_route_for_message,
     clock_tool_hint,
     detect_intents,
     extract_model_tools,
+    requested_story_pages,
     run_local_tools,
     tool_prompt_hint,
 )
@@ -65,6 +68,12 @@ class ToolEvent:
 class StatusEvent:
     message: str | None = None
     phase: str | None = None
+
+
+@dataclass
+class CardRouteEvent:
+    allow: list[str] | None
+    story_pages: int | None = None
 
 
 def _rules_only_classifier(chat_model: str | None) -> bool:
@@ -258,13 +267,37 @@ async def resolve_live_lookup(
 def _combined_tool_hint(
     user_message: str,
     home: HomeContext | None = None,
+    *,
+    local_types: set[str] | None = None,
 ) -> str:
     tz = home.timezone if home else None
+    intents = detect_intents(user_message)
     parts = [
-        tool_prompt_hint(detect_intents(user_message)),
+        tool_prompt_hint(
+            intents,
+            local_types=local_types,
+            story_pages=requested_story_pages(user_message) if "story" in intents else None,
+        ),
         clock_tool_hint(user_message, timezone=tz),
     ]
     return "\n\n".join(part for part in parts if part)
+
+
+def _tools_for_turn(
+    user_message: str,
+    model_text: str,
+    *,
+    extra: list[dict] | None = None,
+    timezone: str | None = None,
+) -> list[dict]:
+    local = [card.to_dict() for card in run_local_tools(user_message, timezone=timezone)]
+    _visible, model_cards = extract_model_tools(model_text or "")
+    routed = [card.to_dict() for card in apply_card_routing(user_message, model_cards)]
+    merged: list[dict] = []
+    for item in [*(extra or []), *local, *routed]:
+        if item not in merged:
+            merged.append(item)
+    return merged
 
 
 async def process_chat(
@@ -302,7 +335,7 @@ async def process_chat(
         session_state,
         home_location=home.location if home else None,
     )
-    lookup_notes, _lookup_tools, intent, lookup_result = await resolve_live_lookup(
+    lookup_notes, lookup_tools, intent, lookup_result = await resolve_live_lookup(
         resolved.expanded_message,
         live_lookups=live_lookups,
         preset=preset,
@@ -317,7 +350,13 @@ async def process_chat(
     if intent and lookup_result:
         updated_state = updated_state.merge_lookup(intent, lookup_result)
 
-    hint = _combined_tool_hint(user_message, home)
+    tz = home.timezone if home else None
+    local_cards = run_local_tools(user_message, timezone=tz)
+    hint = _combined_tool_hint(
+        user_message,
+        home,
+        local_types={card.type for card in local_cards},
+    )
     if resolved.context_hint:
         hint = "\n\n".join(part for part in (hint, resolved.context_hint) if part)
     user_turn = format_user_turn(
@@ -355,6 +394,12 @@ async def process_chat(
         allowed=True,
         content=output_result.content,
         session_state=updated_state,
+        tools=_tools_for_turn(
+            user_message,
+            output_result.content or "",
+            extra=lookup_tools,
+            timezone=tz,
+        ),
     )
 
 
@@ -376,7 +421,7 @@ async def process_chat_stream(
     quick_chat: bool = False,
     session_state: SessionState | None = None,
     memory_items: list[dict] | None = None,
-) -> AsyncIterator[str | PipelineResult | ToolEvent | StatusEvent]:
+) -> AsyncIterator[str | PipelineResult | ToolEvent | StatusEvent | CardRouteEvent]:
     """Stream pipeline: filter input first, then stream LLM, filter output at end."""
     rules_only = _rules_only_classifier(chat_model)
     yield StatusEvent(message="Checking your message…", phase="checking")
@@ -397,7 +442,10 @@ async def process_chat_stream(
     )
     # Tell the client the safety check finished so Thinking is not a silent hang.
     yield StatusEvent(message="Writing a reply…", phase="generating")
-    local_tools = [card.to_dict() for card in run_local_tools(user_message, timezone=home.timezone if home else None)]
+    route = card_route_for_message(user_message)
+    yield CardRouteEvent(allow=route["allow"], story_pages=route["story_pages"])
+    local_cards = run_local_tools(user_message, timezone=home.timezone if home else None)
+    local_tools = [card.to_dict() for card in local_cards]
     if local_tools:
         yield ToolEvent(local_tools)
 
@@ -421,7 +469,11 @@ async def process_chat_stream(
     if lookup_tools:
         yield ToolEvent(lookup_tools)
 
-    hint = _combined_tool_hint(user_message, home)
+    hint = _combined_tool_hint(
+        user_message,
+        home,
+        local_types={card.type for card in local_cards},
+    )
     if resolved.context_hint:
         hint = "\n\n".join(part for part in (hint, resolved.context_hint) if part)
     user_turn = format_user_turn(
@@ -458,7 +510,7 @@ async def process_chat_stream(
 
     full_response = "".join(collected)
     _visible, model_cards = extract_model_tools(full_response)
-    extra = [card.to_dict() for card in model_cards]
+    extra = [card.to_dict() for card in apply_card_routing(user_message, model_cards)]
     if extra:
         yield ToolEvent(extra)
     output_result = await filter_output(

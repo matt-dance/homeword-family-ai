@@ -73,6 +73,7 @@ from homeward_gateway.ollama.catalog import pick_classifier_model
 from homeward_gateway.ollama.runtime import get_effective_models
 from homeward_gateway.models.router import strip_thinking
 from homeward_gateway.pipeline.pipeline import (
+    CardRouteEvent,
     PipelineResult,
     StatusEvent,
     ToolEvent,
@@ -1274,6 +1275,7 @@ async def chat(
         "blocked": False,
         "message": result.content,
         "session_id": chat_session_id,
+        "tools": result.tools or [],
     }
 
 
@@ -1361,6 +1363,14 @@ async def chat_stream(
                             "type": "status",
                             "phase": item.phase,
                             "message": item.message,
+                        })
+                        yield f"data: {payload}\n\n"
+                        continue
+                    if isinstance(item, CardRouteEvent):
+                        payload = json.dumps({
+                            "type": "card_route",
+                            "allow": item.allow,
+                            "story_pages": item.story_pages,
                         })
                         yield f"data: {payload}\n\n"
                         continue

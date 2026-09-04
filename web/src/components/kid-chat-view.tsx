@@ -11,7 +11,14 @@ import { ChatMarkdown } from "@/components/chat-markdown";
 import { ChatToolCards } from "@/components/chat-tools";
 import { ReplyChips } from "@/components/reply-chips";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { extractChatTools, mergeChatTools, type ChatTool, type StoryTool } from "@/lib/chat-tools";
+import {
+  constrainChatTools,
+  extractChatTools,
+  mergeChatTools,
+  type CardRoute,
+  type ChatTool,
+  type StoryTool,
+} from "@/lib/chat-tools";
 import { shouldShowReplyChips } from "@/lib/reply-chips";
 import { shouldOfferResume } from "@/lib/resume-session";
 import { getAgeTheme, AGE_THEME_CONFIGS } from "@/lib/age-theme";
@@ -43,6 +50,7 @@ interface Message {
   content: string;
   blocked?: boolean;
   tools?: ChatTool[];
+  cardRoute?: CardRoute | null;
 }
 
 function simpleModeKey(childId: number) {
@@ -50,7 +58,7 @@ function simpleModeKey(childId: number) {
 }
 
 function spokenTextForMessage(msg: Message) {
-  const parsed = extractChatTools(msg.content, msg.tools);
+  const parsed = extractChatTools(msg.content, msg.tools, msg.cardRoute);
   const story = parsed.tools.find((tool): tool is StoryTool => tool.type === "story");
   return story?.pages?.[0]?.text || parsed.text;
 }
@@ -87,6 +95,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
   const sendRef = useRef<(text: string, fromVoice?: boolean) => Promise<void>>(async () => {});
   const autoReadNextRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const cardRouteRef = useRef<CardRoute | null>(null);
 
   // Voice conversation loop: swap these two hooks for useVoiceConversation({
   //   onTranscript: handleVoiceTranscript,
@@ -297,6 +306,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       setInput("");
       setPinError("");
       stopReadAloud();
+      cardRouteRef.current = null;
       setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
       setStreaming(true);
       setStreamStatus("Checking your message…");
@@ -314,9 +324,15 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             setMessages((prev) => {
               const last = prev[prev.length - 1];
               if (last?.role === "assistant" && !last.blocked) {
-                return [...prev.slice(0, -1), { ...last, role: "assistant", content: assistantContent }];
+                return [
+                  ...prev.slice(0, -1),
+                  { ...last, role: "assistant", content: assistantContent, cardRoute: last.cardRoute ?? cardRouteRef.current },
+                ];
               }
-              return [...prev, { role: "assistant", content: assistantContent }];
+              return [
+                ...prev,
+                { role: "assistant", content: assistantContent, cardRoute: cardRouteRef.current },
+              ];
             });
           },
           (blockedMsg, blockedTools) => {
@@ -362,17 +378,43 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           },
           chatSessionId,
           (tools) => {
+            const routed = constrainChatTools(mergeChatTools([], tools), cardRouteRef.current);
             setMessages((prev) => {
               const last = prev[prev.length - 1];
               if (last?.role === "assistant" && !last.blocked) {
-                return [...prev.slice(0, -1), { ...last, tools: mergeChatTools(last.tools, tools) }];
+                return [
+                  ...prev.slice(0, -1),
+                  {
+                    ...last,
+                    tools: mergeChatTools(last.tools, routed),
+                    cardRoute: last.cardRoute ?? cardRouteRef.current,
+                  },
+                ];
               }
-              return [...prev, { role: "assistant", content: "", tools: mergeChatTools([], tools) }];
+              return [
+                ...prev,
+                { role: "assistant", content: "", tools: routed, cardRoute: cardRouteRef.current },
+              ];
             });
           },
           controller.signal,
           quickChat,
           (status) => setStreamStatus(status),
+          (route) => {
+            cardRouteRef.current = route;
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last?.role !== "assistant" || last.blocked) return prev;
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...last,
+                  cardRoute: route,
+                  tools: last.tools ? constrainChatTools(last.tools, route) : last.tools,
+                },
+              ];
+            });
+          },
         );
       } catch (e) {
         if (controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) {
@@ -705,7 +747,8 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             const messageKey = `msg-${i}`;
             const isAssistant = msg.role === "assistant";
             const isReading = isSpeakingMessage(messageKey);
-            const parsed = isAssistant && !msg.blocked ? extractChatTools(msg.content, msg.tools) : null;
+            const parsed =
+              isAssistant && !msg.blocked ? extractChatTools(msg.content, msg.tools, msg.cardRoute) : null;
             const displayText = parsed?.text ?? msg.content;
             const tools = parsed?.tools ?? msg.tools ?? [];
             const listenText = storyPageText[i] || displayText;
