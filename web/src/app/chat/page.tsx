@@ -142,11 +142,6 @@ function ChatPickerContent() {
                     <span className="text-lg font-bold text-foreground group-hover:text-primary transition-colors truncate">
                       {QUICK_CHAT_LABEL}
                     </span>
-                    {defaultChild.has_pin && (
-                      <span title="PIN Protected">
-                        <Lock className="h-3.5 w-3.5 text-muted-foreground" />
-                      </span>
-                    )}
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">
                     Household default — good for shared tablets and quick questions
