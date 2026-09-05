@@ -197,7 +197,7 @@ class TestPipeline:
     async def test_allows_sky_blue_when_classifier_times_out(self, monkeypatch):
         from homeward_gateway.pipeline.classifier import ClassifierResult
 
-        async def timed_out(_text, _strictness=3, model=None, rules_only=False):
+        async def timed_out(_text, _strictness=3, model=None, rules_only=False, **_kwargs):
             return ClassifierResult(
                 allowed=True,
                 reason="classifier: timeout; rules fallback",
@@ -249,4 +249,3 @@ class TestPipeline:
     async def test_empty_message_blocked(self):
         result = await filter_input("", YOUNG, strictness=3)
         assert not result.allowed
-
