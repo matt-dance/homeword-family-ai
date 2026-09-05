@@ -6,7 +6,7 @@ from homeward_gateway.pipeline.classifier import classify, classify_rules_fallba
 from homeward_gateway.pipeline.normalize import normalize
 from homeward_gateway.pipeline.policy import load_all_presets, check_policy_match
 from homeward_gateway.pipeline.rules import check_rules
-from homeward_gateway.pipeline.pipeline import filter_input, filter_output
+from homeward_gateway.pipeline.pipeline import PipelineResult, filter_input, filter_output, process_chat
 
 
 PRESETS = load_all_presets()

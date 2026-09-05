@@ -1,5 +1,9 @@
 """Tests for direct Ollama chat client."""
 
+import asyncio
+
+import pytest
+
 from homeward_gateway.models.ollama_chat import _chat_payload
 
 

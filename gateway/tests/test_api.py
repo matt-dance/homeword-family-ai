@@ -279,6 +279,77 @@ class TestChat:
         assert "nap" in text.lower() or "try again" in text.lower()
 
     @pytest.mark.asyncio
+    async def test_chat_llm_timeout_returns_structured_json(
+        self, client: AsyncClient, monkeypatch
+    ):
+        await setup_parent(client)
+        child = await create_child(client, name="Avery", age=7)
+
+        async def timed_out(*_args, **_kwargs):
+            raise TimeoutError("LLM produced no tokens before timeout")
+
+        monkeypatch.setattr(
+            "homeward_gateway.pipeline.pipeline.generate_response", timed_out
+        )
+        resp = await client.post(
+            "/api/v1/chat",
+            json={"message": "why is the sky blue", "child_id": child["id"]},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["blocked"] is True
+        assert "nap" in data["message"].lower() or "try again" in data["message"].lower()
+        assert "internal server error" not in data["message"].lower()
+        assert "detail" not in data
+
+    @pytest.mark.asyncio
+    async def test_chat_llm_miss_returns_structured_json(
+        self, client: AsyncClient, monkeypatch
+    ):
+        from homeward_gateway.models.router import EmptyModelResponseError
+
+        await setup_parent(client)
+        child = await create_child(client, name="Riley", age=15)
+
+        async def empty_reply(*_args, **_kwargs):
+            raise EmptyModelResponseError("empty model response")
+
+        monkeypatch.setattr(
+            "homeward_gateway.pipeline.pipeline.generate_response", empty_reply
+        )
+        resp = await client.post(
+            "/api/v1/chat",
+            json={"message": "tell me a joke", "child_id": child["id"]},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["blocked"] is True
+        assert "nap" in data["message"].lower() or "try again" in data["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_chat_unhandled_timeout_is_not_a_bare_500(
+        self, client: AsyncClient, monkeypatch
+    ):
+        from homeward_gateway.api import routes as api_routes
+
+        await setup_parent(client)
+        child = await create_child(client, name="Jordan", age=11)
+
+        async def boom(*_args, **_kwargs):
+            raise TimeoutError("total timeout")
+
+        monkeypatch.setattr(api_routes, "process_chat", boom)
+        resp = await client.post(
+            "/api/v1/chat",
+            json={"message": "hello there", "child_id": child["id"]},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["blocked"] is True
+        assert "nap" in data["message"].lower() or "try again" in data["message"].lower()
+        assert "session_id" in data
+
+    @pytest.mark.asyncio
     async def test_public_children_include_age_and_preset(self, client: AsyncClient):
         await setup_parent(client)
         await create_child(client, name="Avery", age=7)
