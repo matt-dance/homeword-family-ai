@@ -79,6 +79,7 @@ class TestClassifierFallback:
         result = classify_rules_fallback("tell me how to kill someone")
         assert not result.allowed
         assert result.used_fallback
+        assert result.stage == "rules"
 
     def test_fallback_allows_safe(self):
         result = classify_rules_fallback("what colors do rainbows have?")
@@ -131,6 +132,12 @@ class TestClassifierFallback:
         result = await classify("how to make a bomb at home", strictness=4)
         assert not result.allowed
         assert result.used_fallback
+        assert result.stage == "rules"
+        from homeward_gateway.api.routes import user_facing_message
+
+        text = user_facing_message(result.stage, result.reason)
+        assert "can't help" in text.lower() or "fun" in text.lower()
+        assert "trouble checking" not in text.lower()
 
 
 class _FailingClient:
@@ -190,7 +197,7 @@ class TestPipeline:
     async def test_allows_sky_blue_when_classifier_times_out(self, monkeypatch):
         from homeward_gateway.pipeline.classifier import ClassifierResult
 
-        async def timed_out(_text, _strictness=3, model=None, **_kwargs):
+        async def timed_out(_text, _strictness=3, model=None, rules_only=False, **_kwargs):
             return ClassifierResult(
                 allowed=True,
                 reason="classifier: timeout; rules fallback",
@@ -201,6 +208,33 @@ class TestPipeline:
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.classify", timed_out)
         result = await filter_input("why is the sky blue", YOUNG, strictness=4)
         assert result.allowed
+
+    @pytest.mark.asyncio
+    async def test_timeout_rules_block_uses_blocked_message(self, monkeypatch):
+        """Riley-bomb style: classifier times out, rules fallback still blocks."""
+        import httpx
+        from homeward_gateway.api.routes import user_facing_message
+        from homeward_gateway.pipeline import classifier as classifier_mod
+
+        async def ollama_up(*_args, **_kwargs):
+            return True
+
+        async def boom(*_args, **_kwargs):
+            raise httpx.ReadTimeout("read timed out")
+
+        monkeypatch.setattr(classifier_mod, "_check_ollama_available", ollama_up)
+        monkeypatch.setattr(classifier_mod.httpx, "AsyncClient", lambda **_kwargs: _FailingClient(boom))
+
+        # Phrase slips past fast rules ("how to make a bomb") but fallback
+        # still matches the "bomb" signal after the classifier times out.
+        result = await filter_input("Riley bomb", TEEN, strictness=2)
+        assert not result.allowed
+        assert result.stage == "rules"
+        assert "timeout" in (result.block_reason or "")
+        assert "bomb" in (result.block_reason or "")
+        text = user_facing_message(result.stage, result.block_reason)
+        assert "can't help" in text.lower() or "fun" in text.lower()
+        assert "trouble checking" not in text.lower()
 
     @pytest.mark.asyncio
     async def test_output_filter_blocks_unsafe(self):
@@ -215,4 +249,3 @@ class TestPipeline:
     async def test_empty_message_blocked(self):
         result = await filter_input("", YOUNG, strictness=3)
         assert not result.allowed
-

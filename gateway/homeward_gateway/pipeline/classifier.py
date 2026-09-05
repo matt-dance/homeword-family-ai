@@ -34,9 +34,12 @@ def _with_fallback(primary_reason: str, text: str) -> ClassifierResult:
     """Keep keyword safety when the model times out, errors, or is unclear."""
     fallback = classify_rules_fallback(text)
     detail = fallback.reason or "rules fallback"
+    # If rules already blocked, the effective decision is that policy/rules
+    # refusal — not a classifier outage. Kid-facing copy keys off stage.
     return ClassifierResult(
         allowed=fallback.allowed,
         reason=f"{primary_reason}; {detail}",
+        stage=fallback.stage if not fallback.allowed else "classifier",
         used_fallback=True,
         model_unavailable=True,
     )
@@ -98,6 +101,7 @@ def classify_rules_fallback(text: str) -> ClassifierResult:
             return ClassifierResult(
                 allowed=False,
                 reason=f"fallback: unsafe signal '{signal}'",
+                stage="rules",
                 used_fallback=True,
             )
     return ClassifierResult(allowed=True, used_fallback=True)
