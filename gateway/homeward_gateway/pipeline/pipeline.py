@@ -31,6 +31,8 @@ from homeward_gateway.chat.tools import (
     clock_tool_hint,
     detect_intents,
     extract_model_tools,
+    local_card_cheer,
+    messages_for_llm,
     requested_story_pages,
     run_local_tools,
     tool_prompt_hint,
@@ -343,6 +345,30 @@ async def process_chat(
         session_state,
         home_location=home.location if home else None,
     )
+    tz = home.timezone if home else None
+    local_cards = run_local_tools(user_message, timezone=tz)
+    updated_state = resolved.state.with_topic(user_message)
+    canned = local_card_cheer(user_message, local_cards)
+    if canned is not None:
+        output_result = await filter_output(
+            canned, preset, strictness, classifier_model,
+            classifier_enabled=classifier_enabled,
+            rules_only_classifier=rules_only,
+        )
+        if not output_result.allowed:
+            return _blocked_result(output_result)
+        return PipelineResult(
+            allowed=True,
+            content=output_result.content,
+            session_state=updated_state,
+            tools=_tools_for_turn(
+                user_message,
+                output_result.content or "",
+                extra=[],
+                timezone=tz,
+            ),
+        )
+
     lookup_notes, lookup_tools, intent, lookup_result = await resolve_live_lookup(
         resolved.expanded_message,
         live_lookups=live_lookups,
@@ -354,12 +380,9 @@ async def process_chat(
         session_state=resolved.state,
         rules_only_classifier=rules_only,
     )
-    updated_state = resolved.state.with_topic(user_message)
     if intent and lookup_result:
         updated_state = updated_state.merge_lookup(intent, lookup_result)
 
-    tz = home.timezone if home else None
-    local_cards = run_local_tools(user_message, timezone=tz)
     hint = _combined_tool_hint(
         user_message,
         home,
@@ -374,7 +397,7 @@ async def process_chat(
     )
     try:
         response = await generate_response(
-            messages + [{"role": "user", "content": user_turn}],
+            messages_for_llm(messages, user_message, user_turn),
             child_name,
             age,
             preset,
@@ -386,6 +409,7 @@ async def process_chat(
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
             memory_items=memory_items,
+            continue_conversation=bool(messages),
         )
     except TimeoutError:
         return PipelineResult(allowed=False, block_reason="llm timeout", stage="llm")
@@ -460,6 +484,25 @@ async def process_chat_stream(
     if local_tools:
         yield ToolEvent(local_tools)
 
+    canned = local_card_cheer(user_message, local_cards)
+    if canned is not None:
+        updated_state = resolved.state.with_topic(user_message)
+        output_result = await filter_output(
+            canned, preset, strictness, classifier_model,
+            classifier_enabled=classifier_enabled,
+            rules_only_classifier=rules_only,
+        )
+        if not output_result.allowed:
+            yield _blocked_result(output_result)
+            return
+        yield output_result.content or canned
+        yield PipelineResult(
+            allowed=True,
+            content=output_result.content,
+            session_state=updated_state,
+        )
+        return
+
     if live_lookups:
         yield StatusEvent(message="Looking that up…", phase="lookup")
     lookup_notes, lookup_tools, intent, lookup_result = await resolve_live_lookup(
@@ -496,7 +539,7 @@ async def process_chat_stream(
     yield StatusEvent(message="Writing a reply…", phase="generating")
     try:
         async for token in stream_response(
-            messages + [{"role": "user", "content": user_turn}],
+            messages_for_llm(messages, user_message, user_turn),
             child_name,
             age,
             preset,
@@ -508,6 +551,7 @@ async def process_chat_stream(
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
             memory_items=memory_items,
+            continue_conversation=bool(messages),
         ):
             collected.append(token)
             yield token
