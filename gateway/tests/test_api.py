@@ -164,6 +164,26 @@ class TestUserFacingMessage:
         assert "trouble checking" in text.lower()
         assert "can't help" not in text.lower()
 
+    def test_classifier_timeout_with_rules_block_uses_policy_copy(self):
+        from homeward_gateway.api.routes import user_facing_message
+
+        text = user_facing_message(
+            "classifier",
+            "classifier: timeout; fallback: unsafe signal 'bomb'",
+        )
+        assert "can't help" in text.lower() or "fun" in text.lower()
+        assert "trouble checking" not in text.lower()
+
+    def test_classifier_timeout_rules_stage_uses_policy_copy(self):
+        from homeward_gateway.api.routes import user_facing_message
+
+        text = user_facing_message(
+            "rules",
+            "classifier: timeout; fallback: unsafe signal 'bomb'",
+        )
+        assert "can't help" in text.lower() or "fun" in text.lower()
+        assert "trouble checking" not in text.lower()
+
 
 class TestChat:
     @pytest.mark.asyncio

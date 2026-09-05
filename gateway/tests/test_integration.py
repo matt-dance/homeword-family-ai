@@ -43,7 +43,7 @@ class TestChatBehavior:
                 return_value=type(
                     "Result",
                     (),
-                    {"allowed": False, "block_reason": "llm error", "stage": "llm"},
+                    {"allowed": False, "block_reason": "llm error", "stage": "llm", "tools": []},
                 )()
             ),
         ):
@@ -103,7 +103,7 @@ class TestChatBehavior:
                 return_value=type(
                     "Result",
                     (),
-                    {"allowed": False, "block_reason": "rules", "stage": "rules"},
+                    {"allowed": False, "block_reason": "rules", "stage": "rules", "tools": []},
                 )()
             ),
         ):

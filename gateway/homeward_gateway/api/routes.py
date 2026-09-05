@@ -1179,10 +1179,30 @@ async def _history_for_session(session: AsyncSession, chat_session_id: int | Non
     ]
 
 
+_RULES_OR_POLICY_MARKERS = (
+    "fallback: unsafe",
+    "unsafe signal",
+    "blocked topic",
+    "blocked keyword",
+    "jailbreak",
+)
+
+
+def _is_rules_or_policy_block(stage: str | None, reason: str) -> bool:
+    """True when the effective decision is a content policy/rules refusal."""
+    stage_l = (stage or "").lower()
+    if stage_l in ("rules", "policy") or stage_l.endswith("_rules") or stage_l.endswith("_policy"):
+        return True
+    return any(marker in reason for marker in _RULES_OR_POLICY_MARKERS)
+
+
 def user_facing_message(stage: str | None, block_reason: str | None = None) -> str:
     if stage and stage.startswith("llm"):
         return LLM_UNAVAILABLE_MESSAGE
     reason = (block_reason or "").lower()
+    # Timeout/error fallback that still blocked via rules is a policy redirect.
+    if _is_rules_or_policy_block(stage, reason):
+        return BLOCKED_MESSAGE
     if stage and "classifier" in stage and any(
         token in reason for token in ("timeout", "error", "ambiguous")
     ):
@@ -1263,7 +1283,7 @@ async def chat(
             "blocked": True,
             "message": user_facing_message(result.stage, result.block_reason),
             "session_id": chat_session_id,
-            "tools": result.tools or [],
+            "tools": getattr(result, "tools", None) or [],
         }
 
     await _log_message(session, child.id, "input", body.message, chat_session_id=chat_session_id)
