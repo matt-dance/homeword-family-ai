@@ -46,10 +46,13 @@ def _build_messages(
     ai_verbosity: int,
     quick_chat: bool,
     memory_items: list[dict] | None = None,
+    continue_conversation: bool | None = None,
 ) -> list[dict]:
+    if continue_conversation is None:
+        continue_conversation = len(messages) > 1
     system = build_system_prompt(
         child_name, age, preset, homework_mode, tool_hint=tool_hint,
-        continue_conversation=len(messages) > 1,
+        continue_conversation=continue_conversation,
         home_label=home_label,
         ai_tone=ai_tone,
         ai_verbosity=ai_verbosity,
@@ -72,11 +75,13 @@ async def generate_response(
     ai_verbosity: int = 3,
     quick_chat: bool = False,
     memory_items: list[dict] | None = None,
+    continue_conversation: bool | None = None,
 ) -> str:
     """Generate a non-streaming LLM response via Ollama (default) or cloud if enabled."""
     full_messages = _build_messages(
         messages, child_name, age, preset, homework_mode, tool_hint,
         home_label, ai_tone, ai_verbosity, quick_chat, memory_items,
+        continue_conversation,
     )
     resolved_model = model or settings.ollama_model
 
@@ -118,11 +123,13 @@ async def stream_response(
     ai_verbosity: int = 3,
     quick_chat: bool = False,
     memory_items: list[dict] | None = None,
+    continue_conversation: bool | None = None,
 ) -> AsyncIterator[str]:
     """Stream LLM response tokens."""
     full_messages = _build_messages(
         messages, child_name, age, preset, homework_mode, tool_hint,
         home_label, ai_tone, ai_verbosity, quick_chat, memory_items,
+        continue_conversation,
     )
     resolved_model = model or settings.ollama_model
 
