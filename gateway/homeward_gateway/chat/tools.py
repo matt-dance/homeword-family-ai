@@ -96,6 +96,20 @@ _ASK_PARENT_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_HOWTO_TOPIC_RE = re.compile(
+    r"(?:"
+    r"how\s+(?:do\s+i|do\s+you|can\s+i|can\s+you|to|should\s+i)\s+(.+)"
+    r"|show\s+me\s+how(?:\s+to)?\s+(.+)"
+    r"|teach\s+me\s+how(?:\s+to)?\s+(.+)"
+    r"|instructions\s+for\s+(.+)"
+    r"|recipe\s+for\s+(.+)"
+    r"|step[- ]by[- ]step(?:\s+(?:for|on|to))?\s+(.+)"
+    r")",
+    re.IGNORECASE,
+)
+_HOWTO_PROSE_STEP_RE = re.compile(r"^\s*(?:\d+[\.)]\s+|[-*•]\s+)(.+)$")
+_HOWTO_HEADING_RE = re.compile(r"^\s*#{1,3}\s+(.+)$")
+_FENCE_OPEN_RE = re.compile(rf"```{TOOL_FENCE}\s*", re.IGNORECASE)
 _STORY_PAGES_RE = re.compile(
     r"\b(\d+|one|two|three|four|five|six)\s*-?\s*pages?\b",
     re.IGNORECASE,
@@ -711,6 +725,231 @@ def local_practice_card(message: str) -> ToolCard | None:
     )
 
 
+_HOWTO_BANK: dict[str, dict[str, Any]] = {
+    "pancakes": {
+        "title": "Make pancakes",
+        "steps": [
+            "Ask a grown-up to help with the stove.",
+            "In a bowl, mix 1 cup flour, 1 cup milk, 1 egg, and 1 spoon of sugar.",
+            "Heat a lightly oiled pan on medium.",
+            "Pour a small scoop of batter for each pancake.",
+            "Flip when bubbles form on top, then cook the other side.",
+            "Serve warm. Clean up the bowl and pan together.",
+        ],
+    },
+    "slime": {
+        "title": "Make slime",
+        "steps": [
+            "Ask a grown-up before you start.",
+            "In a bowl, mix 1/2 cup white glue with 1/2 cup water.",
+            "Add a few drops of food coloring if you want.",
+            "Slowly stir in 1/4 cup liquid starch, or contact-lens solution with a pinch of baking soda.",
+            "Knead until it feels stretchy, not sticky.",
+            "Store it in a closed container. Wash your hands.",
+        ],
+    },
+    "shoes": {
+        "title": "Tie your shoes",
+        "steps": [
+            "Cross the laces to make an X, then pull one under and tight.",
+            "Make a loop with one lace (a bunny ear).",
+            "Wrap the other lace around that loop.",
+            "Push it through the hole to make a second loop.",
+            "Pull both loops tight.",
+            "Check that the knot holds, then try the other shoe.",
+        ],
+    },
+    "airplane": {
+        "title": "Fold a paper airplane",
+        "steps": [
+            "Fold a sheet of paper in half the long way, then unfold it so you have a crease.",
+            "Fold the top two corners down to the center crease.",
+            "Fold the new top edges in to the center crease again.",
+            "Fold the plane in half along the center crease.",
+            "Fold each wing down so the edges line up.",
+            "Hold it under the wings and give it a gentle toss.",
+        ],
+    },
+    "sandwich": {
+        "title": "Make a sandwich",
+        "steps": [
+            "Wash your hands.",
+            "Set out two slices of bread.",
+            "Add a filling you like, such as cheese or peanut butter (if you are not allergic).",
+            "Put the second slice on top.",
+            "Ask a grown-up before using a knife. Cut if you want.",
+            "Eat it, then put things away.",
+        ],
+    },
+    "teeth": {
+        "title": "Brush your teeth",
+        "steps": [
+            "Put a pea-sized dab of toothpaste on your toothbrush.",
+            "Brush the fronts, backs, and tops of your teeth for two minutes.",
+            "Brush your tongue gently.",
+            "Spit into the sink. Do not swallow the toothpaste.",
+            "Rinse your brush and put it away.",
+        ],
+    },
+}
+_GENERIC_HOWTO_STEPS = [
+    "Ask a grown-up to help if you need it.",
+    "Gather what you need first.",
+    "Do one step at a time, slowly.",
+    "Check your work, then clean up.",
+]
+
+
+def howto_topic(message: str) -> str | None:
+    match = _HOWTO_TOPIC_RE.search((message or "").strip().rstrip(".!?"))
+    if not match:
+        return None
+    topic = next((group for group in match.groups() if group), None)
+    if not topic:
+        return None
+    topic = re.sub(r"\s+", " ", topic).strip().rstrip(".!?")
+    return topic or None
+
+
+def howto_title(message: str) -> str:
+    topic = howto_topic(message)
+    if not topic:
+        return "How to"
+    return topic[:1].upper() + topic[1:]
+
+
+def _howto_bank_key(topic: str) -> str | None:
+    text = topic.lower()
+    if "pancake" in text:
+        return "pancakes"
+    if "slime" in text:
+        return "slime"
+    if "shoe" in text or "lace" in text:
+        return "shoes"
+    if "airplane" in text or "paper plane" in text:
+        return "airplane"
+    if "sandwich" in text:
+        return "sandwich"
+    if "teeth" in text or "toothbrush" in text:
+        return "teeth"
+    return None
+
+
+def _howto_step_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        text = re.sub(r"^\s*\d+[\.)]\s*", "", value).strip()
+        return text or None
+    if isinstance(value, dict):
+        for key in ("text", "step", "instruction", "title", "label"):
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+    return None
+
+
+def normalize_howto_data(data: dict[str, Any] | None) -> dict[str, Any] | None:
+    payload = data or {}
+    title = payload.get("title") or payload.get("name") or "How to"
+    if not isinstance(title, str) or not title.strip():
+        title = "How to"
+    raw = payload.get("steps", payload.get("instructions"))
+    steps: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            text = _howto_step_text(item)
+            if text:
+                steps.append(text)
+    elif isinstance(raw, str):
+        for line in raw.splitlines():
+            text = _howto_step_text(line)
+            if text:
+                steps.append(text)
+    if not steps:
+        return None
+    return {"title": title.strip(), "steps": steps}
+
+
+def local_howto_card(message: str) -> ToolCard | None:
+    """Immediate howto card so the kid UI does not wait on a model fence."""
+    if "howto" not in detect_intents(message):
+        return None
+    topic = howto_topic(message) or message
+    key = _howto_bank_key(topic)
+    if key:
+        return ToolCard("howto", dict(_HOWTO_BANK[key]))
+    return ToolCard("howto", {"title": howto_title(message), "steps": list(_GENERIC_HOWTO_STEPS)})
+
+
+def howto_from_prose(text: str, *, title: str | None = None) -> ToolCard | None:
+    """Turn a numbered/bulleted recipe into a howto card when the model skipped the fence."""
+    steps: list[str] = []
+    found_title = title
+    for line in (text or "").splitlines():
+        heading = _HOWTO_HEADING_RE.match(line)
+        if heading and not found_title:
+            found_title = heading.group(1).strip()
+            continue
+        match = _HOWTO_PROSE_STEP_RE.match(line)
+        if match:
+            cleaned = re.sub(r"\*\*", "", match.group(1)).strip()
+            if cleaned:
+                steps.append(cleaned)
+    if len(steps) < 2:
+        return None
+    return ToolCard("howto", {"title": (found_title or "How to").strip(), "steps": steps})
+
+
+def _extract_balanced_json(text: str, start: int) -> str | None:
+    if start < 0 or start >= len(text) or text[start] != "{":
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if char == "\\":
+                escape = True
+                continue
+            if char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
+
+
+def _iter_fenced_json(text: str) -> list[tuple[int, int, dict[str, Any]]]:
+    found: list[tuple[int, int, dict[str, Any]]] = []
+    for match in _FENCE_OPEN_RE.finditer(text):
+        brace = text.find("{", match.end())
+        if brace < 0:
+            continue
+        raw = _extract_balanced_json(text, brace)
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        close = text.find("```", brace + len(raw))
+        end = close + 3 if close >= 0 else brace + len(raw)
+        found.append((match.start(), end, payload))
+    return found
+
+
 def _extract_math_expression(message: str) -> str | None:
     asked = _MATH_ASK_RE.search(message.strip())
     candidate = asked.group(1).strip().rstrip("?.!") if asked else message.strip().rstrip("?.!")
@@ -749,20 +988,46 @@ def run_local_tools(message: str, *, timezone: str | None = None) -> list[ToolCa
     practice = local_practice_card(message)
     if practice:
         cards.append(practice)
+    howto = local_howto_card(message)
+    if howto:
+        cards.append(howto)
     return cards
+
+
+def _card_from_payload(payload: dict[str, Any]) -> ToolCard | None:
+    kind = payload.get("type")
+    if kind not in MODEL_TOOL_TYPES:
+        return None
+    data = {key: value for key, value in payload.items() if key != "type"}
+    if kind == "howto":
+        normalized = normalize_howto_data(data)
+        if not normalized:
+            return None
+        return ToolCard("howto", normalized)
+    return ToolCard(kind, data)
 
 
 def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
     cards: list[ToolCard] = []
-    for match in _FENCE_RE.finditer(text):
-        try:
-            payload = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            continue
-        kind = payload.get("type")
-        if kind in MODEL_TOOL_TYPES:
-            cards.append(ToolCard(kind, {k: v for k, v in payload.items() if k != "type"}))
-    cleaned = _FENCE_RE.sub("", text)
+    cleaned = text or ""
+    for start, end, payload in reversed(_iter_fenced_json(cleaned)):
+        card = _card_from_payload(payload)
+        if card:
+            cards.append(card)
+        cleaned = cleaned[:start] + cleaned[end:]
+    cards.reverse()
+    if not cards:
+        for match in _FENCE_RE.finditer(text or ""):
+            try:
+                payload = json.loads(match.group(1))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                card = _card_from_payload(payload)
+                if card:
+                    cards.append(card)
+        cleaned = _FENCE_RE.sub("", text or "")
+    cleaned = re.sub(r"```homeward[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     return cleaned, cards
 
@@ -860,12 +1125,18 @@ def tool_prompt_hint(
                 "This is a practice request — include a practice card. "
                 "kind is spelling or times. items are [{prompt, answer}]."
             )
-    if "howto" in intents and "howto" not in already:
-        need_model_fence = True
-        parts.append(
-            "This is a how-to or recipe — include a howto card with a title and numbered steps. "
-            "Do not tell a story."
-        )
+    if "howto" in intents:
+        if "howto" in already:
+            parts.append(
+                "A how-to card will already appear. Cheer them on in one short sentence. "
+                "Do not write a numbered recipe in prose. Do not emit another card."
+            )
+        else:
+            need_model_fence = True
+            parts.append(
+                "This is a how-to or recipe — include a howto card with a title and numbered steps. "
+                "Do not tell a story."
+            )
     if "convert" in intents:
         parts.append("A conversion card will already show the exact numbers. Explain the units in one short sentence.")
     if "ask_parent" in intents:

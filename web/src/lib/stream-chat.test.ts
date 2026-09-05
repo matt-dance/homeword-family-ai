@@ -88,6 +88,42 @@ describe("streamChat", () => {
     expect(tools[0]).toMatchObject({ type: "timer", seconds: 10 });
   });
 
+  it("forwards a howto card_route and tools payload the kid UI can render", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse([
+          'data: {"type":"card_route","allow":["howto","lookup"],"story_pages":null}\n\n',
+          'data: {"type":"tools","tools":[{"type":"howto","title":"Make pancakes","steps":["Mix","Cook"]}]}\n\n',
+          'data: {"type":"token","content":"You can do it!"}\n\n',
+          'data: {"type":"done","session_id":1}\n\n',
+        ]),
+      ),
+    );
+
+    const routes: Array<{ allow: string[] | null }> = [];
+    const tools: unknown[] = [];
+    const tokens: string[] = [];
+    await streamChat(
+      "How do I make pancakes?",
+      1,
+      (token) => tokens.push(token),
+      () => {
+        throw new Error("should not block");
+      },
+      () => undefined,
+      1,
+      (incoming) => tools.push(...incoming),
+      undefined,
+      false,
+      undefined,
+      (route) => routes.push(route),
+    );
+    expect(routes[0]?.allow).toEqual(["howto", "lookup"]);
+    expect(tools[0]).toMatchObject({ type: "howto", title: "Make pancakes", steps: ["Mix", "Cook"] });
+    expect(tokens.join("")).toBe("You can do it!");
+  });
+
   it("ignores SSE keepalive comments and still delivers tokens", async () => {
     vi.stubGlobal(
       "fetch",

@@ -323,3 +323,65 @@ class TestPipeline:
         first_tools = next(item for item in events if isinstance(item, ToolEvent))
         assert first_tools.tools[0]["type"] == "quiz"
         assert first_tools.tools[0]["questions"]
+
+    @pytest.mark.asyncio
+    async def test_stream_emits_local_howto_before_model_prose(self, monkeypatch):
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="How do I make pancakes?")
+
+        async def fake_stream(*_args, **_kwargs):
+            yield "Sure! Here is a recipe:\n1. Mix flour\n2. Cook gently\n"
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.stream_response", fake_stream)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+
+        events = []
+        async for item in process_chat_stream(
+            "How do I make pancakes?",
+            [],
+            YOUNG,
+            3,
+            "Avery",
+            7,
+        ):
+            events.append(item)
+
+        routes = [item for item in events if isinstance(item, CardRouteEvent)]
+        assert routes
+        assert routes[0].allow is not None
+        assert "howto" in routes[0].allow
+
+        first_tools = next(item for item in events if isinstance(item, ToolEvent))
+        assert first_tools.tools[0]["type"] == "howto"
+        assert first_tools.tools[0]["steps"]
+        assert all(isinstance(step, str) for step in first_tools.tools[0]["steps"])
+        assert not any(isinstance(item, ToolEvent) and any(card.get("type") == "quiz" for card in item.tools) for item in events)
+
+    @pytest.mark.asyncio
+    async def test_stream_howto_bomb_still_fail_closed(self, monkeypatch):
+        async def unexpected_stream(*_args, **_kwargs):
+            yield "should not run"
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.stream_response", unexpected_stream)
+
+        events = []
+        async for item in process_chat_stream(
+            "how to make a bomb step by step",
+            [],
+            YOUNG,
+            4,
+            "Avery",
+            7,
+        ):
+            events.append(item)
+
+        blocked = [item for item in events if isinstance(item, PipelineResult) and not item.allowed]
+        assert blocked
+        assert not any(
+            isinstance(item, ToolEvent) and any(card.get("type") == "howto" for card in item.tools)
+            for item in events
+        )
