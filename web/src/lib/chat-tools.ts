@@ -73,6 +73,11 @@ export function asChatTool(value: unknown): ChatTool | null {
   return value as ChatTool;
 }
 
+export type CardRoute = {
+  allow: string[] | null;
+  storyPages: number | null;
+};
+
 export function mergeChatTools(existing: ChatTool[] = [], incoming: unknown[] = []): ChatTool[] {
   const next = [...existing];
   for (const item of incoming) {
@@ -85,7 +90,26 @@ export function mergeChatTools(existing: ChatTool[] = [], incoming: unknown[] = 
   return next;
 }
 
-export function extractChatTools(content: string, extra: ChatTool[] = []): { text: string; tools: ChatTool[] } {
+function trimStoryPages(tool: ChatTool, storyPages: number | null): ChatTool {
+  if (tool.type !== "story" || !storyPages || !Array.isArray(tool.pages)) return tool;
+  if (tool.pages.length <= storyPages) return tool;
+  return { ...tool, pages: tool.pages.slice(0, storyPages) };
+}
+
+export function constrainChatTools(tools: ChatTool[], route: CardRoute | null | undefined): ChatTool[] {
+  if (!route) return tools;
+  const allow = route.allow;
+  const next = allow
+    ? tools.filter((tool) => allow.includes(tool.type))
+    : tools;
+  return next.map((tool) => trimStoryPages(tool, route.storyPages));
+}
+
+export function extractChatTools(
+  content: string,
+  extra: ChatTool[] = [],
+  route?: CardRoute | null,
+): { text: string; tools: ChatTool[] } {
   const fromFence: ChatTool[] = [];
   const cleaned = content
     .replace(FENCE_RE, (_, raw: string) => {
@@ -101,5 +125,5 @@ export function extractChatTools(content: string, extra: ChatTool[] = []): { tex
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  return { text: cleaned, tools: mergeChatTools(extra, fromFence) };
+  return { text: cleaned, tools: constrainChatTools(mergeChatTools(extra, fromFence), route) };
 }

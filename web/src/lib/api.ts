@@ -1,5 +1,5 @@
 import { decodeSpeechPayload } from "@/lib/read-aloud";
-import type { ChatTool } from "@/lib/chat-tools";
+import type { CardRoute, ChatTool } from "@/lib/chat-tools";
 import { markParentUnlocked } from "@/lib/parent-lock";
 import {
   CHAT_UNAVAILABLE_MESSAGE,
@@ -508,6 +508,7 @@ export async function streamChat(
   signal?: AbortSignal,
   quickChat?: boolean,
   onStatus?: (message: string) => void,
+  onCardRoute?: (route: CardRoute) => void,
 ): Promise<void> {
   const timeoutAbort = new AbortController();
   const totalTimer = setTimeout(() => timeoutAbort.abort("total-timeout"), CHAT_STREAM_TOTAL_MS);
@@ -607,6 +608,15 @@ export async function streamChat(
                     ? data.phase
                     : "";
               if (statusText) onStatus?.(statusText);
+            } else if (data.type === "card_route") {
+              const allow = Array.isArray(data.allow)
+                ? data.allow.filter((item: unknown): item is string => typeof item === "string")
+                : null;
+              const storyPages =
+                typeof data.story_pages === "number" && data.story_pages > 0
+                  ? data.story_pages
+                  : null;
+              onCardRoute?.({ allow, storyPages });
             } else if (data.type === "tools" && Array.isArray(data.tools)) {
               sawReply = true;
               onTools?.(data.tools);

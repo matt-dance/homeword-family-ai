@@ -6,7 +6,14 @@ from homeward_gateway.pipeline.classifier import classify, classify_rules_fallba
 from homeward_gateway.pipeline.normalize import normalize
 from homeward_gateway.pipeline.policy import load_all_presets, check_policy_match
 from homeward_gateway.pipeline.rules import check_rules
-from homeward_gateway.pipeline.pipeline import PipelineResult, filter_input, filter_output, process_chat
+from homeward_gateway.pipeline.pipeline import (
+    CardRouteEvent,
+    PipelineResult,
+    ToolEvent,
+    filter_input,
+    filter_output,
+    process_chat_stream,
+)
 
 
 PRESETS = load_all_presets()
@@ -249,3 +256,70 @@ class TestPipeline:
     async def test_empty_message_blocked(self):
         result = await filter_input("", YOUNG, strictness=3)
         assert not result.allowed
+
+    @pytest.mark.asyncio
+    async def test_stream_routes_timer_and_drops_model_quiz(self, monkeypatch):
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Set a 10-second timer")
+
+        async def fake_stream(*_args, **_kwargs):
+            yield '```homeward\n{"type":"quiz","title":"Animal Quiz Time!","questions":[]}\n```\n'
+            yield "All set!"
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.stream_response", fake_stream)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+
+        events = []
+        async for item in process_chat_stream(
+            "Set a 10-second timer",
+            [],
+            YOUNG,
+            3,
+            "Emma",
+            7,
+        ):
+            events.append(item)
+
+        routes = [item for item in events if isinstance(item, CardRouteEvent)]
+        assert routes
+        assert routes[0].allow is not None
+        assert "timer" in routes[0].allow
+        assert "quiz" not in routes[0].allow
+
+        tools = [item for item in events if isinstance(item, ToolEvent)]
+        assert any(card["type"] == "timer" for event in tools for card in event.tools)
+        assert not any(card["type"] == "quiz" for event in tools for card in event.tools)
+
+    @pytest.mark.asyncio
+    async def test_stream_emits_local_animal_quiz_before_model(self, monkeypatch):
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Quiz me about animals!")
+
+        async def fake_stream(*_args, **_kwargs):
+            yield "Good luck!"
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.stream_response", fake_stream)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+
+        events = []
+        async for item in process_chat_stream(
+            "Quiz me about animals!",
+            [],
+            YOUNG,
+            3,
+            "Emma",
+            7,
+        ):
+            events.append(item)
+
+        first_tools = next(item for item in events if isinstance(item, ToolEvent))
+        assert first_tools.tools[0]["type"] == "quiz"
+        assert first_tools.tools[0]["questions"]

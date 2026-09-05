@@ -1,5 +1,7 @@
 from homeward_gateway.chat.tools import (
+    apply_card_routing,
     ask_parent_card,
+    card_route_for_message,
     clock_tool_hint,
     convert_units,
     current_clock_card,
@@ -7,9 +9,14 @@ from homeward_gateway.chat.tools import (
     evaluate_math,
     extract_model_tools,
     is_clock_question,
+    is_self_contained_card_request,
+    local_practice_card,
+    local_quiz_card,
     parse_timer_seconds,
+    requested_story_pages,
     run_local_tools,
     tool_prompt_hint,
+    ToolCard,
 )
 
 
@@ -38,6 +45,13 @@ def test_timer_minutes():
     assert parse_timer_seconds("Remind me in 10 minutes") == 600
 
 
+def test_timer_prefix_and_hyphenated_seconds():
+    assert parse_timer_seconds("Set a 10-second timer") == 10
+    assert parse_timer_seconds("10 second timer") == 10
+    assert parse_timer_seconds("Start a 10 second countdown") == 10
+    assert parse_timer_seconds("Can you set a 15-second timer?") == 15
+
+
 def test_detect_intents():
     assert "math" in detect_intents("What is 6 + 7?")
     assert "define" in detect_intents("What does photosynthesis mean?")
@@ -52,8 +66,13 @@ def test_detect_intents():
     assert "practice" in detect_intents("Practice times tables")
     assert "practice" in detect_intents("Practice spelling words")
     assert "howto" in detect_intents("How do I make pancakes?")
+    assert "howto" in detect_intents("How do you make pancakes?")
+    assert "howto" in detect_intents("Show me how to tie my shoes")
     assert "howto" in detect_intents("Recipe for slime")
     assert "quiz" in detect_intents("Quiz me on that")
+    assert "ask_parent" in detect_intents("Ask my parent if I can stay up late")
+    assert "ask_parent" in detect_intents("Can you ask my mom about this?")
+    assert "ask_parent" in detect_intents("I need a grown-up")
 
 
 def test_clock_not_confused_with_timer():
@@ -76,6 +95,8 @@ def test_clock_tool_hint_includes_actual_time():
 def test_run_local_math_and_timer():
     cards = run_local_tools("What is 5+3?")
     assert any(card.type == "math" and card.data["result"] == "8" for card in cards)
+    timer = run_local_tools("Set a 10-second timer")
+    assert any(card.type == "timer" and card.data["seconds"] == 10 for card in timer)
 
 
 def test_extract_model_tools():
@@ -168,3 +189,66 @@ def test_tool_prompt_hint_covers_new_cards():
     assert "practice" in hint
     assert "howto" in hint
     assert "convert" in hint or "conversion" in hint.lower()
+
+
+def test_tool_prompt_hint_timer_does_not_offer_quiz_menu():
+    hint = tool_prompt_hint(["timer"], local_types={"timer"})
+    assert "timer" in hint.lower()
+    assert "quiz" not in hint.lower() or "do not emit a quiz" in hint.lower()
+    assert '{"type":"..."}' not in hint
+
+
+def test_requested_story_pages():
+    assert requested_story_pages("Tell me a 2 page story about a fox") == 2
+    assert requested_story_pages("a two-page story please") == 2
+    assert requested_story_pages("Tell me a short story about a fox") is None
+
+
+def test_card_route_and_apply_routing_drops_wrong_type():
+    route = card_route_for_message("Set a 10-second timer")
+    assert route["allow"] is not None
+    assert "timer" in route["allow"]
+    assert "quiz" not in route["allow"]
+
+    quiz = ToolCard("quiz", {"title": "Animal Quiz Time!", "questions": []})
+    timer = ToolCard("timer", {"seconds": 10, "label": "10 seconds"})
+    kept = apply_card_routing("Set a 10-second timer", [quiz, timer])
+    assert [card.type for card in kept] == ["timer"]
+
+    story = ToolCard(
+        "story",
+        {"title": "Fox", "pages": [{"text": "1"}, {"text": "2"}, {"text": "3"}]},
+    )
+    trimmed = apply_card_routing("Tell me a 2 page story about a fox", [story])
+    assert trimmed[0].type == "story"
+    assert len(trimmed[0].data["pages"]) == 2
+
+    howto_route = card_route_for_message("How do I make pancakes?")
+    assert howto_route["allow"] is not None
+    assert "howto" in howto_route["allow"]
+    assert apply_card_routing("How do I make pancakes?", [story]) == []
+
+
+def test_local_quiz_and_practice_and_ask_parent_cards():
+    quiz = local_quiz_card("Quiz me about animals!")
+    assert quiz is not None
+    assert quiz.type == "quiz"
+    assert quiz.data["title"]
+    assert len(quiz.data["questions"]) >= 3
+    assert local_quiz_card("Quiz me on that") is None
+
+    practice = local_practice_card("Practice times tables")
+    assert practice is not None
+    assert practice.type == "practice"
+    assert practice.data["kind"] == "times"
+
+    cards = run_local_tools("Ask my parent if I can stay up")
+    assert any(card.type == "ask_parent" for card in cards)
+
+
+def test_self_contained_card_request():
+    assert is_self_contained_card_request("Set a 10-second timer")
+    assert is_self_contained_card_request("How do I make pancakes?")
+    assert is_self_contained_card_request("Quiz me about animals!")
+    assert not is_self_contained_card_request("Quiz me on that")
+    assert not is_self_contained_card_request("why is the sky blue")

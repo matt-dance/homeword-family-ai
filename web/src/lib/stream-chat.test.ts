@@ -55,6 +55,39 @@ describe("streamChat", () => {
     expect(tokens).toEqual(["Hello"]);
   });
 
+  it("forwards a card_route allowlist", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse([
+          'data: {"type":"card_route","allow":["timer","lookup"],"story_pages":null}\n\n',
+          'data: {"type":"tools","tools":[{"type":"timer","seconds":10,"label":"10 seconds"}]}\n\n',
+          'data: {"type":"done","session_id":1}\n\n',
+        ]),
+      ),
+    );
+
+    const routes: Array<{ allow: string[] | null }> = [];
+    const tools: unknown[] = [];
+    await streamChat(
+      "Set a 10-second timer",
+      1,
+      () => undefined,
+      () => {
+        throw new Error("should not block");
+      },
+      () => undefined,
+      1,
+      (incoming) => tools.push(...incoming),
+      undefined,
+      false,
+      undefined,
+      (route) => routes.push(route),
+    );
+    expect(routes[0]?.allow).toEqual(["timer", "lookup"]);
+    expect(tools[0]).toMatchObject({ type: "timer", seconds: 10 });
+  });
+
   it("ignores SSE keepalive comments and still delivers tokens", async () => {
     vi.stubGlobal(
       "fetch",

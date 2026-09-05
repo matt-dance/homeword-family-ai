@@ -101,3 +101,30 @@ class TestTurnResolver:
         assert "ACTIVE CONTEXT" in turn
         assert "LOOKUP DATA" in turn
         assert "Eugene, OR" in turn
+
+    def test_format_user_turn_skips_stale_topic_on_new_card_request(self):
+        state = SessionState(topic="Quiz me about animals!")
+        resolved = ResolvedTurn(
+            original_message="Set a 10-second timer",
+            expanded_message="Set a 10-second timer",
+            is_follow_up=False,
+            context_hint="",
+            state=state,
+        )
+        turn = format_user_turn(resolved, filtered_content="Set a 10-second timer")
+        assert "ACTIVE CONTEXT" not in turn
+        assert "Quiz me about animals" not in turn
+        assert "Set a 10-second timer" in turn
+
+    def test_format_user_turn_skips_topic_even_if_referential_timer(self):
+        state = SessionState(topic="Tell me a short story about a curious fox!")
+        resolved = ResolvedTurn(
+            original_message="How do I make pancakes?",
+            expanded_message="How do I make pancakes?",
+            is_follow_up=True,
+            context_hint="The child is continuing to ask about pancakes.",
+            state=state,
+        )
+        turn = format_user_turn(resolved, filtered_content="How do I make pancakes?")
+        assert "curious fox" not in turn
+        assert "How do I make pancakes?" in turn
