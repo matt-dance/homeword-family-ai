@@ -33,4 +33,8 @@ describe("isParentOnlyApi", () => {
   it("treats parent login POST as host-only", () => {
     expect(isParentOnlyApi("/api/v1/auth/login", "POST")).toBe(true);
   });
+
+  it("treats homework camera password unlock as host-only", () => {
+    expect(isParentOnlyApi("/api/v1/chat/homework/unlock", "POST")).toBe(true);
+  });
 });

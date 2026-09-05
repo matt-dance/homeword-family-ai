@@ -314,6 +314,12 @@ export const api = {
     request<{ available: boolean; ready: boolean; voice: string; message: string | null }>(
       "/chat/speak/status",
     ),
+  /** Verifies the parent password without minting a dashboard session cookie. */
+  homeworkUnlock: (password: string) =>
+    request<{ ok: boolean }>("/chat/homework/unlock", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
   homeworkStatus: (childId: number) =>
     request<{
       homework_mode: boolean;
