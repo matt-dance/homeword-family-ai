@@ -79,6 +79,7 @@ async def stream_chat_completion(
     temperature: float = 0.7,
 ) -> AsyncIterator[str]:
     timeout = httpx.Timeout(llm_timeout_for_model(model), connect=10.0)
+    first_token_timeout = getattr(settings, "llm_first_token_timeout", 45.0)
     url = f"{settings.ollama_base_url.rstrip('/')}/api/chat"
     async with httpx.AsyncClient(timeout=timeout) as client:
         async with client.stream(
@@ -87,7 +88,18 @@ async def stream_chat_completion(
             json=_chat_payload(model, messages, stream=True, temperature=temperature),
         ) as resp:
             resp.raise_for_status()
-            async for line in resp.aiter_lines():
+            iterator = resp.aiter_lines().__aiter__()
+            saw_token = False
+            while True:
+                try:
+                    if not saw_token:
+                        line = await asyncio.wait_for(iterator.__anext__(), timeout=first_token_timeout)
+                    else:
+                        line = await iterator.__anext__()
+                except StopAsyncIteration:
+                    break
+                except (TimeoutError, asyncio.TimeoutError) as exc:
+                    raise RuntimeError("LLM stream produced no tokens before timeout") from exc
                 if not line:
                     continue
                 try:
@@ -97,4 +109,5 @@ async def stream_chat_completion(
                     continue
                 content = (data.get("message") or {}).get("content") or ""
                 if content:
+                    saw_token = True
                     yield content
