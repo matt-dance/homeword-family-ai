@@ -438,7 +438,8 @@ export const api = {
 
 /** Give up if the gateway goes silent — better a visible error than infinite Thinking. */
 export const CHAT_STREAM_IDLE_MS = 25_000;
-export const CHAT_STREAM_TOTAL_MS = 75_000;
+/** Two local model passes (decide + answer) plus a live lookup can exceed a minute. */
+export const CHAT_STREAM_TOTAL_MS = 180_000;
 
 function combineAbortSignals(signals: Array<AbortSignal | undefined>): AbortSignal {
   const active = signals.filter((s): s is AbortSignal => Boolean(s));

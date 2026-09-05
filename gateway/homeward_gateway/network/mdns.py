@@ -6,7 +6,7 @@ import logging
 import socket
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
     from zeroconf import ServiceInfo, Zeroconf
@@ -17,17 +17,75 @@ _zc: Zeroconf | None = None
 _info: ServiceInfo | None = None
 _lock = threading.Lock()
 
+# VPN / tunnel iface prefixes — advertising these breaks homeward.local on Wi‑Fi.
+_TUNNEL_PREFIXES = ("utun", "tun", "tap", "ipsec", "wg", "ppp", "gif", "stf")
 
-def lan_ip() -> str | None:
-    """Best-effort LAN IPv4 for mDNS."""
+
+def is_tunnel_iface(name: str) -> bool:
+    lowered = name.lower()
+    return any(lowered.startswith(prefix) for prefix in _TUNNEL_PREFIXES)
+
+
+def _usable_ipv4(ip: str) -> bool:
+    if not ip or ":" in ip:
+        return False
+    if ip.startswith("127.") or ip.startswith("169.254."):
+        return False
+    return True
+
+
+def pick_lan_ip(adapters: Iterable[tuple[str, Iterable[str]]]) -> str | None:
+    """Choose a Wi‑Fi/Ethernet IPv4, never a VPN/tunnel address."""
+    for name, ips in adapters:
+        if is_tunnel_iface(name):
+            continue
+        for ip in ips:
+            if _usable_ipv4(ip):
+                return ip
+    return None
+
+
+def _adapters_ipv4() -> list[tuple[str, list[str]]]:
+    try:
+        import ifaddr
+    except ImportError:
+        return []
+    out: list[tuple[str, list[str]]] = []
+    for adapter in ifaddr.get_adapters():
+        ipv4s = [ip.ip for ip in adapter.ips if isinstance(ip.ip, str)]
+        if ipv4s:
+            out.append((adapter.name, ipv4s))
+    return out
+
+
+def _udp_probe_ip() -> str | None:
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         probe.connect(("8.8.8.8", 80))
-        return probe.getsockname()[0]
+        ip = probe.getsockname()[0]
+        return ip if _usable_ipv4(ip) else None
     except OSError:
         return None
     finally:
         probe.close()
+
+
+def lan_ip() -> str | None:
+    """Best-effort LAN IPv4 for mDNS (prefers real NIC over VPN)."""
+    chosen = pick_lan_ip(_adapters_ipv4())
+    if chosen:
+        return chosen
+    # Fallback when ifaddr is missing: UDP route, but never return a tunnel IP
+    # if we can still see adapters and reject it.
+    probed = _udp_probe_ip()
+    if not probed:
+        return None
+    adapters = _adapters_ipv4()
+    if adapters:
+        for name, ips in adapters:
+            if probed in ips and is_tunnel_iface(name):
+                return None
+    return probed
 
 
 def homeward_url(hostname: str = "homeward.local", port: int = 80) -> str:
@@ -67,7 +125,8 @@ def start(hostname: str = "homeward.local", port: int = 80) -> bool:
             properties={"path": "/chat"},
             server=host,
         )
-        _zc = Zeroconf()
+        # Bind only the chosen LAN iface so dead VPN/utun sockets don't break mDNS.
+        _zc = Zeroconf(interfaces=[ip])
         _zc.register_service(_info)
         logger.info(
             "mDNS broadcasting %s → %s (port %s)",

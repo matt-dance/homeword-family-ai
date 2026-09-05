@@ -1,29 +1,32 @@
-"""Named live lookups: detection, formatters, and parent-toggle gating."""
+"""Named live lookups: model requests, formatters, and parent-toggle gating."""
 
 import pytest
 
 from homeward_gateway.chat.lookups import (
     LookupResult,
+    SessionContext,
     build_session_context,
-    detect_current_facts_intent,
-    detect_lookup_intent,
     format_current_facts_notes,
     format_news_notes,
     format_sports_notes,
     format_weather_notes,
+    intent_from_request,
     is_referential,
     lookup_card,
-    lookup_context_hint,
     lookup_prompt_notes,
+    lookup_request_hint,
+    normalize_sports_query,
     parse_featured_headlines,
+    parse_lookup_request,
     parse_scoreboard_events,
-    resolve_lookup_intent,
-    resolve_weather_place,
+    sports_scoreboard_date_attempts,
+    team_search_queries,
     weather_missing_place_notes,
     _parse_wikipedia_incumbent,
 )
 from homeward_gateway.pipeline.pipeline import (
     PipelineResult,
+    StatusEvent,
     ToolEvent,
     process_chat,
     process_chat_stream,
@@ -53,143 +56,85 @@ WEATHER_FORECAST = {
 }
 
 
-class TestDetectLookupIntent:
-    def test_weather_with_place(self):
-        intent = detect_lookup_intent("What's the weather in Denver?")
+LOOKUP_REQUEST = (
+    '```homeward\n{"type":"lookup_request","kind":"sports",'
+    '"query":"University of Utah football"}\n```'
+)
+
+
+class TestLookupRequest:
+    def test_parse_lookup_request_from_model_card(self):
+        payload = parse_lookup_request(LOOKUP_REQUEST)
+        assert payload is not None
+        assert payload["kind"] == "sports"
+        assert payload["query"] == "University of Utah football"
+
+    def test_parse_lookup_request_ignores_plain_replies(self):
+        assert parse_lookup_request("The sky is blue because of sunlight.") is None
+
+    def test_intent_from_request_uses_model_query(self):
+        intent = intent_from_request({"kind": "sports", "query": "University of Utah football"})
+        assert intent is not None
+        assert intent.kind == "sports"
+        assert "utah" in intent.query.lower()
+
+    def test_intent_from_request_rejects_unknown_kind(self):
+        assert intent_from_request({"kind": "web", "query": "anything"}) is None
+
+    def test_intent_from_request_fills_weather_from_home(self):
+        intent = intent_from_request({"kind": "weather", "query": ""}, home_location="Denver, CO")
         assert intent is not None
         assert intent.kind == "weather"
-        assert intent.query == "Denver"
+        assert intent.query == "Denver, CO"
 
-    def test_weather_lowercase_place(self):
-        intent = detect_lookup_intent("weather in seattle")
+    def test_intent_from_request_fills_sports_from_session(self):
+        intent = intent_from_request(
+            {"kind": "sports", "query": ""},
+            context=SessionContext(team="boise state"),
+        )
         assert intent is not None
-        assert intent.kind == "weather"
-        assert intent.query.lower() == "seattle"
+        assert intent.query == "boise state"
 
-    def test_weather_prefix(self):
-        intent = detect_lookup_intent("Denver weather today")
+    def test_normalize_sports_query_keeps_team_from_a_sentence(self):
+        assert normalize_sports_query("when does boise state play") == "boise state"
+        assert normalize_sports_query("Boise State schedule") == "boise state"
+        assert normalize_sports_query("next Boise State game") == "boise state"
+
+    def test_intent_from_request_uses_team_name_not_the_question(self):
+        intent = intent_from_request(
+            {"kind": "sports", "query": "when does boise state play"},
+            user_message="when does boise state play?",
+        )
         assert intent is not None
-        assert intent.query == "Denver"
+        assert intent.query == "boise state"
+        assert intent.schedule is True
 
-    def test_weather_without_place_still_detected(self):
-        intent = detect_lookup_intent("Do I need a jacket?")
+    def test_intent_from_request_maps_current_facts_office(self):
+        intent = intent_from_request({"kind": "current_facts", "query": "who is the president"})
         assert intent is not None
-        assert intent.kind == "weather"
-        assert intent.query == ""
+        assert intent.query == "President_of_the_United_States"
 
-    def test_weather_tomorrow_detected(self):
-        intent = detect_lookup_intent("What's the weather tomorrow?")
-        assert intent is not None
-        assert intent.kind == "weather"
+    def test_team_search_queries_includes_short_school_name(self):
+        queries = team_search_queries("university of utah")
+        assert "university of utah" in queries
+        assert "utah" in queries
 
-    def test_resolve_weather_place_from_history(self):
-        place = resolve_weather_place(
-            "What's the weather tomorrow?",
-            [{"role": "user", "content": "We live in Denver"}],
-        )
-        assert place == "Denver"
+    def test_team_search_queries_strips_university_and_sport_together(self):
+        queries = team_search_queries("University of Utah football")
+        assert "utah" in queries
+        assert "university of utah football" in queries
 
-    def test_resolve_weather_place_uses_home_fallback(self):
-        place = resolve_weather_place(
-            "What's the weather tomorrow?",
-            home_location="Boulder, CO",
-        )
-        assert place == "Boulder, CO"
-
-    def test_resolve_weather_place_from_assistant_game_context(self):
-        history = [
-            {"role": "user", "content": "Who is Boise State playing this weekend?"},
-            {
-                "role": "assistant",
-                "content": (
-                    "Boise State is playing the Oregon Ducks at Autzen Stadium "
-                    "in Eugene, OR, on Saturday, September 5th at 3:30 PM EDT."
-                ),
-            },
-        ]
-        place = resolve_weather_place(
-            "What will the weather be like at that game?",
-            history,
-        )
-        assert place == "Eugene, OR"
-
-    def test_resolve_weather_place_from_sports_lookup_line(self):
-        history = [
-            {"role": "user", "content": "Who is Boise State playing this weekend?"},
-            {
-                "role": "assistant",
-                "content": (
-                    "Boise State Broncos at Oregon Ducks (Scheduled)"
-                    " — Autzen Stadium, Eugene, OR — Sat, September 5th at 3:30 PM EDT"
-                ),
-            },
-        ]
-        place = resolve_weather_place(
-            "What will the weather be like at the game?",
-            history,
-        )
-        assert place == "Eugene, OR"
-
-    def test_resolve_weather_place_does_not_use_stale_game_for_general_question(self):
-        history = [
-            {"role": "user", "content": "Who is Boise State playing this weekend?"},
-            {
-                "role": "assistant",
-                "content": "Boise State is playing at Autzen Stadium in Eugene, OR.",
-            },
-        ]
-        place = resolve_weather_place(
-            "What's the weather tomorrow?",
-            history,
-            home_location="Denver, CO",
-        )
-        assert place == "Denver, CO"
+    def test_lookup_request_hint_lists_named_feeds(self):
+        hint = lookup_request_hint()
+        assert "lookup_request" in hint
+        assert "sports" in hint
+        assert "weather" in hint
+        assert "news" in hint
+        assert "Boise State" in hint
+        assert "team or league name only" in hint
 
     def test_weather_missing_place_notes(self):
         assert "city or town" in weather_missing_place_notes().lower()
-
-    def test_news(self):
-        intent = detect_lookup_intent("What's in the news today?")
-        assert intent is not None
-        assert intent.kind == "news"
-
-    def test_current_facts_president(self):
-        intent = detect_current_facts_intent("Who is the president of the United States right now?")
-        assert intent is not None
-        assert intent.kind == "current_facts"
-        assert intent.query == "President_of_the_United_States"
-        resolved, _ctx = resolve_lookup_intent("Who is the president of the United States right now?")
-        assert resolved is not None
-        assert resolved.kind == "current_facts"
-
-    def test_sports_team(self):
-        intent = detect_lookup_intent("Did the Broncos win last night?")
-        assert intent is not None
-        assert intent.kind == "sports"
-        assert intent.query == "broncos"
-
-    def test_sports_college_schedule(self):
-        intent = detect_lookup_intent("What's Boise State's schedule this weekend?")
-        assert intent is not None
-        assert intent.kind == "sports"
-        assert intent.query == "boise state"
-        assert intent.schedule is True
-        assert intent.date_range is not None
-
-    def test_sports_extracts_unknown_team(self):
-        intent = detect_lookup_intent("When does Oregon play this week?")
-        assert intent is not None
-        assert intent.kind == "sports"
-        assert "oregon" in intent.query
-
-    def test_sports_without_team_is_ignored(self):
-        assert detect_lookup_intent("Who won last night?") is None
-
-    def test_unrelated_question(self):
-        assert detect_lookup_intent("Why is the sky blue?") is None
-
-    def test_empty(self):
-        assert detect_lookup_intent("") is None
 
 
 class TestSessionContext:
@@ -217,49 +162,31 @@ class TestSessionContext:
         assert is_referential("Did they win?")
         assert not is_referential("What's the weather in Denver?")
 
-    def test_resolve_lookup_weather_from_game_context(self):
-        intent, context = resolve_lookup_intent(
-            "What will the weather be like at that game?",
-            self.GAME_HISTORY,
-        )
-        assert intent is not None
-        assert intent.kind == "weather"
-        assert intent.query == "Eugene, OR"
+    def test_empty_weather_request_uses_game_place(self):
+        context = build_session_context(self.GAME_HISTORY)
+        intent = intent_from_request({"kind": "weather", "query": ""}, context=context)
         assert context.team == "boise state"
-
-    def test_resolve_lookup_sports_followup(self):
-        intent, context = resolve_lookup_intent("Did they win?", self.GAME_HISTORY)
+        assert context.place == "Eugene, OR"
         assert intent is not None
-        assert intent.kind == "sports"
+        assert intent.query == "Eugene, OR"
+
+    def test_empty_sports_request_uses_session_team(self):
+        context = build_session_context(self.GAME_HISTORY)
+        intent = intent_from_request({"kind": "sports", "query": ""}, context=context)
+        assert intent is not None
         assert intent.query == "boise state"
 
-    def test_resolve_lookup_does_not_use_stale_place_for_general_weather(self):
-        intent, _context = resolve_lookup_intent(
-            "What's the weather tomorrow?",
-            self.GAME_HISTORY,
+    def test_weather_request_with_place_does_not_use_stale_game(self):
+        context = build_session_context(self.GAME_HISTORY)
+        intent = intent_from_request(
+            {"kind": "weather", "query": "Denver, CO"},
+            context=context,
             home_location="Denver, CO",
         )
         assert intent is not None
-        assert intent.kind == "weather"
         assert intent.query == "Denver, CO"
 
-    def test_lookup_context_hint_for_referential_weather(self):
-        intent, context = resolve_lookup_intent(
-            "What will the weather be like there?",
-            self.GAME_HISTORY,
-        )
-        assert intent is not None
-        hint = lookup_context_hint(
-            "What will the weather be like there?",
-            intent,
-            context,
-            referential=True,
-        )
-        prompt = lookup_prompt_notes(format_weather_notes("Eugene", WEATHER_GEO, WEATHER_FORECAST), context_hint=hint)
-        assert "Eugene, OR" in hint or "earlier in this chat" in hint
-        assert "earlier in this chat" in prompt
-
-    def test_resolve_weather_from_paraphrased_game_bullets(self):
+    def test_paraphrased_game_bullets_still_extract_place(self):
         history = [
             {"role": "user", "content": "Who is Boise State playing this weekend?"},
             {
@@ -270,15 +197,9 @@ class TestSessionContext:
                 ),
             },
         ]
-        intent, context = resolve_lookup_intent(
-            "What will the weather be like at the game?",
-            history,
-        )
+        context = build_session_context(history)
         assert context.place == "Eugene, OR"
         assert context.team == "boise state"
-        assert intent is not None
-        assert intent.kind == "weather"
-        assert intent.query == "Eugene, OR"
 
 
 class TestFormatters:
@@ -325,6 +246,25 @@ class TestFormatters:
         assert "Do NOT say you could not find" in prompt
         assert "Do not guess where a game is played" in prompt
         assert "Boise State" in prompt
+
+    def test_sports_scoreboard_retries_after_a_specific_day(self):
+        attempts = sports_scoreboard_date_attempts("20260904")
+        assert attempts[0] == "20260904"
+        assert attempts[1] != "20260904"
+        assert attempts[1] is not None
+        assert "-" in attempts[1]
+
+    def test_sports_notes_keep_next_game_when_requested_day_missed(self):
+        result = format_sports_notes(
+            "College Football",
+            ["Boise State Broncos at Oregon Ducks (Scheduled) — Sat, September 5th at 3:30 PM EDT"],
+            "Oregon Ducks",
+            schedule=True,
+            miss_note="No game on the requested day. Next listed game:",
+        )
+        assert result.found is True
+        assert "No game on the requested day" in result.notes
+        assert "Oregon Ducks" in result.notes
 
     def test_news_notes(self):
         result = format_news_notes(["Mars rover finds a new rock"])
@@ -509,14 +449,14 @@ class TestResolveLiveLookup:
     async def test_disabled_does_not_fetch(self, monkeypatch):
         called = False
 
-        async def fake_fetch(_intent):
+        async def fake_fetch(_intent, **_kwargs):
             nonlocal called
             called = True
             return None
 
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
         notes, tools, intent, result = await resolve_live_lookup(
-            "What's the weather in Denver?",
+            LOOKUP_REQUEST,
             live_lookups=False,
             preset=YOUNG,
             strictness=3,
@@ -526,10 +466,30 @@ class TestResolveLiveLookup:
         assert called is False
 
     @pytest.mark.asyncio
-    async def test_enabled_injects_notes_and_card(self, monkeypatch):
+    async def test_no_request_does_not_fetch(self, monkeypatch):
+        called = False
+
+        async def fake_fetch(_intent, **_kwargs):
+            nonlocal called
+            called = True
+            return None
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        notes, tools, intent, result = await resolve_live_lookup(
+            "What's the weather in Denver?",
+            live_lookups=True,
+            preset=YOUNG,
+            strictness=3,
+        )
+        assert notes == ""
+        assert tools == []
+        assert called is False
+
+    @pytest.mark.asyncio
+    async def test_enabled_request_injects_notes_and_card(self, monkeypatch):
         result = format_weather_notes("Denver", WEATHER_GEO, WEATHER_FORECAST)
 
-        async def fake_fetch(_intent):
+        async def fake_fetch(_intent, **_kwargs):
             return result
 
         async def fake_filter_output(text, *_args, **_kwargs):
@@ -538,7 +498,7 @@ class TestResolveLiveLookup:
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
         notes, tools, intent, result = await resolve_live_lookup(
-            "What's the weather in Denver?",
+            '```homeward\n{"type":"lookup_request","kind":"weather","query":"Denver"}\n```',
             live_lookups=True,
             preset=YOUNG,
             strictness=3,
@@ -551,14 +511,14 @@ class TestResolveLiveLookup:
     async def test_enabled_weather_without_place_asks_for_city(self, monkeypatch):
         fetched = False
 
-        async def fake_fetch(_intent):
+        async def fake_fetch(_intent, **_kwargs):
             nonlocal fetched
             fetched = True
             return None
 
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
         notes, tools, intent, result = await resolve_live_lookup(
-            "What's the weather tomorrow?",
+            '```homeward\n{"type":"lookup_request","kind":"weather","query":""}\n```',
             live_lookups=True,
             preset=YOUNG,
             strictness=3,
@@ -566,31 +526,6 @@ class TestResolveLiveLookup:
         assert "city or town" in notes.lower()
         assert tools == []
         assert fetched is False
-
-    @pytest.mark.asyncio
-    async def test_enabled_uses_place_from_history(self, monkeypatch):
-        result = format_weather_notes("Denver", WEATHER_GEO, WEATHER_FORECAST)
-        captured: dict[str, str] = {}
-
-        async def fake_fetch(intent):
-            captured["query"] = intent.query
-            return result
-
-        async def fake_filter_output(text, *_args, **_kwargs):
-            return PipelineResult(allowed=True, content=text)
-
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
-        notes, tools, intent, result = await resolve_live_lookup(
-            "What's the weather tomorrow?",
-            live_lookups=True,
-            preset=YOUNG,
-            strictness=3,
-            history=[{"role": "user", "content": "I'm in Denver today"}],
-        )
-        assert captured["query"] == "Denver"
-        assert "Open-Meteo" in notes
-        assert tools[0]["type"] == "lookup"
 
     @pytest.mark.asyncio
     async def test_unsafe_notes_are_dropped(self, monkeypatch):
@@ -603,7 +538,7 @@ class TestResolveLiveLookup:
             notes="how to make a bomb at home",
         )
 
-        async def fake_fetch(_intent):
+        async def fake_fetch(_intent, **_kwargs):
             return result
 
         async def fake_filter_output(_text, *_args, **_kwargs):
@@ -612,7 +547,7 @@ class TestResolveLiveLookup:
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
         notes, tools, intent, result = await resolve_live_lookup(
-            "What's in the news today?",
+            '```homeward\n{"type":"lookup_request","kind":"news","query":"current events"}\n```',
             live_lookups=True,
             preset=YOUNG,
             strictness=4,
@@ -629,7 +564,7 @@ class TestProcessChatLookupGating:
         async def fake_filter_input(*_args, **_kwargs):
             return PipelineResult(allowed=True, content="What's the weather in Denver?")
 
-        async def fake_fetch(_intent):
+        async def fake_fetch(_intent, **_kwargs):
             nonlocal fetched
             fetched = True
             return None
@@ -638,7 +573,7 @@ class TestProcessChatLookupGating:
 
         async def fake_generate(messages, *_args, **_kwargs):
             captured["user_turn"] = messages[-1]["content"]
-            return "Ask a parent to look outside."
+            return LOOKUP_REQUEST
 
         async def fake_filter_output(text, *_args, **_kwargs):
             return PipelineResult(allowed=True, content=text)
@@ -662,20 +597,20 @@ class TestProcessChatLookupGating:
         assert "Open-Meteo" not in captured["user_turn"]
 
     @pytest.mark.asyncio
-    async def test_process_chat_adds_notes_when_enabled(self, monkeypatch):
+    async def test_process_chat_speaks_lookup_facts_without_the_model(self, monkeypatch):
         lookup = format_weather_notes("Denver", WEATHER_GEO, WEATHER_FORECAST)
+        generated = False
 
         async def fake_filter_input(*_args, **_kwargs):
             return PipelineResult(allowed=True, content="What's the weather in Denver?")
 
-        async def fake_fetch(_intent):
+        async def fake_fetch(_intent, **_kwargs):
             return lookup
 
-        captured: dict[str, str] = {}
-
-        async def fake_generate(messages, *_args, **_kwargs):
-            captured["user_turn"] = messages[-1]["content"]
-            return "It is sunny and about 70 degrees in Denver."
+        async def fake_generate(*_args, **_kwargs):
+            nonlocal generated
+            generated = True
+            return "It is 12 degrees and snowing."
 
         async def fake_filter_output(text, *_args, **_kwargs):
             return PipelineResult(allowed=True, content=text)
@@ -695,29 +630,61 @@ class TestProcessChatLookupGating:
             live_lookups=True,
         )
         assert result.allowed
-        assert "Open-Meteo" in captured["user_turn"]
-        assert "70" in captured["user_turn"]
+        assert generated is False
+        assert "70" in (result.content or "")
+        assert "12 degrees" not in (result.content or "")
 
     @pytest.mark.asyncio
-    async def test_stream_yields_lookup_card_when_enabled(self, monkeypatch):
-        lookup = format_weather_notes("Denver", WEATHER_GEO, WEATHER_FORECAST)
+    async def test_process_chat_skips_fetch_when_model_answers_directly(self, monkeypatch):
+        fetched = False
 
         async def fake_filter_input(*_args, **_kwargs):
-            return PipelineResult(allowed=True, content="What's the weather in Denver?")
+            return PipelineResult(allowed=True, content="Why is the sky blue?")
 
-        async def fake_fetch(_intent):
-            return lookup
+        async def fake_fetch(_intent, **_kwargs):
+            nonlocal fetched
+            fetched = True
+            return None
 
-        async def fake_stream(*_args, **_kwargs):
-            yield "Sunny "
-            yield "in Denver."
+        async def fake_generate(*_args, **_kwargs):
+            return "Sunlight scatters in the air."
 
         async def fake_filter_output(text, *_args, **_kwargs):
             return PipelineResult(allowed=True, content=text)
 
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.stream_response", fake_stream)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.generate_response", fake_generate)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+
+        result = await process_chat(
+            "Why is the sky blue?",
+            [],
+            YOUNG,
+            3,
+            "Emma",
+            7,
+            live_lookups=True,
+        )
+        assert result.allowed
+        assert fetched is False
+        assert "scatters" in (result.content or "")
+
+    @pytest.mark.asyncio
+    async def test_stream_yields_lookup_card_after_model_request(self, monkeypatch):
+        lookup = format_weather_notes("Denver", WEATHER_GEO, WEATHER_FORECAST)
+
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="What's the weather in Denver?")
+
+        async def fake_fetch(_intent, **_kwargs):
+            return lookup
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
 
         events = []
@@ -736,3 +703,42 @@ class TestProcessChatLookupGating:
         assert tool_events
         assert tool_events[0].tools[0]["type"] == "lookup"
         assert tool_events[0].tools[0]["source_label"] == "Open-Meteo weather"
+
+    @pytest.mark.asyncio
+    async def test_stream_heartbeats_while_model_decides_to_look_up(self, monkeypatch):
+        import asyncio
+
+        lookup = format_weather_notes("Denver", WEATHER_GEO, WEATHER_FORECAST)
+
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="What's the weather in Denver?")
+
+        async def slow_fetch(_intent, **_kwargs):
+            await asyncio.sleep(0.05)
+            return lookup
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.LOOKUP_HEARTBEAT_SECONDS", 0.01)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", slow_fetch)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+
+        events = []
+        async for item in process_chat_stream(
+            "What's the weather in Denver?",
+            [],
+            YOUNG,
+            3,
+            "Emma",
+            7,
+            live_lookups=True,
+        ):
+            events.append(item)
+
+        looking = [
+            item for item in events
+            if isinstance(item, StatusEvent) and item.phase == "lookup"
+        ]
+        assert len(looking) >= 2

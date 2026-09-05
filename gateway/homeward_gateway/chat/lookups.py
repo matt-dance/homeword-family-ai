@@ -1,7 +1,8 @@
-"""Named live lookups: weather, sports scores, and Wikipedia current events.
+"""Named live lookups: weather, sports schedules, and Wikipedia current events.
 
-These are specific APIs — not a generic web search. Lookups only run when a
-parent enables them for a child and the child's question matches a known kind.
+These are specific APIs — not a generic web search. The gateway plans the
+lookup from the child's words, fetches a named object, and speaks from that
+record. The model does not author live facts.
 """
 
 from __future__ import annotations
@@ -9,13 +10,22 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 from typing import Any
 
 import httpx
 
-from homeward_gateway.chat.tools import ToolCard
+from homeward_gateway.chat.sports_schedule import (
+    competitor_score,
+    friendly_kickoff,
+    parse_team_schedule,
+    select_sports_game,
+    speak_sports,
+)
+from homeward_gateway.chat.tools import TOOL_FENCE, ToolCard, extract_model_tools
 from homeward_gateway.config import settings
+
+LOOKUP_KINDS = frozenset({"weather", "sports", "news", "current_facts"})
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +69,6 @@ REFERENTIAL_PLACES = {
     "that team",
     "the team",
 }
-SPORTS_FOLLOWUP_RE = re.compile(
-    r"\b(did they win|did we win|who won|what was the score|what(?:'s| is) the score|"
-    r"how did they do|did they lose|the score|final score)\b",
-    re.IGNORECASE,
-)
 _PLACE_STOP = {
     "a",
     "an",
@@ -91,14 +96,6 @@ _PLACE_STOP = {
     "winter",
 }
 
-SPORTS_ASK_RE = re.compile(
-    r"\b(who won|score|final score|did the|standings|playoff|game last night|"
-    r"won last night|sports scores?|schedule|playing this|games this|"
-    r"when (?:do|does|is|are)|next game|this weekend|matchup|"
-    r"football game|basketball game|baseball game|hockey game|"
-    r"college football|football schedule|basketball schedule)\b",
-    re.IGNORECASE,
-)
 TEAM_EXTRACT_RES = (
     re.compile(
         r"\b([A-Za-z][A-Za-z.'\-]+(?:\s+[A-Za-z][A-Za-z.'\-]+){0,3})\s+"
@@ -121,30 +118,53 @@ _TEAM_STOP = {
     "a",
     "an",
     "any",
+    "are",
+    "can",
     "college",
+    "could",
     "current",
+    "did",
+    "do",
+    "does",
     "football",
     "he",
     "high",
+    "is",
     "it",
     "my",
     "our",
     "school",
     "she",
+    "should",
     "team",
     "the",
     "their",
     "them",
     "they",
     "this",
+    "was",
     "we",
+    "were",
     "what",
     "when",
     "who",
+    "will",
+    "would",
 }
+_SPORT_WORDS = ("football", "basketball", "baseball", "hockey", "soccer")
+_UNIVERSITY_PREFIXES = ("university of ", "u of ", "univ of ")
 NEWS_RE = re.compile(
-    r"\b(current events|in the news|today'?s news|world news|news headlines|"
-    r"what(?:'s| is) (?:in )?the news)\b",
+    r"\b(current events|headlines|what(?:'s| is) (?:the )?news)\b",
+    re.IGNORECASE,
+)
+SPORTS_LIVE_RE = re.compile(
+    r"("
+    r"\b(?:schedule|score|scores|matchup|kickoff|next game)\b|"
+    r"\b(?:who|when)\b.+\bplay|"
+    r"\b(?:did|do|does)\b.+\b(?:play|win|played)\b|"
+    r"\bplay(?:ed|ing)?\b.+\b(?:tomorrow|today|tonight|next)\b|"
+    r"\b(?:tomorrow|today|tonight).+\b(?:play|game)\b"
+    r")",
     re.IGNORECASE,
 )
 US_PRESIDENT_RE = re.compile(
@@ -255,6 +275,7 @@ class LookupIntent:
     query: str
     date_range: str | None = None
     schedule: bool = False
+    when: str | None = None
 
 
 @dataclass(frozen=True)
@@ -266,6 +287,7 @@ class LookupResult:
     summary: str
     notes: str
     found: bool = True
+    spoken: str = ""
 
 
 @dataclass(frozen=True)
@@ -330,31 +352,169 @@ def build_session_context(history: list[dict] | None, *, limit: int = 10) -> Ses
     )
 
 
-def detect_lookup_intent(message: str) -> LookupIntent | None:
-    """Return at most one named lookup for this turn."""
-    text = (message or "").strip()
-    if not text:
-        return None
-
-    if WEATHER_RE.search(text):
-        place = _extract_place(text)
-        return LookupIntent("weather", place)
-
-    if NEWS_RE.search(text):
-        return LookupIntent("news", "current events")
-
-    team_key = _matching_team_key(text) or _extract_sports_team(text)
-    if SPORTS_ASK_RE.search(text) or team_key:
-        if team_key:
-            date_range = _sports_date_range(text)
-            schedule = bool(
-                date_range
-                or re.search(r"\b(schedule|playing|games?|matchup|next game)\b", text, re.IGNORECASE)
-            )
-            return LookupIntent("sports", team_key, date_range=date_range, schedule=schedule)
-        return None
-
+def parse_lookup_request(text: str) -> dict[str, Any] | None:
+    """Read a model lookup_request card, if the reply asked for a named feed."""
+    _cleaned, cards = extract_model_tools(text or "")
+    for card in cards:
+        if card.type == "lookup_request":
+            return dict(card.data)
     return None
+
+
+def lookup_request_hint(
+    *,
+    home_location: str | None = None,
+    context: SessionContext | None = None,
+) -> str:
+    """Tell the model how to request a named live feed instead of guessing."""
+    parts = [
+        "If the child needs a current score, schedule, weather, news headline, "
+        "or who currently holds a public office, do not guess from training data. "
+        "Emit ONLY this fenced card and no other text:",
+        f"```{TOOL_FENCE}",
+        '{"type":"lookup_request","kind":"sports","query":"team or league"}',
+        "```",
+        "kind must be one of: weather, sports, news, current_facts. "
+        "For sports, query is the team or league name only — the same words you would type into ESPN search. "
+        "Good: Boise State, Utah Utes, Denver Broncos, NFL. "
+        "Bad: when does boise state play, Boise State schedule, next Boise State game. "
+        "Set schedule true when the child asks when a team plays or for upcoming games. "
+        "For weather, query is a city. Use news with query current events for headlines. "
+        "Use current_facts for who the current US president is. "
+        "After a lookup you will get verified notes — summarize those. "
+        "Never invent scores, weather, or headlines.",
+    ]
+    if home_location:
+        parts.append(f"Household home location: {home_location}. You may omit the weather query to use it.")
+    if context and context.team:
+        parts.append(f"This chat already mentioned team: {context.team}.")
+    if context and context.place:
+        parts.append(f"This chat already mentioned place: {context.place}.")
+    return " ".join(parts)
+
+
+_SPORTS_QUERY_NOISE = frozenset(
+    {
+        "a",
+        "an",
+        "are",
+        "did",
+        "do",
+        "does",
+        "final",
+        "game",
+        "games",
+        "is",
+        "last",
+        "matchup",
+        "next",
+        "night",
+        "play",
+        "playing",
+        "schedule",
+        "score",
+        "scores",
+        "the",
+        "this",
+        "today",
+        "tomorrow",
+        "tonight",
+        "week",
+        "weekend",
+        "what",
+        "what's",
+        "whats",
+        "when",
+        "who",
+        "won",
+    }
+)
+_WHEN_PLAY_RE = re.compile(r"\bwhen\b.+\bplay", re.IGNORECASE)
+
+
+def normalize_sports_query(query: str) -> str:
+    """Turn a sports lookup query into an ESPN-style team or league name."""
+    text = (query or "").strip()
+    if not text:
+        return ""
+    known = _matching_team_key(text)
+    if known:
+        return known
+    kept = [
+        word
+        for word in re.findall(r"[A-Za-z0-9']+", text.lower())
+        if word not in _SPORTS_QUERY_NOISE and word not in _SPORT_WORDS
+    ]
+    return " ".join(kept) or text
+
+
+def _blank_or_referential_query(query: str) -> bool:
+    lowered = (query or "").strip().lower()
+    return not lowered or lowered in REFERENTIAL_PLACES or lowered in {"they", "them", "it"}
+
+
+def _map_current_facts_query(query: str) -> str:
+    text = (query or "").strip()
+    if not text:
+        return ""
+    for wiki_title, (_label, pattern) in WIKI_OFFICES.items():
+        if pattern.search(text) or wiki_title.replace("_", " ").lower() in text.lower():
+            return wiki_title
+    if "president" in text.lower():
+        return "President_of_the_United_States"
+    return text
+
+
+def intent_from_request(
+    payload: dict[str, Any] | None,
+    *,
+    home_location: str | None = None,
+    context: SessionContext | None = None,
+    user_message: str = "",
+) -> LookupIntent | None:
+    """Turn a model lookup_request into a gateway fetch plan."""
+    if not payload:
+        return None
+    kind = str(payload.get("kind") or "").strip().lower()
+    if kind not in LOOKUP_KINDS:
+        return None
+    query = str(payload.get("query") or "").strip()
+    ctx = context or SessionContext()
+
+    if kind == "weather":
+        if _blank_or_referential_query(query):
+            query = ctx.place or home_location or ""
+        return LookupIntent("weather", query)
+
+    if kind == "sports":
+        if _blank_or_referential_query(query):
+            query = ctx.team or ""
+        query = normalize_sports_query(query)
+        if not query:
+            return None
+        date_source = f"{query} {user_message} {payload.get('query') or ''}"
+        date_range = _sports_date_range(date_source)
+        schedule = bool(
+            payload.get("schedule")
+            or date_range
+            or _WHEN_PLAY_RE.search(date_source)
+            or re.search(r"\b(schedule|playing|games?|matchup|next game)\b", date_source, re.IGNORECASE)
+        )
+        return LookupIntent(
+            "sports",
+            query,
+            date_range=date_range,
+            schedule=schedule,
+            when=sports_when(date_source),
+        )
+
+    if kind == "news":
+        return LookupIntent("news", query or "current events")
+
+    mapped = _map_current_facts_query(query or user_message)
+    if not mapped:
+        return None
+    return LookupIntent("current_facts", mapped)
 
 
 def _is_place(value: str) -> bool:
@@ -421,162 +581,6 @@ def _extract_event_time(text: str) -> str:
     if not match:
         return ""
     return match.group(0).strip(" —")
-
-
-def _extract_place_from_user_history(history: list[dict] | None) -> str:
-    for item in reversed(history or []):
-        if item.get("role") != "user":
-            continue
-        content = item.get("content") or ""
-        place = _extract_location(content)
-        if place:
-            return place
-    return ""
-
-
-def _resolve_weather_place(
-    message: str,
-    context: SessionContext,
-    history: list[dict] | None,
-    *,
-    home_location: str | None,
-    referential: bool,
-) -> str:
-    place = _extract_place(message)
-    if place:
-        return place
-    if referential and context.place:
-        return context.place
-    place = _extract_place_from_user_history(history)
-    if place:
-        return place
-    return home_location or ""
-
-
-def _resolve_sports_intent(
-    message: str,
-    context: SessionContext,
-    referential: bool,
-) -> LookupIntent | None:
-    wants_sports = bool(SPORTS_ASK_RE.search(message) or SPORTS_FOLLOWUP_RE.search(message))
-    if referential and context.team and wants_sports:
-        date_range = _sports_date_range(message)
-        schedule = bool(
-            date_range
-            or SPORTS_FOLLOWUP_RE.search(message)
-            or re.search(r"\b(schedule|playing|games?|matchup|next game)\b", message, re.IGNORECASE)
-        )
-        return LookupIntent("sports", context.team, date_range=date_range, schedule=schedule)
-
-    team_key = _matching_team_key(message) or _extract_sports_team(message)
-    if team_key:
-        date_range = _sports_date_range(message)
-        schedule = bool(
-            date_range
-            or re.search(r"\b(schedule|playing|games?|matchup|next game)\b", message, re.IGNORECASE)
-        )
-        return LookupIntent("sports", team_key, date_range=date_range, schedule=schedule)
-
-    return None
-
-
-def detect_current_facts_intent(message: str) -> LookupIntent | None:
-    text = (message or "").strip()
-    if not text:
-        return None
-    for wiki_title, (label, pattern) in WIKI_OFFICES.items():
-        if pattern.search(text):
-            return LookupIntent("current_facts", wiki_title)
-    return None
-
-
-def resolve_lookup_intent(
-    message: str,
-    history: list[dict] | None = None,
-    *,
-    home_location: str | None = None,
-    context: SessionContext | None = None,
-) -> tuple[LookupIntent | None, SessionContext]:
-    """Detect a lookup and fill missing slots from session + recent chat context."""
-    text = (message or "").strip()
-    if not text:
-        return None, SessionContext()
-
-    inferred = build_session_context(history)
-    if context:
-        ctx = SessionContext(
-            place=context.place or inferred.place,
-            team=context.team or inferred.team,
-            venue=context.venue or inferred.venue,
-            event_time=context.event_time or inferred.event_time,
-            last_lookup_kind=context.last_lookup_kind or inferred.last_lookup_kind,
-        )
-    else:
-        ctx = inferred
-    referential = is_referential(text)
-
-    current = detect_current_facts_intent(text)
-    if current:
-        return current, ctx
-
-    if WEATHER_RE.search(text):
-        place = _resolve_weather_place(
-            text,
-            ctx,
-            history,
-            home_location=home_location,
-            referential=referential,
-        )
-        return LookupIntent("weather", place), ctx
-
-    if NEWS_RE.search(text):
-        return LookupIntent("news", "current events"), ctx
-
-    sports = _resolve_sports_intent(text, ctx, referential)
-    if sports:
-        return sports, ctx
-
-    return None, ctx
-
-
-def lookup_context_hint(
-    message: str,
-    intent: LookupIntent,
-    context: SessionContext,
-    *,
-    referential: bool,
-) -> str:
-    """Tell the model when a slot was inferred from earlier in the chat."""
-    if not referential:
-        return ""
-
-    hints: list[str] = []
-    if intent.kind == "weather" and context.place and not _extract_place(message):
-        hints.append(f"The child is asking about {context.place} from earlier in this chat.")
-    if intent.kind == "sports" and context.team and not (
-        _matching_team_key(message) or _extract_sports_team(message)
-    ):
-        hints.append(f"The child is asking about {context.team} from earlier in this chat.")
-    if context.event_time and intent.kind == "weather":
-        hints.append(f"The event time discussed earlier was {context.event_time}.")
-    return " ".join(hints)
-
-
-def resolve_weather_place(
-    message: str,
-    history: list[dict] | None = None,
-    *,
-    home_location: str | None = None,
-) -> str:
-    """Find a city in this turn, recent chat context, or the household home."""
-    context = build_session_context(history)
-    return _resolve_weather_place(
-        message,
-        context,
-        history,
-        home_location=home_location,
-        referential=is_referential(message),
-    )
 
 
 def format_geo_label(geo: dict[str, Any]) -> str:
@@ -667,6 +671,50 @@ def _normalize_team_candidate(candidate: str) -> str:
     return " ".join(words)
 
 
+_QUERY_SKIP = _TEAM_STOP | {"university", "univ", "college", "of", *_SPORT_WORDS}
+
+
+def _strip_team_query_noise(value: str) -> str:
+    out = value
+    for prefix in _UNIVERSITY_PREFIXES:
+        if out.startswith(prefix):
+            out = out[len(prefix) :]
+    for sport in _SPORT_WORDS:
+        suffix = f" {sport}"
+        if out.endswith(suffix):
+            out = out[: -len(suffix)]
+    return " ".join(out.split()).strip(" .,")
+
+
+def team_search_queries(query: str) -> list[str]:
+    """ESPN search variants — 'university of utah football' often only resolves as 'utah'."""
+    raw = (query or "").strip().lower()
+    if not raw:
+        return []
+
+    variants: list[str] = []
+
+    def add(value: str) -> None:
+        cleaned = " ".join(value.split()).strip(" .,")
+        if cleaned and cleaned not in variants and cleaned not in _TEAM_STOP and cleaned not in _SPORT_WORDS:
+            variants.append(cleaned)
+
+    add(raw)
+    add(_strip_team_query_noise(raw))
+    for prefix in _UNIVERSITY_PREFIXES:
+        if raw.startswith(prefix):
+            add(raw[len(prefix) :])
+    for sport in _SPORT_WORDS:
+        suffix = f" {sport}"
+        if raw.endswith(suffix):
+            add(raw[: -len(suffix)])
+    words = [word for word in raw.split() if word not in _QUERY_SKIP]
+    if words:
+        add(" ".join(words))
+        add(words[-1])
+    return variants
+
+
 def _extract_sports_team(text: str) -> str | None:
     for pattern in TEAM_EXTRACT_RES:
         match = pattern.search(text)
@@ -680,6 +728,18 @@ def _extract_sports_team(text: str) -> str | None:
 
 def _fmt_espn_date(day: date) -> str:
     return day.strftime("%Y%m%d")
+
+
+def sports_when(text: str) -> str:
+    """Closed set of time words on a schedule object — not a new API per phrasing."""
+    lower = (text or "").lower()
+    if "tomorrow" in lower:
+        return "tomorrow"
+    if "today" in lower or "tonight" in lower:
+        return "today"
+    if re.search(r"\b(score|scores|won|winning|final)\b", lower):
+        return "today"
+    return "next"
 
 
 def _sports_date_range(text: str) -> str | None:
@@ -705,6 +765,22 @@ def _sports_date_range(text: str) -> str | None:
         return f"{_fmt_espn_date(today)}-{_fmt_espn_date(end)}"
 
     return None
+
+
+def sports_scoreboard_date_attempts(date_range: str | None) -> list[str | None]:
+    """Try the requested day first, then the coming week so 'tomorrow' can still find Saturday."""
+    attempts: list[str | None] = []
+
+    def add(value: str | None) -> None:
+        if value not in attempts:
+            attempts.append(value)
+
+    if date_range:
+        add(date_range)
+    today = date.today()
+    add(f"{_fmt_espn_date(today)}-{_fmt_espn_date(today + timedelta(days=7))}")
+    add(None)
+    return attempts
 
 
 def weather_label(code: int | None) -> str:
@@ -749,6 +825,7 @@ def format_weather_notes(place: str, geo: dict[str, Any], forecast: dict[str, An
         query=label or place,
         summary=summary,
         notes=notes,
+        spoken=notes,
     )
 
 
@@ -758,30 +835,39 @@ def format_sports_notes(
     query: str,
     *,
     schedule: bool = False,
+    miss_note: str = "",
+    spoken: str = "",
+    source: str = "espn-scoreboard",
+    source_label: str = "Public sports scoreboard",
 ) -> LookupResult:
     kind_label = "schedule" if schedule else "scores"
     if not events:
         notes = f"No {league_label} {kind_label} matched “{query}” on the scoreboard."
+        kid = spoken or f"I could not find a game for {query} on the sports schedule."
         return LookupResult(
             kind="sports",
-            source="espn-scoreboard",
-            source_label="Public sports scoreboard",
+            source=source,
+            source_label=source_label,
             query=query,
-            summary=notes,
+            summary=kid,
             notes=notes,
             found=False,
+            spoken=kid,
         )
 
     header = f"{league_label} {'schedule' if schedule else 'scores'}:"
-    lines = [header] + [f"- {event}" for event in events[:8]]
+    extra = [miss_note] if miss_note else []
+    lines = [header] + extra + [f"- {event}" for event in events[:8]]
     notes = "\n".join(lines)
+    kid = spoken or events[0]
     return LookupResult(
         kind="sports",
-        source="espn-scoreboard",
-        source_label="Public sports scoreboard",
+        source=source,
+        source_label=source_label,
         query=query,
         summary=events[0],
         notes=notes,
+        spoken=kid,
     )
 
 
@@ -796,15 +882,18 @@ def format_news_notes(headlines: list[str]) -> LookupResult:
             summary=notes,
             notes=notes,
             found=False,
+            spoken="I could not find current headlines right now.",
         )
     lines = ["Wikipedia Current Events headlines:"] + [f"- {item}" for item in headlines[:6]]
+    notes = "\n".join(lines)
     return LookupResult(
         kind="news",
         source="wikipedia-current-events",
         source_label="Wikipedia Current Events",
         query="current events",
         summary=headlines[0],
-        notes="\n".join(lines),
+        notes=notes,
+        spoken=notes,
     )
 
 
@@ -891,7 +980,7 @@ def _format_scoreboard_line(event: dict[str, Any], competition: dict[str, Any]) 
         team_info = competitor.get("team") or {}
         team = team_info.get("displayName") or team_info.get("shortDisplayName") or "Team"
         side = str(competitor.get("homeAway") or "").lower()
-        score = str(competitor.get("score") or "").strip()
+        score = competitor_score(competitor.get("score"))
         if side == "home":
             home_team = team
             home_score = score
@@ -986,28 +1075,52 @@ def _sport_path_for_league(sport: str, league: str) -> tuple[str, str] | None:
     return mapping.get((sport, league))
 
 
-async def _search_espn_team(query: str) -> dict[str, str] | None:
+def _prefer_sport_from_query(query: str) -> str | None:
+    lower = (query or "").lower()
+    for sport in _SPORT_WORDS:
+        if re.search(rf"\b{sport}\b", lower):
+            return sport
+    return None
+
+
+async def _search_espn_team(query: str, *, prefer_sport: str | None = None) -> dict[str, str] | None:
     """Resolve an unknown team name via ESPN's public search API."""
+    prefer = prefer_sport or _prefer_sport_from_query(query)
     try:
         async with _client() as client:
-            resp = await client.get(
-                "https://site.api.espn.com/apis/common/v3/search",
-                params={"query": query, "limit": 5, "type": "team"},
-            )
-            resp.raise_for_status()
-            for item in (resp.json() or {}).get("items") or []:
-                if item.get("type") != "team":
+            for search_query in team_search_queries(query):
+                resp = await client.get(
+                    "https://site.api.espn.com/apis/common/v3/search",
+                    params={"query": search_query, "limit": 8, "type": "team"},
+                )
+                resp.raise_for_status()
+                candidates: list[dict[str, str]] = []
+                for item in (resp.json() or {}).get("items") or []:
+                    if item.get("type") != "team":
+                        continue
+                    sport = item.get("sport") or ""
+                    league = item.get("league") or item.get("defaultLeagueSlug") or ""
+                    if not _sport_path_for_league(sport, league):
+                        continue
+                    team_id = str(item.get("id") or "").strip()
+                    if not team_id:
+                        continue
+                    candidates.append(
+                        {
+                            "id": team_id,
+                            "sport": sport,
+                            "league": league,
+                            "display_name": item.get("displayName") or search_query,
+                            "location": item.get("location") or search_query,
+                        }
+                    )
+                if not candidates:
                     continue
-                sport = item.get("sport") or ""
-                league = item.get("league") or item.get("defaultLeagueSlug") or ""
-                if not _sport_path_for_league(sport, league):
-                    continue
-                return {
-                    "sport": sport,
-                    "league": league,
-                    "display_name": item.get("displayName") or query,
-                    "location": item.get("location") or query,
-                }
+                if prefer:
+                    for candidate in candidates:
+                        if candidate["sport"] == prefer:
+                            return candidate
+                return candidates[0]
     except Exception as exc:
         logger.info("ESPN team search failed for %s: %s", query, exc)
     return None
@@ -1042,13 +1155,13 @@ def parse_featured_headlines(payload: dict[str, Any]) -> list[str]:
     return unique
 
 
-async def fetch_lookup(intent: LookupIntent) -> LookupResult | None:
+async def fetch_lookup(intent: LookupIntent, *, timezone: str | None = None) -> LookupResult | None:
     if intent.kind == "weather":
         if not intent.query:
             return None
         return await _fetch_weather(intent.query)
     if intent.kind == "sports":
-        return await _fetch_sports(intent)
+        return await _fetch_sports(intent, timezone=timezone)
     if intent.kind == "news":
         return await _fetch_news()
     if intent.kind == "current_facts":
@@ -1089,45 +1202,106 @@ async def _fetch_weather(place: str) -> LookupResult | None:
         return None
 
 
-async def _fetch_sports(intent: LookupIntent) -> LookupResult | None:
-    query = intent.query.lower()
-    team_filter: str | None = None
-    sport: str
-    slug: str
-    label: str
+_LEAGUE_ONLY = frozenset({"nfl", "nba", "mlb", "nhl", "wnba", "mls"})
 
-    league = TEAM_LEAGUES.get(query)
-    if league:
-        sport, slug = league
-        label = _league_label(slug)
-    else:
-        resolved = await _search_espn_team(intent.query)
-        if not resolved:
-            return None
-        paths = _sport_path_for_league(resolved["sport"], resolved["league"])
-        if not paths:
-            return None
-        sport, slug = paths
-        label = _league_label(resolved["league"])
-        team_filter = resolved.get("location") or resolved.get("display_name") or intent.query
-        query = team_filter.lower()
 
-    schedule = intent.schedule
-    try:
-        async with _client() as client:
+async def _fetch_scoreboard(
+    sport: str,
+    slug: str,
+    query: str,
+    *,
+    team_filter: str | None,
+    date_range: str | None,
+    schedule: bool,
+    label: str,
+    display_query: str,
+) -> LookupResult:
+    events: list[str] = []
+    used_fallback = False
+    async with _client() as client:
+        for dates in sports_scoreboard_date_attempts(date_range):
             params: dict[str, str] = {}
-            if intent.date_range:
-                params["dates"] = intent.date_range
+            if dates:
+                params["dates"] = dates
             resp = await client.get(
                 f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{slug}/scoreboard",
                 params=params or None,
             )
             resp.raise_for_status()
             events = parse_scoreboard_events(resp.json(), query, team_filter=team_filter)
-            display_query = team_filter or intent.query
-            return format_sports_notes(label, events, display_query, schedule=schedule)
+            if events:
+                used_fallback = bool(date_range) and dates != date_range
+                break
+    miss_note = "No game on the requested day. Next listed game:" if used_fallback else ""
+    spoken = events[0] if events else ""
+    return format_sports_notes(
+        label,
+        events,
+        display_query,
+        schedule=schedule,
+        miss_note=miss_note,
+        spoken=spoken,
+    )
+
+
+async def _fetch_sports(intent: LookupIntent, *, timezone: str | None = None) -> LookupResult | None:
+    query = intent.query.lower()
+    if query in _LEAGUE_ONLY:
+        sport, slug = TEAM_LEAGUES[query]
+        try:
+            return await _fetch_scoreboard(
+                sport,
+                slug,
+                query,
+                team_filter=None,
+                date_range=intent.date_range,
+                schedule=intent.schedule,
+                label=_league_label(slug),
+                display_query=intent.query,
+            )
+        except Exception as exc:
+            logger.info("Sports lookup failed: %s", exc)
+            return None
+
+    resolved = await _search_espn_team(
+        intent.query,
+        prefer_sport=_prefer_sport_from_query(intent.query),
+    )
+    if not resolved or not resolved.get("id"):
+        return format_sports_notes("Sports", [], intent.query, schedule=True)
+    paths = _sport_path_for_league(resolved["sport"], resolved["league"])
+    if not paths:
+        return format_sports_notes("Sports", [], intent.query, schedule=True)
+    sport, slug = paths
+    team_name = resolved.get("display_name") or intent.query
+    when = intent.when or ("next" if intent.schedule else "today")
+    try:
+        async with _client() as client:
+            resp = await client.get(
+                f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{slug}/teams/{resolved['id']}/schedule"
+            )
+            resp.raise_for_status()
+            games = parse_team_schedule(resp.json(), subject=team_name)
+        now = datetime.now(dt_timezone.utc)
+        game, day_miss = select_sports_game(games, when=when, now=now, tz=timezone)
+        spoken = speak_sports(team_name, game, when=when, day_miss=day_miss, tz=timezone)
+        events = []
+        if game:
+            events.append(
+                f"{game.away} at {game.home} — {game.venue_line} — {friendly_kickoff(game.start, timezone)}"
+            )
+        return format_sports_notes(
+            _league_label(resolved["league"]),
+            events,
+            team_name,
+            schedule=True,
+            spoken=spoken,
+            miss_note="No game on the requested day. Next listed game:" if day_miss and game else "",
+            source="espn-schedule",
+            source_label="Public sports schedule",
+        )
     except Exception as exc:
-        logger.info("Sports lookup failed: %s", exc)
+        logger.info("Sports schedule lookup failed: %s", exc)
         return None
 
 
@@ -1166,6 +1340,7 @@ def format_current_facts_notes(label: str, officeholder: str, since: str = "") -
         query=label,
         summary=f"{label}: {officeholder}",
         notes=notes,
+        spoken=notes,
     )
 
 

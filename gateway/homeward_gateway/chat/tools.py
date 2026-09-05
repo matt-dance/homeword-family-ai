@@ -99,6 +99,7 @@ MODEL_TOOL_TYPES = {
     "math",
     "timer",
     "lookup",
+    "lookup_request",
     "clock",
     "story",
     "riddle",

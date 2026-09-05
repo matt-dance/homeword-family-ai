@@ -30,6 +30,15 @@ describe("extractChatTools", () => {
     expect(tools).toEqual([]);
   });
 
+  it("does not show a lookup_request card to the child", () => {
+    const { text, tools } = extractChatTools(
+      '```homeward\n{"type":"lookup_request","kind":"sports","query":"Utah football"}\n```',
+    );
+    expect(asChatTool({ type: "lookup_request", kind: "sports" })).toBeNull();
+    expect(tools).toEqual([]);
+    expect(text).toBe("");
+  });
+
   it("accepts a named-source lookup card", () => {
     const lookup = {
       type: "lookup" as const,

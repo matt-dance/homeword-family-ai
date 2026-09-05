@@ -97,6 +97,18 @@ def test_extract_model_tools_lookup():
     assert "homeward" not in cleaned
 
 
+def test_extract_model_tools_lookup_request():
+    text = (
+        '```homeward\n{"type":"lookup_request","kind":"sports",'
+        '"query":"University of Utah football"}\n```'
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert cards[0].type == "lookup_request"
+    assert cards[0].data["kind"] == "sports"
+    assert cards[0].data["query"] == "University of Utah football"
+    assert "homeward" not in cleaned
+
+
 def test_extract_model_tools_story_riddle_practice_howto():
     text = (
         '```homeward\n{"type":"story","title":"Moon hike",'
