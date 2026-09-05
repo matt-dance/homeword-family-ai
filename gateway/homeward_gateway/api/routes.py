@@ -1240,6 +1240,55 @@ def _resume_messages(logs: list[ConversationLog]) -> list[dict]:
     return messages
 
 
+def _latest_recovery_turn(messages: list[dict]) -> list[dict]:
+    """SSE recovery only needs the in-flight user/assistant pair."""
+    if not messages:
+        return []
+    if (
+        messages[-1].get("role") == "assistant"
+        and len(messages) >= 2
+        and messages[-2].get("role") == "user"
+    ):
+        return messages[-2:]
+    return messages[-1:]
+
+
+async def _latest_child_session_id(session: AsyncSession, child_id: int) -> int | None:
+    result = await session.execute(
+        select(ChatSession.id)
+        .where(ChatSession.child_id == child_id)
+        .order_by(ChatSession.started_at.desc(), ChatSession.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _session_is_kid_recoverable(
+    session: AsyncSession, child: ChildProfile, chat_session: ChatSession
+) -> bool:
+    """Allow the current in-flight session, and the resume target when enabled."""
+    latest_id = await _latest_child_session_id(session, child.id)
+    if chat_session.id == latest_id:
+        return True
+    if not child.allow_resume:
+        return False
+    sessions_result = await session.execute(
+        select(ChatSession)
+        .where(ChatSession.child_id == child.id)
+        .order_by(ChatSession.started_at.desc(), ChatSession.id.desc())
+        .limit(20)
+    )
+    for candidate in sessions_result.scalars().all():
+        logs_result = await session.execute(
+            select(ConversationLog)
+            .where(ConversationLog.session_id == candidate.id)
+            .order_by(ConversationLog.created_at.asc(), ConversationLog.id.asc())
+        )
+        if _resume_messages(list(logs_result.scalars().all())):
+            return candidate.id == chat_session.id
+    return False
+
+
 def _ensure_chat_available(child: ChildProfile) -> None:
     available, message = is_chat_available(
         enabled=child.quiet_hours_enabled,
@@ -1320,7 +1369,12 @@ async def chat_session_messages(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    """Kid-accessible turn recovery when SSE delivery drops a completed reply."""
+    """Kid-accessible turn recovery when SSE delivery drops a completed reply.
+
+    Full history resume is ``GET /children/{id}/sessions/resume`` (gated by
+    ``allow_resume``). This handler must not become a backdoor to older
+    transcripts by guessing sequential session ids.
+    """
     chat_session = await session.get(ChatSession, session_id)
     if not chat_session:
         raise HTTPException(status_code=404, detail="Chat session not found")
@@ -1328,14 +1382,16 @@ async def chat_session_messages(
     if not child:
         raise HTTPException(status_code=404, detail="Chat session not found")
     _require_child_access(request, child)
+    if not await _session_is_kid_recoverable(session, child, chat_session):
+        raise HTTPException(status_code=404, detail="Chat session not found")
     logs_result = await session.execute(
         select(ConversationLog)
         .where(ConversationLog.session_id == session_id)
-        .order_by(ConversationLog.created_at.asc())
+        .order_by(ConversationLog.created_at.asc(), ConversationLog.id.asc())
     )
     return {
         "session_id": chat_session.id,
-        "messages": _resume_messages(list(logs_result.scalars().all())),
+        "messages": _latest_recovery_turn(_resume_messages(list(logs_result.scalars().all()))),
     }
 
 
