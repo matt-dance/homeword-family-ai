@@ -8,10 +8,13 @@ from homeward_gateway.chat.tools import (
     detect_intents,
     evaluate_math,
     extract_model_tools,
+    howto_from_prose,
     is_clock_question,
     is_self_contained_card_request,
+    local_howto_card,
     local_practice_card,
     local_quiz_card,
+    normalize_howto_data,
     parse_timer_seconds,
     requested_story_pages,
     run_local_tools,
@@ -171,6 +174,9 @@ def test_convert_rejects_unknown_or_mismatch():
 def test_run_local_convert():
     cards = run_local_tools("How many cm in 2 meters?")
     assert any(card.type == "convert" and card.data["result"] == "200" for card in cards)
+    cup = run_local_tools("How many mL in 1 cup?")
+    assert any(card.type == "convert" for card in cup)
+    assert not any(card.type == "howto" for card in cup)
 
 
 def test_ask_parent_card_is_friendly():
@@ -244,6 +250,85 @@ def test_local_quiz_and_practice_and_ask_parent_cards():
 
     cards = run_local_tools("Ask my parent if I can stay up")
     assert any(card.type == "ask_parent" for card in cards)
+
+
+def test_local_howto_card_for_pancake_prompt():
+    card = local_howto_card("How do I make pancakes?")
+    assert card is not None
+    assert card.type == "howto"
+    assert "pancake" in card.data["title"].lower()
+    assert len(card.data["steps"]) >= 3
+    assert all(isinstance(step, str) and step for step in card.data["steps"])
+
+    cards = run_local_tools("How do I make pancakes?")
+    howto = next(card for card in cards if card.type == "howto")
+    assert howto.data["steps"]
+
+    slime = local_howto_card("Recipe for slime")
+    assert slime is not None
+    assert "slime" in slime.data["title"].lower()
+
+    shoes = local_howto_card("Show me how to tie my shoes")
+    assert shoes is not None
+    assert any("loop" in step.lower() or "lace" in step.lower() for step in shoes.data["steps"])
+
+    generic = local_howto_card("How do I fold a paper crane?")
+    assert generic is not None
+    assert generic.type == "howto"
+    assert len(generic.data["steps"]) >= 2
+
+    assert local_howto_card("Set a 10-second timer") is None
+    assert local_howto_card("How many mL in 1 cup?") is None
+
+
+def test_normalize_howto_accepts_nested_step_objects():
+    normalized = normalize_howto_data(
+        {
+            "title": "Pancakes",
+            "steps": [
+                {"step": 1, "text": "Mix the batter"},
+                {"instruction": "Heat the pan"},
+            ],
+        }
+    )
+    assert normalized == {"title": "Pancakes", "steps": ["Mix the batter", "Heat the pan"]}
+
+
+def test_extract_model_tools_nested_howto_fence():
+    text = (
+        "Here you go.\n"
+        "```homeward\n"
+        "{\n"
+        '  "type": "howto",\n'
+        '  "title": "Pancakes",\n'
+        '  "steps": [{"text": "Mix flour"}, {"text": "Cook gently"}]\n'
+        "}\n"
+        "```\n"
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert "homeward" not in cleaned
+    assert cards[0].type == "howto"
+    assert cards[0].data["steps"] == ["Mix flour", "Cook gently"]
+
+
+def test_howto_from_prose_numbered_recipe():
+    prose = (
+        "Sure! Here is a pancake recipe:\n"
+        "1. Mix flour and milk\n"
+        "2. Heat the pan\n"
+        "3. Flip when bubbly\n"
+    )
+    card = howto_from_prose(prose, title="Make pancakes")
+    assert card is not None
+    assert card.type == "howto"
+    assert card.data["steps"] == ["Mix flour and milk", "Heat the pan", "Flip when bubbly"]
+
+
+def test_tool_prompt_hint_local_howto_does_not_ask_for_fence():
+    hint = tool_prompt_hint(["howto"], local_types={"howto"})
+    assert "how-to card will already appear" in hint.lower()
+    assert '{"type":"..."}' not in hint
+    assert "numbered recipe" in hint.lower()
 
 
 def test_self_contained_card_request():
