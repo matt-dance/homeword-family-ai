@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useState, useRef } from "react";
 import { api, streamChat, type Child, type ConversationStarter } from "@/lib/api";
-import { useVoiceChat } from "@/hooks/use-voice-chat";
-import { useReadAloud } from "@/hooks/use-read-aloud";
+import { useVoiceConversation } from "@/hooks/use-voice-conversation";
 import { VoiceListener } from "@/components/voice-listener";
 import { SpeakingIndicator } from "@/components/speaking-indicator";
+import { ConversationIndicator } from "@/components/conversation-indicator";
 import { HomeworkCamera } from "@/components/homework-camera";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { ChatToolCards } from "@/components/chat-tools";
@@ -21,6 +21,13 @@ import {
 } from "@/lib/chat-tools";
 import { shouldShowReplyChips } from "@/lib/reply-chips";
 import { shouldOfferResume } from "@/lib/resume-session";
+import {
+  BARGE_IN_TAP_HINT,
+  conversationMicLabel,
+  conversationModeAvailable,
+  conversationToggleLabel,
+  conversationToggleTitle,
+} from "@/lib/conversation-mode";
 import { getAgeTheme, AGE_THEME_CONFIGS } from "@/lib/age-theme";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +40,7 @@ import {
   Volume2,
   Play,
   Square,
+  AudioLines,
   PlusCircle,
   LayoutList,
   Moon,
@@ -96,20 +104,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
   const autoReadNextRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const cardRouteRef = useRef<CardRoute | null>(null);
-
-  // Voice conversation loop: swap these two hooks for useVoiceConversation({
-  //   onTranscript: handleVoiceTranscript,
-  // }). After the assistant stream finishes, call notifyAssistantDone(spoken)
-  // when conversationActive (instead of speakMessage). Mic tap while TTS is
-  // playing should call bargeIn(). See hooks/use-voice-conversation.ts.
-  const {
-    supported: readAloudSupported,
-    error: readAloudError,
-    state: readAloudState,
-    speakMessage,
-    stop: stopReadAloud,
-    isSpeakingMessage,
-  } = useReadAloud(selectedChild.voice_gender);
+  const conversationActiveRef = useRef(false);
 
   const handleVoiceTranscript = useCallback((text: string) => {
     autoReadNextRef.current = true;
@@ -118,6 +113,13 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
   }, []);
 
   const {
+    conversationActive,
+    conversationPhase,
+    bargeInWatchFailed,
+    toggleConversation,
+    stopConversation,
+    notifyAssistantDone,
+    bargeIn,
     listening,
     transcribing,
     voiceSupported,
@@ -126,17 +128,50 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     interimTranscript,
     heardSpeech,
     toggleListening,
-  } = useVoiceChat({
+    readAloudSupported,
+    readAloudError,
+    readAloudState,
+    speakMessage,
+    stopReadAloud,
+    isSpeakingMessage,
+  } = useVoiceConversation({
     onTranscript: handleVoiceTranscript,
-    onListeningStart: stopReadAloud,
+    voiceGender: selectedChild.voice_gender,
   });
 
+  conversationActiveRef.current = conversationActive;
+  const conversationAvailable = conversationModeAvailable({
+    voiceSupported,
+    readAloudSupported,
+  });
+  const conversationSpeaking =
+    conversationActive &&
+    (conversationPhase === "speaking" || readAloudState.isSpeaking || readAloudState.isLoading);
+
+  const handleToggleConversation = () => {
+    if (conversationActive) {
+      conversationActiveRef.current = false;
+      stopConversation();
+      return;
+    }
+    conversationActiveRef.current = true;
+    toggleConversation();
+  };
+
   const handleMicClick = () => {
-    stopReadAloud();
+    if (conversationActive && (readAloudState.isSpeaking || readAloudState.isLoading || conversationPhase === "speaking")) {
+      bargeIn();
+      return;
+    }
+    if (!conversationActive) {
+      stopReadAloud();
+    }
     toggleListening();
   };
 
   useEffect(() => {
+    conversationActiveRef.current = false;
+    stopConversation();
     setPinVerified(!selectedChild.has_pin);
     setPin("");
     setPinError("");
@@ -147,7 +182,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     setResumeChecking(false);
     setStoryPageText({});
     setStarters([]);
-  }, [selectedChild.id, selectedChild.has_pin]);
+  }, [selectedChild.id, selectedChild.has_pin, stopConversation]);
 
   useEffect(() => {
     if (!pinVerified) return;
@@ -240,6 +275,8 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
 
   const handleNewChat = async () => {
     if (streaming) return;
+    conversationActiveRef.current = false;
+    stopConversation();
     stopReadAloud();
     const previousSessionId = chatSessionId;
     setChatSessionId(null);
@@ -287,6 +324,8 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     async (overrideText?: string, fromVoice = false) => {
       const userMsg = (overrideText ?? input).trim();
       if (!userMsg || streaming) return;
+      // Stopping the recorder to send a tap/chip would transcribe and double-send.
+      if (!fromVoice && (listening || transcribing)) return;
 
       if (fromVoice) autoReadNextRef.current = true;
 
@@ -356,9 +395,20 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             setStreaming(false);
             setStreamStatus(null);
             if (controller.signal.aborted) return;
-            if (!assistantContent || assistantContent === CHAT_ERROR_MESSAGE) return;
-            if (!autoReadNextRef.current) return;
-            autoReadNextRef.current = false;
+            const finishSpokenTurn = (text: string | null, messageKey: string) => {
+              if (conversationActiveRef.current) {
+                autoReadNextRef.current = false;
+                notifyAssistantDone(text ?? "", messageKey);
+                return;
+              }
+              if (!autoReadNextRef.current) return;
+              autoReadNextRef.current = false;
+              if (text) speakMessage(messageKey, text);
+            };
+            if (!assistantContent || assistantContent === CHAT_ERROR_MESSAGE) {
+              if (conversationActiveRef.current) notifyAssistantDone("");
+              return;
+            }
             window.setTimeout(() => {
               setMessages((prev) => {
                 let idx = -1;
@@ -369,8 +419,11 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                   }
                 }
                 if (idx >= 0) {
-                  const spoken = spokenTextForMessage(prev[idx]);
-                  if (spoken) speakMessage(`msg-${idx}`, spoken);
+                  finishSpokenTurn(spokenTextForMessage(prev[idx]), `msg-${idx}`);
+                } else if (conversationActiveRef.current) {
+                  notifyAssistantDone("");
+                } else {
+                  autoReadNextRef.current = false;
                 }
                 return prev;
               });
@@ -432,13 +485,16 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
         });
         setStreaming(false);
         setStreamStatus(null);
+        if (conversationActiveRef.current) {
+          notifyAssistantDone("");
+        }
       } finally {
         if (abortRef.current === controller) {
           abortRef.current = null;
         }
       }
     },
-    [input, selectedChild, streaming, pinVerified, chatSessionId, sessionReady, speakMessage, stopReadAloud, quickChat],
+    [input, selectedChild, streaming, listening, transcribing, pinVerified, chatSessionId, sessionReady, speakMessage, stopReadAloud, notifyAssistantDone, quickChat],
   );
 
   const handleStop = useCallback(() => {
@@ -446,14 +502,20 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     abortRef.current = null;
     setStreaming(false);
     setStreamStatus(null);
-    stopReadAloud();
-  }, [stopReadAloud]);
+    if (conversationActiveRef.current) {
+      notifyAssistantDone("");
+    } else {
+      stopReadAloud();
+    }
+  }, [notifyAssistantDone, stopReadAloud]);
 
   useEffect(() => {
     sendRef.current = handleSend;
   }, [handleSend]);
 
   const handleSwitch = () => {
+    conversationActiveRef.current = false;
+    stopConversation();
     stopReadAloud();
     onSwitchProfile();
   };
@@ -630,6 +692,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                {conversationActive && (
+                  <span className="font-semibold text-primary flex items-center gap-1">
+                    <AudioLines className="h-3 w-3" />
+                    Talking ·
+                  </span>
+                )}
                 {selectedChild.homework_mode && (
                   <span className="font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
                     <BookOpen className="h-3 w-3" />
@@ -715,7 +783,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                   {starters.map((starter) => (
                     <button
                       key={starter.label}
-                      disabled={streaming || !sessionReady}
+                      disabled={streaming || listening || transcribing || !sessionReady}
                       onClick={() => handleSend(starter.message)}
                       className={`group relative flex items-center justify-between rounded-2xl border border-border/80 bg-card/90 p-4 text-left shadow-xs transition-all hover:border-primary/50 hover:bg-card hover:shadow-md active:scale-[0.99] disabled:opacity-50 ${
                         simpleMode ? "min-h-[4rem] text-base p-5" : "text-sm"
@@ -812,7 +880,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                         void handleSend(text);
                       }}
                       onSpeak={(text) => speakMessage(`${messageKey}-story`, text)}
-                      speakSupported={readAloudSupported}
+                      speakSupported={readAloudSupported && !conversationActive}
                       isSpeaking={isSpeakingMessage(`${messageKey}-story`)}
                       speakLoading={readAloudState.isLoading && readAloudState.messageKey === `${messageKey}-story`}
                       onStoryPageText={(text) => {
@@ -826,8 +894,8 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                     <SpeakingIndicator simpleMode={simpleMode} />
                   )}
 
-                  {/* Listen button */}
-                  {isAssistant && readAloudSupported && !streaming && listenText && !msg.blocked && (
+                  {/* Listen button — conversation mode reads replies itself */}
+                  {isAssistant && readAloudSupported && !streaming && listenText && !msg.blocked && !conversationActive && (
                     <div className="pt-0.5">
                       <Button
                         variant="outline"
@@ -860,7 +928,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
 
                   {showChips && (
                     <ReplyChips
-                      disabled={streaming || !sessionReady}
+                      disabled={streaming || listening || transcribing || !sessionReady}
                       onSend={(text) => {
                         void handleSend(text);
                       }}
@@ -888,7 +956,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                   <span className="h-2 w-2 rounded-full bg-primary animate-bounce" />
                 </span>
                 <span className="text-xs text-muted-foreground font-medium pl-1">
-                  {streamStatus || "Thinking…"}
+                  {streamStatus || "Writing a reply…"}
                 </span>
                 <button
                   type="button"
@@ -914,6 +982,14 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             </div>
           )}
 
+          {conversationAvailable && conversationActive && !listening && (
+            <ConversationIndicator
+              phase={conversationPhase}
+              simpleMode={simpleMode}
+              hint={conversationSpeaking && bargeInWatchFailed ? BARGE_IN_TAP_HINT : null}
+            />
+          )}
+
           {listening && !speechError && (
             <VoiceListener
               audioLevel={audioLevel}
@@ -929,6 +1005,33 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             </p>
           )}
 
+          {conversationAvailable && (
+            <Button
+              type="button"
+              variant={conversationActive ? "default" : "outline"}
+              onClick={handleToggleConversation}
+              disabled={!sessionReady || transcribing || (!conversationActive && streaming)}
+              title={conversationToggleTitle(conversationActive)}
+              aria-pressed={conversationActive}
+              aria-label={conversationToggleLabel(conversationActive)}
+              className={`w-full rounded-2xl font-semibold ${
+                simpleMode ? "h-12 text-base" : "h-10 text-sm"
+              }`}
+            >
+              {conversationActive ? (
+                <>
+                  <Square className="h-4 w-4 fill-current" />
+                  <span>{conversationToggleLabel(true)}</span>
+                </>
+              ) : (
+                <>
+                  <AudioLines className="h-4 w-4" />
+                  <span>{conversationToggleLabel(false)}</span>
+                </>
+              )}
+            </Button>
+          )}
+
           <div className="relative flex items-center gap-2">
             {voiceSupported && (
               <Button
@@ -937,11 +1040,19 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                 size="icon"
                 onClick={handleMicClick}
                 disabled={streaming || transcribing || !sessionReady}
-                title={listening ? "Stop voice listening" : "Speak with microphone"}
-                aria-label={listening ? "Stop voice listening" : "Speak with microphone"}
+                title={conversationMicLabel({
+                  conversationActive,
+                  speaking: conversationSpeaking,
+                  listening,
+                })}
+                aria-label={conversationMicLabel({
+                  conversationActive,
+                  speaking: conversationSpeaking,
+                  listening,
+                })}
                 className={`shrink-0 rounded-2xl transition-all ${
                   listening ? "shadow-md shadow-destructive/25 scale-105" : "border-border/80 bg-card hover:bg-primary/5 hover:border-primary/50"
-                } ${simpleMode ? "h-14 w-14" : "h-11 w-11"}`}
+                } ${conversationActive && !listening ? "ring-2 ring-primary/40" : ""} ${simpleMode ? "h-14 w-14" : "h-11 w-11"}`}
               >
                 {listening ? (
                   <MicOff className="h-5 w-5 animate-pulse" />

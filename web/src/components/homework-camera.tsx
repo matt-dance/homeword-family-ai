@@ -4,9 +4,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera, Upload, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { ParentLockOverlay } from "@/components/parent-lock-overlay";
+import {
+  homeworkCameraCaptureAllowed,
+  homeworkCameraClickAction,
+  clearHomeworkCameraUnlock,
+  homeworkCameraIsUnlocked,
+  isHomeworkCameraUnlockExpired,
+  mapHomeworkParentError,
+  markHomeworkCameraUnlocked,
+} from "@/lib/homework-camera-gate";
 
 /** Parent-gated worksheet camera. Vision model expected by the gateway: llava:7b */
 const ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
+
+function readGateUnlocked(): boolean {
+  return homeworkCameraIsUnlocked(!isHomeworkCameraUnlockExpired());
+}
 
 export interface HomeworkCameraProps {
   childId: number;
@@ -26,7 +40,10 @@ export function HomeworkCamera({
 }: HomeworkCameraProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef<string | null>(null);
+  const [gateUnlocked, setGateUnlocked] = useState(readGateUnlocked);
   const [open, setOpen] = useState(false);
+  const panelOpen = open && gateUnlocked;
+  const [challengeOpen, setChallengeOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
@@ -34,16 +51,27 @@ export function HomeworkCamera({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [visionNote, setVisionNote] = useState<string | null>(null);
+  const refreshGate = () => setGateUnlocked(readGateUnlocked());
 
   useEffect(() => {
-    if (!enabled || !open) return;
+    if (!enabled || !open || !gateUnlocked) return;
     api
       .homeworkStatus(childId)
       .then((status) => {
         setVisionNote(status.available ? null : status.message);
       })
-      .catch(() => setVisionNote(null));
-  }, [childId, enabled, open]);
+      .catch((e) => {
+        const message = e instanceof Error ? e.message : "";
+        if (message.toLowerCase().includes("parent unlock")) {
+          clearHomeworkCameraUnlock();
+          setGateUnlocked(false);
+          setOpen(false);
+          setChallengeOpen(true);
+          return;
+        }
+        setVisionNote(null);
+      });
+  }, [childId, enabled, open, gateUnlocked]);
 
   useEffect(
     () => () => {
@@ -72,8 +100,45 @@ export function HomeworkCamera({
     setPreviewUrl(url);
   };
 
+  const requestParentUnlock = useCallback(() => {
+    setChallengeOpen(true);
+  }, []);
+
+  const handleCameraClick = () => {
+    const unlocked = readGateUnlocked();
+    setGateUnlocked(unlocked);
+    const action = homeworkCameraClickAction(open && unlocked, unlocked);
+    if (action === "close") {
+      setOpen(false);
+      return;
+    }
+    if (action === "open") {
+      setOpen(true);
+      return;
+    }
+    requestParentUnlock();
+  };
+
+  const handleCameraUnlocked = () => {
+    refreshGate();
+    setChallengeOpen(false);
+    setOpen(true);
+  };
+
+  const verifyParentForCamera = async (password: string) => {
+    await api.homeworkUnlock(password);
+    markHomeworkCameraUnlocked();
+  };
+
+  const ensureCaptureUnlocked = () => {
+    if (homeworkCameraCaptureAllowed(readGateUnlocked())) return true;
+    requestParentUnlock();
+    return false;
+  };
+
   const handleSubmit = async () => {
     if (!file || busy) return;
+    if (!ensureCaptureUnlocked()) return;
     setBusy(true);
     setError(null);
     try {
@@ -84,7 +149,15 @@ export function HomeworkCamera({
       }
       onHint?.(result.hint);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not get a hint from that photo.");
+      const message = e instanceof Error ? e.message : "Could not get a hint from that photo.";
+      if (message.toLowerCase().includes("parent unlock")) {
+        clearHomeworkCameraUnlock();
+        setGateUnlocked(false);
+        setOpen(false);
+        setChallengeOpen(true);
+        return;
+      }
+      setError(message);
     } finally {
       setBusy(false);
     }
@@ -96,19 +169,19 @@ export function HomeworkCamera({
     <div className="relative shrink-0">
       <Button
         type="button"
-        variant={open ? "default" : "outline"}
+        variant={panelOpen ? "default" : "outline"}
         size="icon"
         disabled={disabled}
         title="Homework camera — snap a worksheet for a hint"
         aria-label="Homework camera"
-        aria-pressed={open}
-        onClick={() => setOpen((prev) => !prev)}
+        aria-pressed={panelOpen}
+        onClick={handleCameraClick}
         className={`rounded-2xl border-border/80 ${simpleMode ? "h-14 w-14" : "h-11 w-11"}`}
       >
-        <Camera className={`h-5 w-5 ${open ? "" : "text-amber-600 dark:text-amber-400"}`} />
+        <Camera className={`h-5 w-5 ${panelOpen ? "" : "text-amber-600 dark:text-amber-400"}`} />
       </Button>
 
-      {open && (
+      {panelOpen && (
         <div className="absolute bottom-full left-0 z-30 mb-2 w-[min(20rem,calc(100vw-2rem))] rounded-2xl border border-amber-500/30 bg-card/95 p-3 shadow-lg backdrop-blur-md">
           <div className="mb-2 flex items-center justify-between gap-2">
             <p className={`font-semibold text-amber-700 dark:text-amber-300 ${simpleMode ? "text-base" : "text-sm"}`}>
@@ -143,7 +216,10 @@ export function HomeworkCamera({
               variant="outline"
               size="sm"
               disabled={disabled || busy}
-              onClick={() => inputRef.current?.click()}
+              onClick={() => {
+                if (!ensureCaptureUnlocked()) return;
+                inputRef.current?.click();
+              }}
               className="rounded-xl"
             >
               <Upload className="mr-1.5 h-3.5 w-3.5" />
@@ -190,6 +266,18 @@ export function HomeworkCamera({
             </div>
           )}
         </div>
+      )}
+
+      {challengeOpen && (
+        <ParentLockOverlay
+          title="Parent password required"
+          description="Enter the household parent password to open the worksheet camera. This is not the child's PIN. Photos are not saved."
+          submitLabel="Unlock camera"
+          authenticate={verifyParentForCamera}
+          onUnlock={handleCameraUnlocked}
+          onCancel={() => setChallengeOpen(false)}
+          mapError={mapHomeworkParentError}
+        />
       )}
     </div>
   );

@@ -1,6 +1,11 @@
 import { decodeSpeechPayload } from "@/lib/read-aloud";
 import type { CardRoute, ChatTool } from "@/lib/chat-tools";
 import { markParentUnlocked } from "@/lib/parent-lock";
+import {
+  CHAT_UNAVAILABLE_MESSAGE,
+  latestAssistantAfterUser,
+  parseStreamHttpError,
+} from "@/lib/stream-recovery";
 
 const API_BASE = "/api/v1";
 
@@ -309,6 +314,12 @@ export const api = {
     request<{ available: boolean; ready: boolean; voice: string; message: string | null }>(
       "/chat/speak/status",
     ),
+  /** Verifies the parent password without minting a dashboard session cookie. */
+  homeworkUnlock: (password: string) =>
+    request<{ ok: boolean }>("/chat/homework/unlock", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
   homeworkStatus: (childId: number) =>
     request<{
       homework_mode: boolean;
@@ -436,9 +447,38 @@ export const api = {
     }),
 };
 
-/** Give up if the gateway goes silent — better a visible error than infinite Thinking. */
+/**
+ * Idle is "no bytes at all" — SSE comments/status from the gateway reset this.
+ * Do not treat a slow first llama3.2:3b token as a hang if keepalives are flowing.
+ */
 export const CHAT_STREAM_IDLE_MS = 25_000;
-export const CHAT_STREAM_TOTAL_MS = 75_000;
+/** Classifier + first token + full reply on llama3.2:3b, with a little slack. */
+export const CHAT_STREAM_TOTAL_MS = 120_000;
+const RECOVERY_ATTEMPTS = 3;
+const RECOVERY_WAIT_MS = 700;
+
+async function recoverCompletedReply(
+  sessionId: number,
+  userMessage: string,
+): Promise<string | null> {
+  for (let attempt = 0; attempt < RECOVERY_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, RECOVERY_WAIT_MS));
+    }
+    try {
+      const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}/messages`, {
+        credentials: "include",
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as { messages?: Array<{ role: string; content: string }> };
+      const recovered = latestAssistantAfterUser(data.messages, userMessage);
+      if (recovered) return recovered;
+    } catch {
+      // try again — persist can land a moment after the browser disconnects
+    }
+  }
+  return null;
+}
 
 function combineAbortSignals(signals: Array<AbortSignal | undefined>): AbortSignal {
   const active = signals.filter((s): s is AbortSignal => Boolean(s));
@@ -500,6 +540,14 @@ export async function streamChat(
     if (idleTimer) clearTimeout(idleTimer);
     if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
       if (timeoutAbort.signal.aborted && !signal?.aborted) {
+        if (sessionId) {
+          const recovered = await recoverCompletedReply(sessionId, message);
+          if (recovered) {
+            onToken(recovered);
+            onDone();
+            return;
+          }
+        }
         throw new Error("Homeward took too long to reply. Please try again.");
       }
       throw error;
@@ -511,12 +559,7 @@ export async function streamChat(
     clearTimeout(totalTimer);
     if (idleTimer) clearTimeout(idleTimer);
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    const detail = err.detail;
-    const failMessage =
-      typeof detail === "string"
-        ? detail
-        : "Stream failed";
-    throw new Error(failMessage);
+    throw new Error(parseStreamHttpError(err, res.statusText || CHAT_UNAVAILABLE_MESSAGE));
   }
 
   const reader = res.body?.getReader();
@@ -586,16 +629,40 @@ export async function streamChat(
         }
       }
     }
-    if (timeoutAbort.signal.aborted && !signal?.aborted) {
-      throw new Error("Homeward took too long to reply. Please try again.");
+    if (sawReply) {
+      finish();
+      return;
     }
-    if (!sawReply && !finished) {
+    if (finished) return;
+
+    const timedOut = timeoutAbort.signal.aborted && !signal?.aborted;
+    if (sessionId && (timedOut || !sawReply)) {
+      const recovered = await recoverCompletedReply(sessionId, message);
+      if (recovered) {
+        onToken(recovered);
+        finish();
+        return;
+      }
+    }
+    if (timedOut || !sawReply) {
       throw new Error("Homeward took too long to reply. Please try again.");
     }
     finish();
   } catch (error) {
     if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
       if (timeoutAbort.signal.aborted && !signal?.aborted) {
+        if (!sawReply && sessionId) {
+          const recovered = await recoverCompletedReply(sessionId, message);
+          if (recovered) {
+            onToken(recovered);
+            finish();
+            return;
+          }
+        }
+        if (sawReply) {
+          finish();
+          return;
+        }
         throw new Error("Homeward took too long to reply. Please try again.");
       }
       finish();

@@ -3,6 +3,7 @@
 import pytest
 from httpx import AsyncClient
 
+from homeward_gateway.api.routes import _latest_recovery_turn
 from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.chat.starters import get_conversation_starters
 from homeward_gateway.pipeline.pipeline import PipelineResult
@@ -199,6 +200,130 @@ class TestChatFeaturesAPI:
         assert any(m.get("content") for m in data["messages"])
 
     @pytest.mark.asyncio
+    async def test_session_messages_return_only_latest_turn(
+        self, authenticated_client: AsyncClient, monkeypatch
+    ):
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+        replies = iter(["First answer.", "Second answer."])
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content=next(replies))
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+
+        created = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        session_id = created.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={"message": "Hello stars", "child_id": child["id"], "session_id": session_id},
+        )
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={"message": "How hot are they?", "child_id": child["id"], "session_id": session_id},
+        )
+
+        recovered = await authenticated_client.get(f"/api/v1/chat/sessions/{session_id}/messages")
+        assert recovered.status_code == 200
+        messages = recovered.json()["messages"]
+        assert [m["role"] for m in messages] == ["user", "assistant"]
+        assert messages[0]["content"] == "How hot are they?"
+        assert messages[1]["content"] == "Second answer."
+
+    @pytest.mark.asyncio
+    async def test_session_messages_hide_prior_history_when_resume_disabled(
+        self, authenticated_client: AsyncClient, monkeypatch
+    ):
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Stars are giant glowing balls of gas.")
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+
+        first = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        old_id = first.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={"message": "Hello stars", "child_id": child["id"], "session_id": old_id},
+        )
+        second = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        current_id = second.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={"message": "Hi again", "child_id": child["id"], "session_id": current_id},
+        )
+
+        await authenticated_client.patch(
+            f"/api/v1/children/{child['id']}", json={"allow_resume": False}
+        )
+
+        prior = await authenticated_client.get(f"/api/v1/chat/sessions/{old_id}/messages")
+        assert prior.status_code == 404
+
+        current = await authenticated_client.get(f"/api/v1/chat/sessions/{current_id}/messages")
+        assert current.status_code == 200
+        messages = current.json()["messages"]
+        assert [m["content"] for m in messages] == [
+            "Hi again",
+            "Stars are giant glowing balls of gas.",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_session_messages_do_not_enumerate_older_than_resume_target(
+        self, authenticated_client: AsyncClient, monkeypatch
+    ):
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="A later reply.")
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+
+        first = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        oldest_id = first.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={"message": "Oldest", "child_id": child["id"], "session_id": oldest_id},
+        )
+        second = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        resume_id = second.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={"message": "Resume me", "child_id": child["id"], "session_id": resume_id},
+        )
+        empty = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        empty_id = empty.json()["session_id"]
+
+        oldest = await authenticated_client.get(f"/api/v1/chat/sessions/{oldest_id}/messages")
+        assert oldest.status_code == 404
+
+        resumed = await authenticated_client.get(f"/api/v1/chat/sessions/{resume_id}/messages")
+        assert resumed.status_code == 200
+        assert [m["content"] for m in resumed.json()["messages"]] == ["Resume me", "A later reply."]
+
+        current = await authenticated_client.get(f"/api/v1/chat/sessions/{empty_id}/messages")
+        assert current.status_code == 200
+        assert current.json()["messages"] == []
+
+    @pytest.mark.asyncio
     async def test_chat_blocked_during_quiet_hours(self, authenticated_client: AsyncClient, monkeypatch):
         child = authenticated_client.test_child  # type: ignore[attr-defined]
         monkeypatch.setattr(
@@ -217,3 +342,25 @@ class TestChatFeaturesAPI:
         resp = await authenticated_client.get("/api/v1/children/public")
         assert resp.status_code == 200
         assert "chat_available" in resp.json()[0]
+
+
+class TestLatestRecoveryTurn:
+    def test_keeps_last_user_assistant_pair(self):
+        messages = [
+            {"role": "user", "content": "a", "blocked": False},
+            {"role": "assistant", "content": "A", "blocked": False},
+            {"role": "user", "content": "b", "blocked": False},
+            {"role": "assistant", "content": "B", "blocked": False},
+        ]
+        assert _latest_recovery_turn(messages) == messages[-2:]
+
+    def test_keeps_pending_user_turn(self):
+        messages = [
+            {"role": "user", "content": "a", "blocked": False},
+            {"role": "assistant", "content": "A", "blocked": False},
+            {"role": "user", "content": "b", "blocked": False},
+        ]
+        assert _latest_recovery_turn(messages) == messages[-1:]
+
+    def test_empty(self):
+        assert _latest_recovery_turn([]) == []

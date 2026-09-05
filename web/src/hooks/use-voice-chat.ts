@@ -37,10 +37,17 @@ function measureRms(analyser: AnalyserNode, buffer: Uint8Array<ArrayBuffer>): nu
 export interface UseVoiceChatOptions {
   onTranscript: (text: string) => void;
   onListeningStart?: () => void;
-  onTranscriptEmpty?: () => void;
+  /** Return true if the empty result was handled (e.g. conversation retry). */
+  onTranscriptEmpty?: () => boolean | void;
+  onError?: () => void;
 }
 
-export function useVoiceChat({ onTranscript, onListeningStart, onTranscriptEmpty }: UseVoiceChatOptions) {
+export function useVoiceChat({
+  onTranscript,
+  onListeningStart,
+  onTranscriptEmpty,
+  onError,
+}: UseVoiceChatOptions) {
   const [listening, setListening] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
@@ -52,6 +59,7 @@ export function useVoiceChat({ onTranscript, onListeningStart, onTranscriptEmpty
   const onTranscriptRef = useRef(onTranscript);
   const onListeningStartRef = useRef(onListeningStart);
   const onTranscriptEmptyRef = useRef(onTranscriptEmpty);
+  const onErrorRef = useRef(onError);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -78,6 +86,10 @@ export function useVoiceChat({ onTranscript, onListeningStart, onTranscriptEmpty
   useEffect(() => {
     onTranscriptEmptyRef.current = onTranscriptEmpty;
   }, [onTranscriptEmpty]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   useEffect(() => {
     const hasRecorder = typeof MediaRecorder !== "undefined";
@@ -259,9 +271,11 @@ export function useVoiceChat({ onTranscript, onListeningStart, onTranscriptEmpty
   }, []);
 
   const startBargeInWatch = useCallback(
-    async (onSpeech: () => void) => {
+    async (onSpeech: () => void): Promise<boolean> => {
       stopBargeInWatch();
-      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) return;
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+        return false;
+      }
       bargeCallbackRef.current = onSpeech;
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -301,8 +315,10 @@ export function useVoiceChat({ onTranscript, onListeningStart, onTranscriptEmpty
           bargeFrameRef.current = requestAnimationFrame(tick);
         };
         bargeFrameRef.current = requestAnimationFrame(tick);
+        return true;
       } catch {
         stopBargeInWatch();
+        return false;
       }
     },
     [stopBargeInWatch],
@@ -320,6 +336,7 @@ export function useVoiceChat({ onTranscript, onListeningStart, onTranscriptEmpty
     const mimeType = pickMimeType();
     if (!mimeType) {
       setSpeechError("This browser cannot record audio. Try Chrome or Edge.");
+      onErrorRef.current?.();
       return;
     }
 
@@ -344,8 +361,10 @@ export function useVoiceChat({ onTranscript, onListeningStart, onTranscriptEmpty
 
         const blob = new Blob(recordedChunks, { type: mimeType });
         if (!blob.size) {
-          setSpeechError("I didn't hear anything — tap the mic and speak clearly.");
-          onTranscriptEmptyRef.current?.();
+          const handled = onTranscriptEmptyRef.current?.();
+          if (!handled) {
+            setSpeechError("I didn't hear anything — tap the mic and speak clearly.");
+          }
           return;
         }
 
@@ -356,13 +375,16 @@ export function useVoiceChat({ onTranscript, onListeningStart, onTranscriptEmpty
           if (result.text) {
             onTranscriptRef.current(result.text);
           } else {
-            setSpeechError("Could not make out any words. Try again.");
-            onTranscriptEmptyRef.current?.();
+            const handled = onTranscriptEmptyRef.current?.();
+            if (!handled) {
+              setSpeechError("Could not make out any words. Try again.");
+            }
           }
         } catch (e) {
           setSpeechError(
             e instanceof Error ? e.message : "Could not understand that. Try again or type instead.",
           );
+          onErrorRef.current?.();
         } finally {
           setTranscribing(false);
         }
@@ -386,6 +408,7 @@ export function useVoiceChat({ onTranscript, onListeningStart, onTranscriptEmpty
       cleanupStream();
       setListening(false);
       setSpeechError("Microphone access was blocked. Ask a parent to allow the mic in browser settings.");
+      onErrorRef.current?.();
     }
   }, [
     voiceSupported,
