@@ -127,7 +127,7 @@ async def stream_response(
     resolved_model = model or settings.ollama_model
 
     total = 0
-    first_token_timeout = getattr(settings, "llm_first_token_timeout", 25.0)
+    first_token_timeout = getattr(settings, "llm_first_token_timeout", 45.0)
     try:
         if _use_cloud():
             llm_model, api_key, api_base, llm_extra = resolve_litellm_target(model)
