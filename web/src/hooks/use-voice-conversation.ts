@@ -13,6 +13,7 @@ import {
 
 export interface UseVoiceConversationOptions {
   onTranscript: (text: string) => void;
+  voiceGender?: "female" | "male";
 }
 
 /**
@@ -20,11 +21,14 @@ export interface UseVoiceConversationOptions {
  * Homeward listens again. Barge-in (tap or speech) stops TTS and listens.
  * Does not start without a kid gesture.
  */
-export function useVoiceConversation({ onTranscript }: UseVoiceConversationOptions) {
+export function useVoiceConversation({ onTranscript, voiceGender }: UseVoiceConversationOptions) {
   const [loop, setLoop] = useState<VoiceConversationState>(INITIAL_VOICE_CONVERSATION);
+  const [bargeInWatchFailed, setBargeInWatchFailed] = useState(false);
   const loopRef = useRef(loop);
   const onTranscriptRef = useRef(onTranscript);
   const applyActionsRef = useRef<(actions: VoiceConversationAction[]) => void>(() => undefined);
+  const speakKeyRef = useRef("conversation-turn");
+  const listeningRef = useRef(false);
 
   useEffect(() => {
     loopRef.current = loop;
@@ -34,7 +38,6 @@ export function useVoiceConversation({ onTranscript }: UseVoiceConversationOptio
     onTranscriptRef.current = onTranscript;
   }, [onTranscript]);
 
-  const readAloud = useReadAloud();
   const {
     supported: readAloudSupported,
     error: readAloudError,
@@ -42,7 +45,7 @@ export function useVoiceConversation({ onTranscript }: UseVoiceConversationOptio
     speakMessage,
     stop: stopReadAloud,
     isSpeakingMessage,
-  } = readAloud;
+  } = useReadAloud(voiceGender);
 
   const dispatch = useCallback((event: VoiceConversationEvent) => {
     const next = reduceVoiceConversation(loopRef.current, event);
@@ -64,7 +67,14 @@ export function useVoiceConversation({ onTranscript }: UseVoiceConversationOptio
       if (loopRef.current.active) dispatch({ type: "LISTENING_STARTED" });
     },
     onTranscriptEmpty: () => {
-      if (loopRef.current.active) dispatch({ type: "TRANSCRIBE_EMPTY" });
+      if (loopRef.current.active) {
+        dispatch({ type: "TRANSCRIBE_EMPTY" });
+        return true;
+      }
+      return false;
+    },
+    onError: () => {
+      if (loopRef.current.active) dispatch({ type: "ERROR" });
     },
   });
 
@@ -73,12 +83,22 @@ export function useVoiceConversation({ onTranscript }: UseVoiceConversationOptio
     stopListening,
     startBargeInWatch,
     stopBargeInWatch,
+    listening,
   } = voice;
+
+  listeningRef.current = listening;
+
+  useEffect(() => {
+    if (loop.active && !listening && loop.phase === "listening") {
+      dispatch({ type: "LISTENING_STOPPED" });
+    }
+  }, [listening, loop.active, loop.phase, dispatch]);
 
   const applyActions = useCallback(
     (actions: VoiceConversationAction[]) => {
       for (const action of actions) {
         if (action.type === "start_listening") {
+          setBargeInWatchFailed(false);
           stopBargeInWatch();
           void startListening();
         } else if (action.type === "stop_listening") {
@@ -88,13 +108,16 @@ export function useVoiceConversation({ onTranscript }: UseVoiceConversationOptio
           stopBargeInWatch();
           stopReadAloud();
         } else if (action.type === "speak") {
-          speakMessage("conversation-turn", action.text, {
+          speakMessage(speakKeyRef.current, action.text, {
             onStart: () => {
               dispatch({ type: "SPEAK_STARTED" });
-              void startBargeInWatch(() => dispatch({ type: "BARGE_IN" }));
+              void startBargeInWatch(() => dispatch({ type: "BARGE_IN" })).then((ok) => {
+                setBargeInWatchFailed(!ok);
+              });
             },
             onEnd: () => {
               stopBargeInWatch();
+              setBargeInWatchFailed(false);
               dispatch({ type: "SPEAK_ENDED" });
             },
           });
@@ -112,23 +135,32 @@ export function useVoiceConversation({ onTranscript }: UseVoiceConversationOptio
 
   const startConversation = useCallback(() => {
     dispatch({ type: "START" });
+    if (listeningRef.current) {
+      dispatch({ type: "LISTENING_STARTED" });
+    }
   }, [dispatch]);
 
   const stopConversation = useCallback(() => {
+    setBargeInWatchFailed(false);
     dispatch({ type: "STOP" });
   }, [dispatch]);
 
   const toggleConversation = useCallback(() => {
     if (loopRef.current.active) {
+      setBargeInWatchFailed(false);
       dispatch({ type: "STOP" });
     } else {
       dispatch({ type: "START" });
+      if (listeningRef.current) {
+        dispatch({ type: "LISTENING_STARTED" });
+      }
     }
   }, [dispatch]);
 
   const notifyAssistantDone = useCallback(
-    (text: string) => {
+    (text: string, messageKey = "conversation-turn") => {
       if (!loopRef.current.active) return;
+      speakKeyRef.current = messageKey;
       dispatch({ type: "ASSISTANT_DONE", text });
     },
     [dispatch],
@@ -141,6 +173,7 @@ export function useVoiceConversation({ onTranscript }: UseVoiceConversationOptio
   return {
     conversationActive: loop.active,
     conversationPhase: loop.phase,
+    bargeInWatchFailed,
     startConversation,
     stopConversation,
     toggleConversation,

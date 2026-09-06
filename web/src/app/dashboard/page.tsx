@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { chatPathForChild } from "@/lib/slug";
 import { KidChatLink } from "@/components/kid-chat-link";
+import { BlockedAttemptCard } from "@/components/blocked-attempt-card";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   api,
@@ -704,7 +705,8 @@ function DashboardContent() {
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-bold">Blocked Attempts</CardTitle>
               <CardDescription>
-                Messages stopped by Homeward&apos;s multi-stage safety filters before reaching the AI model.
+                Policy blocks, classifier timeouts, and AI model errors are labeled separately so
+                a safety-check outage is not mistaken for a policy violation.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -723,34 +725,11 @@ function DashboardContent() {
               ) : (
                 <div className="space-y-3">
                   {blocked.map((attempt) => (
-                    <div
+                    <BlockedAttemptCard
                       key={attempt.id}
-                      className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 space-y-2 shadow-2xs"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-foreground text-sm">
-                            {childName(attempt.child_id)}
-                          </span>
-                          <span className="rounded-full bg-destructive/15 px-2 py-0.5 text-[11px] font-semibold text-destructive uppercase">
-                            {attempt.stage || "Filter"}
-                          </span>
-                        </div>
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(attempt.created_at).toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="rounded-xl bg-background/80 p-3 border border-destructive/20 text-sm">
-                        <p className="font-mono text-xs text-foreground/90">
-                          &ldquo;{attempt.content}&rdquo;
-                        </p>
-                      </div>
-                      {attempt.reason && (
-                        <p className="text-xs text-destructive font-medium">
-                          Safety flag: {attempt.reason}
-                        </p>
-                      )}
-                    </div>
+                      attempt={attempt}
+                      childName={childName(attempt.child_id)}
+                    />
                   ))}
                 </div>
               )}

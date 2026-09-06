@@ -113,6 +113,7 @@ class ChatSession(Base):
     preview: Mapped[str | None] = mapped_column(String(200), nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     context_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quick_chat: Mapped[bool] = mapped_column(Boolean, default=False)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -261,6 +262,8 @@ def _migrate_chat_session_columns(connection) -> None:
         connection.execute(sa.text("ALTER TABLE chat_sessions ADD COLUMN summary TEXT"))
     if "context_state" not in columns:
         connection.execute(sa.text("ALTER TABLE chat_sessions ADD COLUMN context_state TEXT"))
+    if "quick_chat" not in columns:
+        connection.execute(sa.text("ALTER TABLE chat_sessions ADD COLUMN quick_chat BOOLEAN DEFAULT 0"))
 
 
 def _migrate_session_columns(connection) -> None:

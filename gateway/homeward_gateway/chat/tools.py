@@ -33,9 +33,20 @@ _OP_SYMBOLS = {
     ast.Pow: "^",
 }
 
-_TIMER_RE = re.compile(
+_TIMER_AFTER_RE = re.compile(
     r"\b(?:set\s+(?:a\s+)?timer|timer|remind\s+me|countdown)\b.*?\b(\d+(?:\.\d+)?)\s*"
     r"(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b",
+    re.IGNORECASE,
+)
+_TIMER_BEFORE_RE = re.compile(
+    r"\b(\d+(?:\.\d+)?)\s*[- ]?(seconds?|secs?|minutes?|mins?|hours?|hrs?)\s+"
+    r"(?:long\s+)?(?:timer|countdown|remind(?:er)?)\b",
+    re.IGNORECASE,
+)
+_TIMER_SET_PREFIX_RE = re.compile(
+    r"\b(?:set|start|begin|make)\s+(?:me\s+)?(?:a\s+|an\s+)?"
+    r"(\d+(?:\.\d+)?)\s*[- ]?(seconds?|secs?|minutes?|mins?|hours?|hrs?)\s+"
+    r"(?:timer|countdown)\b",
     re.IGNORECASE,
 )
 _TIMER_IN_RE = re.compile(
@@ -65,10 +76,50 @@ _PRACTICE_RE = re.compile(
     re.IGNORECASE,
 )
 _HOWTO_RE = re.compile(
-    r"\b(?:how (?:do i|to) (?:make|bake|cook|do|build|tie|draw|clean)|"
-    r"recipe for|step[- ]by[- ]step)\b",
+    r"\b(?:"
+    r"how\s+(?:do\s+i|do\s+you|can\s+i|can\s+you|to|should\s+i)\s+\w+"
+    r"|show\s+me\s+how"
+    r"|teach\s+me\s+how"
+    r"|instructions\s+for"
+    r"|recipe\s+for"
+    r"|step[- ]by[- ]step"
+    r"|howto\b"
+    r")",
     re.IGNORECASE,
 )
+_ASK_PARENT_RE = re.compile(
+    r"\b(?:"
+    r"ask\s+(?:my\s+|a\s+)?(?:mom|dad|mummy|mommy|papa|mama|mother|father|parent|parents|grown-?up|adult)"
+    r"|can\s+you\s+ask\s+(?:my\s+)?(?:mom|dad|parent|parents|grown-?up)"
+    r"|i\s+need\s+(?:a\s+|my\s+)?(?:grown-?up|parent|adult|mom|dad)"
+    r"|ask_parent"
+    r")\b",
+    re.IGNORECASE,
+)
+_HOWTO_TOPIC_RE = re.compile(
+    r"(?:"
+    r"how\s+(?:do\s+i|do\s+you|can\s+i|can\s+you|to|should\s+i)\s+(.+)"
+    r"|show\s+me\s+how(?:\s+to)?\s+(.+)"
+    r"|teach\s+me\s+how(?:\s+to)?\s+(.+)"
+    r"|instructions\s+for\s+(.+)"
+    r"|recipe\s+for\s+(.+)"
+    r"|step[- ]by[- ]step(?:\s+(?:for|on|to))?\s+(.+)"
+    r")",
+    re.IGNORECASE,
+)
+_HOWTO_PROSE_STEP_RE = re.compile(r"^\s*(?:\d+[\.)]\s+|[-*•]\s+)(.+)$")
+_HOWTO_HEADING_RE = re.compile(r"^\s*#{1,3}\s+(.+)$")
+_FENCE_OPEN_RE = re.compile(rf"```{TOOL_FENCE}\s*", re.IGNORECASE)
+_STORY_PAGES_RE = re.compile(
+    r"\b(\d+|one|two|three|four|five|six)\s*-?\s*pages?\b",
+    re.IGNORECASE,
+)
+_QUIZ_TOPIC_RE = re.compile(
+    r"(?:quiz|test)\s+me\s+(?:about|on|over)\s+(.+)",
+    re.IGNORECASE,
+)
+_WORD_TO_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
+_REFERENTIAL_QUIZ_TOPICS = {"that", "this", "it", "them", "those", "these"}
 _CONVERT_HOW_MANY_RE = re.compile(
     r"\bhow many\s+([a-zA-Z]+)\s+(?:are\s+)?in\s+(?:an?\s+)?(?:(\d+(?:\.\d+)?)\s+)?([a-zA-Z]+)\b",
     re.IGNORECASE,
@@ -276,7 +327,12 @@ def evaluate_math(expression: str) -> dict[str, Any]:
 
 
 def parse_timer_seconds(text: str) -> int | None:
-    match = _TIMER_RE.search(text) or _TIMER_IN_RE.search(text)
+    match = (
+        _TIMER_SET_PREFIX_RE.search(text)
+        or _TIMER_BEFORE_RE.search(text)
+        or _TIMER_AFTER_RE.search(text)
+        or _TIMER_IN_RE.search(text)
+    )
     if not match:
         return None
     amount = float(match.group(1))
@@ -375,7 +431,99 @@ def detect_intents(message: str) -> list[str]:
         intents.append("practice")
     if _HOWTO_RE.search(message):
         intents.append("howto")
+    if _ASK_PARENT_RE.search(message):
+        intents.append("ask_parent")
     return intents
+
+
+def requested_story_pages(message: str) -> int | None:
+    match = _STORY_PAGES_RE.search(message or "")
+    if not match:
+        return None
+    raw = match.group(1).lower()
+    count = int(raw) if raw.isdigit() else _WORD_TO_NUM.get(raw)
+    if count is None or count < 1 or count > 8:
+        return None
+    return count
+
+
+def quiz_topic(message: str) -> str | None:
+    match = _QUIZ_TOPIC_RE.search((message or "").strip().rstrip(".!?"))
+    if not match:
+        return None
+    topic = re.sub(r"\s+", " ", match.group(1)).strip().rstrip(".!?")
+    if not topic or topic.lower() in _REFERENTIAL_QUIZ_TOPICS:
+        return None
+    return topic
+
+
+def is_self_contained_card_request(message: str) -> bool:
+    """True when this turn already names a card — do not reuse a prior Topic."""
+    intents = detect_intents(message)
+    if not intents:
+        return False
+    if intents == ["quiz"] and quiz_topic(message) is None:
+        return False
+    return True
+
+
+# Local cards that already hold the interaction — model prose must not continue
+# the previous turn (QA: timer after an animal quiz still talked about giraffes).
+_LOCAL_CHEER_CARD_TYPES = frozenset({"timer", "quiz", "practice", "ask_parent"})
+_LOCAL_CARD_CHEER = {
+    "timer": "All set! Watch the timer on the card.",
+    "quiz": "Quiz time! Use the card to pick your answers.",
+    "practice": "Let's practice — the card has your first prompt.",
+    "ask_parent": "A grown-up should help with this one.",
+}
+
+
+def messages_for_llm(
+    history: list[dict] | None,
+    user_message: str,
+    user_turn: str,
+) -> list[dict]:
+    """History for the chat model. Card turns omit prior turns so old quiz/story
+    copy cannot steer the reply. Regular questions keep full history."""
+    prior: list[dict] = []
+    if not is_self_contained_card_request(user_message):
+        prior = list(history or [])
+    return [*prior, {"role": "user", "content": user_turn}]
+
+
+def local_card_cheer(message: str, cards: list[ToolCard] | None = None) -> str | None:
+    """Deterministic one-liner when a local timer/quiz/practice/ask_parent card
+    already answers the turn. None means the model still needs to speak."""
+    local = cards if cards is not None else run_local_tools(message)
+    types = {card.type for card in local}
+    cheer_types = types & _LOCAL_CHEER_CARD_TYPES
+    if not cheer_types:
+        return None
+    if types - _LOCAL_CHEER_CARD_TYPES:
+        return None
+    leftover = set(detect_intents(message)) - types - {"lookup"}
+    if leftover:
+        return None
+    for card in local:
+        if card.type in _LOCAL_CARD_CHEER:
+            return _LOCAL_CARD_CHEER[card.type]
+    return None
+
+
+def allowed_card_types(intents: list[str]) -> set[str] | None:
+    """Card types this turn may emit. None means the model may choose any type."""
+    if not intents:
+        return None
+    return set(intents) | {"lookup"}
+
+
+def card_route_for_message(message: str) -> dict[str, Any]:
+    intents = detect_intents(message)
+    allowed = allowed_card_types(intents)
+    return {
+        "allow": sorted(allowed) if allowed is not None else None,
+        "story_pages": requested_story_pages(message) if "story" in intents else None,
+    }
 
 
 def _lookup_unit(name: str) -> tuple[str, float] | None:
@@ -454,18 +602,397 @@ def convert_units(text: str) -> dict[str, Any] | None:
 
 
 def ask_parent_card(reason: str | None = None) -> ToolCard:
+    if reason == "child_request":
+        message = (
+            "A parent or trusted grown-up should help with this one. "
+            "You can ask them in person, or they can check the parent dashboard."
+        )
+    else:
+        message = (
+            "This one needs a parent or trusted grown-up. "
+            "They can help you from the parent dashboard — or pick a safer topic "
+            "like animals, space, or a hobby you enjoy!"
+        )
     return ToolCard(
         "ask_parent",
         {
             "title": "Ask a grown-up",
-            "message": (
-                "This one needs a parent or trusted grown-up. "
-                "They can help you from the parent dashboard — or pick a safer topic "
-                "like animals, space, or a hobby you enjoy!"
-            ),
+            "message": message,
             "reason": reason or "safety",
         },
     )
+
+
+_QUIZ_BANK: dict[str, dict[str, Any]] = {
+    "animals": {
+        "title": "Animal Quiz Time!",
+        "questions": [
+            {
+                "q": "Which animal is a mammal?",
+                "choices": ["Goldfish", "Dog", "Robin", "Frog"],
+                "answer": 1,
+                "explain": "Dogs are mammals — they have fur and feed their babies milk.",
+            },
+            {
+                "q": "What do bees make?",
+                "choices": ["Milk", "Silk", "Honey", "Butter"],
+                "answer": 2,
+                "explain": "Bees collect nectar and turn it into honey.",
+            },
+            {
+                "q": "Which animal lives in the ocean?",
+                "choices": ["Lion", "Dolphin", "Elephant", "Robin"],
+                "answer": 1,
+                "explain": "Dolphins live in the ocean and swim in groups called pods.",
+            },
+        ],
+    },
+    "space": {
+        "title": "Space Quiz",
+        "questions": [
+            {
+                "q": "What does Earth orbit?",
+                "choices": ["The Moon", "The Sun", "Mars", "A comet"],
+                "answer": 1,
+                "explain": "Earth travels around the Sun once each year.",
+            },
+            {
+                "q": "Which planet is known as the Red Planet?",
+                "choices": ["Venus", "Jupiter", "Mars", "Neptune"],
+                "answer": 2,
+                "explain": "Mars looks reddish because of rusty iron in its soil.",
+            },
+            {
+                "q": "What lights up the night sky besides stars?",
+                "choices": ["The Moon", "The ocean", "Clouds only", "Rainbows"],
+                "answer": 0,
+                "explain": "The Moon reflects sunlight and is often the brightest thing at night.",
+            },
+        ],
+    },
+    "science": {
+        "title": "Science Quiz",
+        "questions": [
+            {
+                "q": "What do plants need to make food?",
+                "choices": ["Only rocks", "Sunlight, water, and air", "Only sugar", "Only soil"],
+                "answer": 1,
+                "explain": "Plants use sunlight, water, and air to make their own food.",
+            },
+            {
+                "q": "Water frozen solid is called…",
+                "choices": ["Steam", "Ice", "Rain", "Fog"],
+                "answer": 1,
+                "explain": "When water gets cold enough, it freezes into ice.",
+            },
+            {
+                "q": "Which of these is a source of light?",
+                "choices": ["A shadow", "The Sun", "A closed box", "A whisper"],
+                "answer": 1,
+                "explain": "The Sun is our main source of natural light.",
+            },
+        ],
+    },
+}
+_QUIZ_ALIASES = {
+    "animal": "animals",
+    "pets": "animals",
+    "zoo": "animals",
+    "planets": "space",
+    "stars": "space",
+    "moon": "space",
+    "sun": "space",
+    "astronomy": "space",
+    "earth": "science",
+    "nature": "science",
+}
+
+
+def _quiz_bank_key(topic: str) -> str | None:
+    words = re.findall(r"[a-z0-9]+", topic.lower())
+    if not words:
+        return None
+    for candidate in (topic.lower().strip(), words[0], " ".join(words)):
+        if candidate in _QUIZ_BANK:
+            return candidate
+        alias = _QUIZ_ALIASES.get(candidate)
+        if alias:
+            return alias
+    return None
+
+
+def local_quiz_card(message: str) -> ToolCard | None:
+    if "quiz" not in detect_intents(message):
+        return None
+    topic = quiz_topic(message)
+    if not topic:
+        return None
+    key = _quiz_bank_key(topic)
+    if not key:
+        return None
+    data = _QUIZ_BANK[key]
+    return ToolCard("quiz", {"title": data["title"], "questions": data["questions"]})
+
+
+def local_practice_card(message: str) -> ToolCard | None:
+    if "practice" not in detect_intents(message):
+        return None
+    text = (message or "").lower()
+    if "spell" in text:
+        return ToolCard(
+            "practice",
+            {
+                "title": "Spelling practice",
+                "kind": "spelling",
+                "items": [
+                    {"prompt": "The animal that says meow", "answer": "cat"},
+                    {"prompt": "The color of the sky on a clear day", "answer": "blue"},
+                    {"prompt": "A friend you like a lot", "answer": "pal"},
+                    {"prompt": "Something you read", "answer": "book"},
+                ],
+            },
+        )
+    return ToolCard(
+        "practice",
+        {
+            "title": "Times tables",
+            "kind": "times",
+            "items": [
+                {"prompt": "2 × 3", "answer": "6"},
+                {"prompt": "4 × 5", "answer": "20"},
+                {"prompt": "6 × 6", "answer": "36"},
+                {"prompt": "7 × 2", "answer": "14"},
+                {"prompt": "3 × 9", "answer": "27"},
+            ],
+        },
+    )
+
+
+_HOWTO_BANK: dict[str, dict[str, Any]] = {
+    "pancakes": {
+        "title": "Make pancakes",
+        "steps": [
+            "Ask a grown-up to help with the stove.",
+            "In a bowl, mix 1 cup flour, 1 cup milk, 1 egg, and 1 spoon of sugar.",
+            "Heat a lightly oiled pan on medium.",
+            "Pour a small scoop of batter for each pancake.",
+            "Flip when bubbles form on top, then cook the other side.",
+            "Serve warm. Clean up the bowl and pan together.",
+        ],
+    },
+    "slime": {
+        "title": "Make slime",
+        "steps": [
+            "Ask a grown-up before you start.",
+            "In a bowl, mix 1/2 cup white glue with 1/2 cup water.",
+            "Add a few drops of food coloring if you want.",
+            "Slowly stir in 1/4 cup liquid starch, or contact-lens solution with a pinch of baking soda.",
+            "Knead until it feels stretchy, not sticky.",
+            "Store it in a closed container. Wash your hands.",
+        ],
+    },
+    "shoes": {
+        "title": "Tie your shoes",
+        "steps": [
+            "Cross the laces to make an X, then pull one under and tight.",
+            "Make a loop with one lace (a bunny ear).",
+            "Wrap the other lace around that loop.",
+            "Push it through the hole to make a second loop.",
+            "Pull both loops tight.",
+            "Check that the knot holds, then try the other shoe.",
+        ],
+    },
+    "airplane": {
+        "title": "Fold a paper airplane",
+        "steps": [
+            "Fold a sheet of paper in half the long way, then unfold it so you have a crease.",
+            "Fold the top two corners down to the center crease.",
+            "Fold the new top edges in to the center crease again.",
+            "Fold the plane in half along the center crease.",
+            "Fold each wing down so the edges line up.",
+            "Hold it under the wings and give it a gentle toss.",
+        ],
+    },
+    "sandwich": {
+        "title": "Make a sandwich",
+        "steps": [
+            "Wash your hands.",
+            "Set out two slices of bread.",
+            "Add a filling you like, such as cheese or peanut butter (if you are not allergic).",
+            "Put the second slice on top.",
+            "Ask a grown-up before using a knife. Cut if you want.",
+            "Eat it, then put things away.",
+        ],
+    },
+    "teeth": {
+        "title": "Brush your teeth",
+        "steps": [
+            "Put a pea-sized dab of toothpaste on your toothbrush.",
+            "Brush the fronts, backs, and tops of your teeth for two minutes.",
+            "Brush your tongue gently.",
+            "Spit into the sink. Do not swallow the toothpaste.",
+            "Rinse your brush and put it away.",
+        ],
+    },
+}
+_GENERIC_HOWTO_STEPS = [
+    "Ask a grown-up to help if you need it.",
+    "Gather what you need first.",
+    "Do one step at a time, slowly.",
+    "Check your work, then clean up.",
+]
+
+
+def howto_topic(message: str) -> str | None:
+    match = _HOWTO_TOPIC_RE.search((message or "").strip().rstrip(".!?"))
+    if not match:
+        return None
+    topic = next((group for group in match.groups() if group), None)
+    if not topic:
+        return None
+    topic = re.sub(r"\s+", " ", topic).strip().rstrip(".!?")
+    return topic or None
+
+
+def howto_title(message: str) -> str:
+    topic = howto_topic(message)
+    if not topic:
+        return "How to"
+    return topic[:1].upper() + topic[1:]
+
+
+def _howto_bank_key(topic: str) -> str | None:
+    text = topic.lower()
+    if "pancake" in text:
+        return "pancakes"
+    if "slime" in text:
+        return "slime"
+    if "shoe" in text or "lace" in text:
+        return "shoes"
+    if "airplane" in text or "paper plane" in text:
+        return "airplane"
+    if "sandwich" in text:
+        return "sandwich"
+    if "teeth" in text or "toothbrush" in text:
+        return "teeth"
+    return None
+
+
+def _howto_step_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        text = re.sub(r"^\s*\d+[\.)]\s*", "", value).strip()
+        return text or None
+    if isinstance(value, dict):
+        for key in ("text", "step", "instruction", "title", "label"):
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+    return None
+
+
+def normalize_howto_data(data: dict[str, Any] | None) -> dict[str, Any] | None:
+    payload = data or {}
+    title = payload.get("title") or payload.get("name") or "How to"
+    if not isinstance(title, str) or not title.strip():
+        title = "How to"
+    raw = payload.get("steps", payload.get("instructions"))
+    steps: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            text = _howto_step_text(item)
+            if text:
+                steps.append(text)
+    elif isinstance(raw, str):
+        for line in raw.splitlines():
+            text = _howto_step_text(line)
+            if text:
+                steps.append(text)
+    if not steps:
+        return None
+    return {"title": title.strip(), "steps": steps}
+
+
+def local_howto_card(message: str) -> ToolCard | None:
+    """Immediate howto card so the kid UI does not wait on a model fence."""
+    if "howto" not in detect_intents(message):
+        return None
+    topic = howto_topic(message) or message
+    key = _howto_bank_key(topic)
+    if key:
+        data = _HOWTO_BANK[key]
+        return ToolCard("howto", {"title": data["title"], "steps": list(data["steps"])})
+    return ToolCard("howto", {"title": howto_title(message), "steps": list(_GENERIC_HOWTO_STEPS)})
+
+
+def howto_from_prose(text: str, *, title: str | None = None) -> ToolCard | None:
+    """Turn a numbered/bulleted recipe into a howto card when the model skipped the fence."""
+    steps: list[str] = []
+    found_title = title
+    for line in (text or "").splitlines():
+        heading = _HOWTO_HEADING_RE.match(line)
+        if heading and not found_title:
+            found_title = heading.group(1).strip()
+            continue
+        match = _HOWTO_PROSE_STEP_RE.match(line)
+        if match:
+            cleaned = re.sub(r"\*\*", "", match.group(1)).strip()
+            if cleaned:
+                steps.append(cleaned)
+    if len(steps) < 2:
+        return None
+    return ToolCard("howto", {"title": (found_title or "How to").strip(), "steps": steps})
+
+
+def _extract_balanced_json(text: str, start: int) -> tuple[str, int] | None:
+    if start < 0 or start >= len(text) or text[start] != "{":
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if char == "\\":
+                escape = True
+                continue
+            if char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1], index + 1
+    return None
+
+
+def _iter_fenced_json(text: str) -> list[tuple[int, int, dict[str, Any]]]:
+    found: list[tuple[int, int, dict[str, Any]]] = []
+    for match in _FENCE_OPEN_RE.finditer(text):
+        brace = text.find("{", match.end())
+        if brace < 0:
+            continue
+        extracted = _extract_balanced_json(text, brace)
+        if not extracted:
+            continue
+        raw, json_end = extracted
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        close = text.find("```", json_end)
+        end = close + 3 if close >= 0 else json_end
+        found.append((match.start(), end, payload))
+    return found
 
 
 def _extract_math_expression(message: str) -> str | None:
@@ -498,67 +1025,192 @@ def run_local_tools(message: str, *, timezone: str | None = None) -> list[ToolCa
     converted = convert_units(message)
     if converted:
         cards.append(ToolCard("convert", converted))
+    if _ASK_PARENT_RE.search(message or ""):
+        cards.append(ask_parent_card("child_request"))
+    quiz = local_quiz_card(message)
+    if quiz:
+        cards.append(quiz)
+    practice = local_practice_card(message)
+    if practice:
+        cards.append(practice)
+    howto = local_howto_card(message)
+    if howto:
+        cards.append(howto)
     return cards
+
+
+def _card_from_payload(payload: dict[str, Any]) -> ToolCard | None:
+    kind = payload.get("type")
+    if kind not in MODEL_TOOL_TYPES:
+        return None
+    data = {key: value for key, value in payload.items() if key != "type"}
+    if kind == "howto":
+        normalized = normalize_howto_data(data)
+        if not normalized:
+            return None
+        return ToolCard("howto", normalized)
+    return ToolCard(kind, data)
 
 
 def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
     cards: list[ToolCard] = []
-    for match in _FENCE_RE.finditer(text):
-        try:
-            payload = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            continue
-        kind = payload.get("type")
-        if kind in MODEL_TOOL_TYPES:
-            cards.append(ToolCard(kind, {k: v for k, v in payload.items() if k != "type"}))
-    cleaned = _FENCE_RE.sub("", text)
+    cleaned = text or ""
+    for start, end, payload in reversed(_iter_fenced_json(cleaned)):
+        card = _card_from_payload(payload)
+        if card:
+            cards.append(card)
+        cleaned = cleaned[:start] + cleaned[end:]
+    cards.reverse()
+    if not cards:
+        for match in _FENCE_RE.finditer(text or ""):
+            try:
+                payload = json.loads(match.group(1))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                card = _card_from_payload(payload)
+                if card:
+                    cards.append(card)
+        cleaned = _FENCE_RE.sub("", text or "")
+    cleaned = re.sub(r"```homeward[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     return cleaned, cards
 
 
-def tool_prompt_hint(intents: list[str]) -> str:
+_MODEL_CARD_SHAPES = {
+    "define": "define {word, meaning, example}",
+    "quiz": "quiz {title, questions:[{q, choices, answer, explain}]}",
+    "facts": "facts {topic, facts}",
+    "story": "story {title, pages:[{text, choices?:[{label, message}]}]}",
+    "riddle": "riddle {riddle, answer, hint?}",
+    "practice": "practice {title, kind, items:[{prompt, answer}]}",
+    "howto": "howto {title, steps}",
+    "convert": "convert {from_amount, from_unit, to_unit, result}",
+    "ask_parent": "ask_parent {title, message}",
+}
+
+
+def apply_card_routing(message: str, cards: list[ToolCard]) -> list[ToolCard]:
+    """Drop cards that do not match this turn's intent and trim extra story pages."""
+    intents = detect_intents(message)
+    allowed = allowed_card_types(intents)
+    pages = requested_story_pages(message) if "story" in intents else None
+    routed: list[ToolCard] = []
+    for card in cards:
+        if allowed is not None and card.type not in allowed:
+            continue
+        if card.type == "story" and pages:
+            raw_pages = card.data.get("pages")
+            if isinstance(raw_pages, list) and len(raw_pages) > pages:
+                card = ToolCard("story", {**card.data, "pages": raw_pages[:pages]})
+        routed.append(card)
+    return routed
+
+
+def tool_prompt_hint(
+    intents: list[str],
+    *,
+    local_types: set[str] | None = None,
+    story_pages: int | None = None,
+) -> str:
     if not intents:
         return ""
+    already = local_types or set()
+    allowed = [intent for intent in intents if intent != "lookup"]
     parts = [
-        "When it fits the child's request, also emit ONE fenced JSON card using this exact fence:",
-        f"```{TOOL_FENCE}",
-        '{"type":"..."}',
-        "```",
-        "Allowed types: define {word, meaning, example}, quiz {title, questions:[{q, choices, answer, explain}]}, "
-        "facts {topic, facts}, story {title, pages:[{text, choices?:[{label, message}]}]}, "
-        "riddle {riddle, answer, hint?}, practice {title, kind, items:[{prompt, answer}]}, "
-        "howto {title, steps}, convert {from_amount, from_unit, to_unit, result}, ask_parent {title, message}.",
-        "Keep the spoken reply short. Put details in the JSON card. No HTML.",
+        "The child's latest message already selected the interactive card. "
+        "Answer that request only — do not continue an earlier story, quiz, or topic. "
+        f"Do not emit any ```{TOOL_FENCE} card whose type is not: {', '.join(allowed)}.",
     ]
-    if "define" in intents:
+    need_model_fence = False
+    if "define" in intents and "define" not in already:
+        need_model_fence = True
         parts.append("This is a definition request — include a define card.")
     if "quiz" in intents:
-        parts.append("This is a quiz request — include 3–5 multiple-choice questions. answer is the 0-based index.")
-    if "facts" in intents:
+        if "quiz" in already:
+            parts.append(
+                "A quiz card will already appear. Cheer them on in one short sentence "
+                "about this quiz only. Do not continue an earlier topic. Do not emit another quiz."
+            )
+        else:
+            need_model_fence = True
+            parts.append(
+                "This is a quiz request — include 3–5 multiple-choice questions. answer is the 0-based index."
+            )
+    if "facts" in intents and "facts" not in already:
+        need_model_fence = True
         parts.append("This is a facts request — include 3 short kid-safe facts.")
     if "math" in intents:
         parts.append("A calculator card will already show the number. Explain the steps in plain words.")
     if "timer" in intents:
-        parts.append("A timer card will appear. Cheer them on in one short sentence.")
+        parts.append(
+            "A timer card will already appear. Cheer them on in one short sentence "
+            "about the timer only. Do not mention any earlier quiz, story, or topic. "
+            "Do not emit a quiz or story."
+        )
     if "clock" in intents:
         parts.append(
             "A clock card shows the exact current local time and date. "
             "Say that time in your reply. Never use placeholders."
         )
     if "story" in intents:
+        need_model_fence = True
+        page_rule = (
+            f"Use exactly {story_pages} page{'s' if story_pages != 1 else ''} — no more."
+            if story_pages
+            else "Keep the story to 2 short pages unless they asked for a different length."
+        )
         parts.append(
             "This is a story request — include a story card with a title and short pages. "
+            f"{page_rule} "
             "Each page has text and optional choices [{label, message}]. Keep pages kid-safe."
         )
-    if "riddle" in intents:
+    if "riddle" in intents and "riddle" not in already:
+        need_model_fence = True
         parts.append("This is a riddle request — include a riddle card with riddle, answer, and optional hint.")
     if "practice" in intents:
-        parts.append(
-            "This is a practice request — include a practice card. "
-            "kind is spelling or times. items are [{prompt, answer}]."
-        )
+        if "practice" in already:
+            parts.append(
+                "A practice card will already appear. Cheer them on in one short sentence "
+                "about this practice only. Do not continue an earlier topic. Do not emit another card."
+            )
+        else:
+            need_model_fence = True
+            parts.append(
+                "This is a practice request — include a practice card. "
+                "kind is spelling or times. items are [{prompt, answer}]."
+            )
     if "howto" in intents:
-        parts.append("This is a how-to or recipe — include a howto card with a title and numbered steps.")
+        if "howto" in already:
+            parts.append(
+                "A how-to card will already appear. Cheer them on in one short sentence. "
+                "Do not write a numbered recipe in prose. Do not emit another card."
+            )
+        else:
+            need_model_fence = True
+            parts.append(
+                "This is a how-to or recipe — include a howto card with a title and numbered steps. "
+                "Do not tell a story."
+            )
     if "convert" in intents:
         parts.append("A conversion card will already show the exact numbers. Explain the units in one short sentence.")
+    if "ask_parent" in intents:
+        parts.append(
+            "An ask-a-grown-up card will already appear. "
+            "One short sentence telling them to check with a parent. "
+            "Do not continue an earlier topic. Do not tell a story."
+        )
+    if need_model_fence:
+        shapes = [_MODEL_CARD_SHAPES[name] for name in allowed if name in _MODEL_CARD_SHAPES]
+        parts.append(
+            "Emit ONE fenced JSON card FIRST, before any spoken words, using this exact fence:"
+        )
+        parts.append(f"```{TOOL_FENCE}")
+        parts.append('{"type":"..."}')
+        parts.append("```")
+        if shapes:
+            parts.append("Allowed shape: " + "; ".join(shapes) + ".")
+        parts.append("Keep the spoken reply short. Put details in the JSON card. No HTML.")
+    else:
+        parts.append(f"Do not emit a ```{TOOL_FENCE} fence at all.")
     return " ".join(parts)

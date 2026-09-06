@@ -63,21 +63,162 @@ const TOOL_TYPES = new Set([
   "ask_parent",
   "howto",
 ]);
-const FENCE_RE = /```homeward\s*(\{[\s\S]*?\})\s*```/gi;
+const FENCE_OPEN_RE = /```homeward\s*/gi;
 const INCOMPLETE_FENCE_RE = /```homeward[\s\S]*$/i;
+const HOWTO_STEP_RE = /^\s*(?:\d+[.)]\s+|[-*•]\s+)(.+)$/;
+const HOWTO_HEADING_RE = /^\s*#{1,3}\s+(.+)$/;
+
+function howtoStepText(value: unknown): string | null {
+  if (typeof value === "string") {
+    const text = value.replace(/^\s*\d+[.)]\s*/, "").trim();
+    return text || null;
+  }
+  if (value && typeof value === "object") {
+    for (const key of ["text", "step", "instruction", "title", "label"] as const) {
+      const raw = (value as Record<string, unknown>)[key];
+      if (typeof raw === "string" && raw.trim()) return raw.trim();
+    }
+  }
+  return null;
+}
+
+export function normalizeHowToTool(value: unknown): HowToTool | null {
+  if (!value || typeof value !== "object") return null;
+  const obj = value as { type?: unknown; title?: unknown; name?: unknown; steps?: unknown; instructions?: unknown };
+  if (obj.type !== "howto") return null;
+  const rawTitle = typeof obj.title === "string" && obj.title.trim() ? obj.title : obj.name;
+  const title = typeof rawTitle === "string" && rawTitle.trim() ? rawTitle.trim() : "How to";
+  const rawSteps = obj.steps ?? obj.instructions;
+  const steps: string[] = [];
+  if (Array.isArray(rawSteps)) {
+    for (const item of rawSteps) {
+      const step = howtoStepText(item);
+      if (step) steps.push(step);
+    }
+  } else if (typeof rawSteps === "string") {
+    for (const line of rawSteps.split(/\r?\n/)) {
+      const step = howtoStepText(line);
+      if (step) steps.push(step);
+    }
+  }
+  if (!steps.length) return null;
+  return { type: "howto", title, steps };
+}
+
+export function howtoFromProse(content: string, title = "How to"): HowToTool | null {
+  const steps: string[] = [];
+  let foundTitle = title;
+  for (const line of content.split(/\r?\n/)) {
+    const heading = line.match(HOWTO_HEADING_RE);
+    if (heading && foundTitle === "How to") {
+      foundTitle = heading[1].trim();
+      continue;
+    }
+    const match = line.match(HOWTO_STEP_RE);
+    if (match) {
+      const step = match[1].replace(/\*\*/g, "").trim();
+      if (step) steps.push(step);
+    }
+  }
+  if (steps.length < 2) return null;
+  return { type: "howto", title: foundTitle || "How to", steps };
+}
+
+function extractBalancedJson(source: string, start: number): { raw: string; end: number } | null {
+  if (source[start] !== "{") return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < source.length; i += 1) {
+    const char = source[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (char === "\\") {
+        escape = true;
+        continue;
+      }
+      if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return { raw: source.slice(start, i + 1), end: i + 1 };
+    }
+  }
+  return null;
+}
+
+function pullFencedTools(content: string): { cleaned: string; tools: ChatTool[] } {
+  const tools: ChatTool[] = [];
+  const ranges: Array<[number, number]> = [];
+  FENCE_OPEN_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = FENCE_OPEN_RE.exec(content))) {
+    const jsonStart = content.indexOf("{", match.index + match[0].length);
+    if (jsonStart < 0) continue;
+    const extracted = extractBalancedJson(content, jsonStart);
+    if (!extracted) continue;
+    const { raw, end: jsonEnd } = extracted;
+    const close = content.indexOf("```", jsonEnd);
+    const end = close >= 0 ? close + 3 : jsonEnd;
+    try {
+      const parsed = asChatTool(JSON.parse(raw));
+      if (parsed) tools.push(parsed);
+    } catch {
+      /* ignore malformed cards */
+    }
+    ranges.push([match.index, end]);
+    FENCE_OPEN_RE.lastIndex = end;
+  }
+
+  let cleaned = content;
+  if (ranges.length) {
+    cleaned = "";
+    let cursor = 0;
+    for (const [start, end] of ranges) {
+      cleaned += content.slice(cursor, start);
+      cursor = end;
+    }
+    cleaned += content.slice(cursor);
+  }
+
+  cleaned = cleaned.replace(INCOMPLETE_FENCE_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+  return { cleaned, tools };
+}
 
 export function asChatTool(value: unknown): ChatTool | null {
   if (!value || typeof value !== "object") return null;
   const type = (value as { type?: unknown }).type;
   if (typeof type !== "string" || !TOOL_TYPES.has(type)) return null;
+  if (type === "howto") return normalizeHowToTool(value);
   return value as ChatTool;
 }
+
+export type CardRoute = {
+  allow: string[] | null;
+  storyPages: number | null;
+};
 
 export function mergeChatTools(existing: ChatTool[] = [], incoming: unknown[] = []): ChatTool[] {
   const next = [...existing];
   for (const item of incoming) {
     const tool = asChatTool(item);
     if (!tool) continue;
+    if (tool.type === "howto") {
+      const index = next.findIndex((other) => other.type === "howto");
+      if (index >= 0) {
+        next[index] = tool;
+        continue;
+      }
+    }
     if (!next.some((other) => other.type === tool.type && JSON.stringify(other) === JSON.stringify(tool))) {
       next.push(tool);
     }
@@ -85,21 +226,34 @@ export function mergeChatTools(existing: ChatTool[] = [], incoming: unknown[] = 
   return next;
 }
 
-export function extractChatTools(content: string, extra: ChatTool[] = []): { text: string; tools: ChatTool[] } {
-  const fromFence: ChatTool[] = [];
-  const cleaned = content
-    .replace(FENCE_RE, (_, raw: string) => {
-      try {
-        const parsed = asChatTool(JSON.parse(raw));
-        if (parsed) fromFence.push(parsed);
-      } catch {
-        /* ignore malformed cards */
-      }
-      return "";
-    })
-    .replace(INCOMPLETE_FENCE_RE, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+function trimStoryPages(tool: ChatTool, storyPages: number | null): ChatTool {
+  if (tool.type !== "story" || !storyPages || !Array.isArray(tool.pages)) return tool;
+  if (tool.pages.length <= storyPages) return tool;
+  return { ...tool, pages: tool.pages.slice(0, storyPages) };
+}
 
-  return { text: cleaned, tools: mergeChatTools(extra, fromFence) };
+export function constrainChatTools(tools: ChatTool[], route: CardRoute | null | undefined): ChatTool[] {
+  if (!route) return tools;
+  const allow = route.allow;
+  const next = allow
+    ? tools.filter((tool) => allow.includes(tool.type))
+    : tools;
+  return next.map((tool) => trimStoryPages(tool, route.storyPages));
+}
+
+export function extractChatTools(
+  content: string,
+  extra: ChatTool[] = [],
+  route?: CardRoute | null,
+): { text: string; tools: ChatTool[] } {
+  const { cleaned, tools: fromFence } = pullFencedTools(content);
+  let tools = constrainChatTools(mergeChatTools(extra, fromFence), route);
+  const routeAllowsHowto = Boolean(route?.allow?.includes("howto"));
+  if (routeAllowsHowto && !tools.some((tool) => tool.type === "howto")) {
+    const synthesized = howtoFromProse(cleaned);
+    if (synthesized) {
+      tools = constrainChatTools([...tools, synthesized], route);
+    }
+  }
+  return { text: cleaned, tools };
 }

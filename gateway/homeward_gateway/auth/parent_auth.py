@@ -112,8 +112,10 @@ async def get_parent_from_request(request: Request, session: AsyncSession) -> Op
 # --- Child unlock (PIN) ---
 #
 # A correct PIN grants this browser a signed, httponly cookie for that child.
-# Chat, session, and resume endpoints require it for PIN-protected profiles so
-# the PIN cannot be skipped by calling the API directly from another device.
+# Named-profile chat, session, resume, and homework require it so the PIN cannot
+# be skipped by calling the API directly. Anonymous Quick Chat
+# (`quick_chat=true` on the household default child) is the exception: it uses
+# that profile's safety settings without unlocking named-kid identity or memory.
 
 
 def _child_cookie_name(child_id: int) -> str:
@@ -143,3 +145,32 @@ def has_child_access(request: Request, child: ChildProfile) -> bool:
     except BadSignature:
         return False
     return data.get("child_id") == child.id
+
+
+# --- Homework camera unlock ---
+#
+# A correct parent password grants this browser a short-lived, httponly cookie
+# for worksheet camera APIs. It is not a parent dashboard session.
+
+
+def set_homework_unlock_cookie(response: Response) -> None:
+    token = _serializer().dumps({"homework": True})
+    response.set_cookie(
+        key=settings.homework_unlock_cookie_name,
+        value=token,
+        max_age=settings.homework_unlock_max_age,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+    )
+
+
+def has_homework_unlock(request: Request) -> bool:
+    token = request.cookies.get(settings.homework_unlock_cookie_name)
+    if not token:
+        return False
+    try:
+        data = _serializer().loads(token, max_age=settings.homework_unlock_max_age)
+    except BadSignature:
+        return False
+    return data.get("homework") is True

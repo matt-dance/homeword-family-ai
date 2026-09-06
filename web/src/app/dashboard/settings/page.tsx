@@ -328,7 +328,8 @@ export default function SettingsPage() {
                 ))}
               </select>
               <p className="text-xs text-muted-foreground">
-                Used for the dashboard Kid Chat button and the quick-start option on new devices.
+                Quick Chat stays anonymous (no named-kid memory or PIN) and uses this
+                profile&apos;s age and safety settings. Also used for the dashboard Kid Chat button.
               </p>
             </div>
 

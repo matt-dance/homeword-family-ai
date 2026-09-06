@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     session_cookie_name: str = "homeward_session"
     session_max_age: int = 86400 * 7
     child_access_max_age: int = 86400  # one PIN unlock per device per day
+    homework_unlock_cookie_name: str = "homeward_homework"
+    homework_unlock_max_age: int = 5 * 60  # camera-only grant; not a dashboard session
 
     # Ollama / LLM
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -34,7 +36,8 @@ class Settings(BaseSettings):
     classifier_model: str = "llama3.2:3b"
     classifier_timeout: float = 5.0
     llm_timeout: float = 60.0
-    llm_first_token_timeout: float = 25.0
+    # llama3.2:3b on CPU can sit quiet this long after the classifier turn.
+    llm_first_token_timeout: float = 45.0
     lookup_timeout: float = 8.0
     cloud_enabled: bool = False
     openai_api_key: str = ""
