@@ -187,7 +187,7 @@ async def get_status(chat_model: str, classifier_model: str) -> dict[str, Any]:
     classifier_ready = reachable and _catalog_installed(classifier_model, installed)
     return {
         "reachable": reachable,
-        "managed": settings.docker_mode,
+        "managed": settings.is_ollama_managed(),
         "ollama_url": (await resolved_ollama_url()) or settings.ollama_base_url,
         "system_ram_gb": ram_gb,
         "ram_detection": ram_source,
@@ -199,7 +199,7 @@ async def get_status(chat_model: str, classifier_model: str) -> dict[str, Any]:
         "ready": chat_ready and classifier_ready,
         "bootstrap_hint": (
             "Homeward is downloading the AI model. This only happens on first launch."
-            if settings.docker_mode and reachable and not chat_ready
+            if settings.is_ollama_managed() and reachable and not chat_ready
             else None
         ),
     }
