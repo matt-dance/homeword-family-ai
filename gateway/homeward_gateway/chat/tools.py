@@ -919,7 +919,8 @@ def local_howto_card(message: str) -> ToolCard | None:
     topic = howto_topic(message) or message
     key = _howto_bank_key(topic)
     if key:
-        return ToolCard("howto", dict(_HOWTO_BANK[key]))
+        data = _HOWTO_BANK[key]
+        return ToolCard("howto", {"title": data["title"], "steps": list(data["steps"])})
     return ToolCard("howto", {"title": howto_title(message), "steps": list(_GENERIC_HOWTO_STEPS)})
 
 

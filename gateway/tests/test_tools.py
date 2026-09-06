@@ -261,6 +261,12 @@ def test_local_howto_card_for_pancake_prompt():
     assert "pancake" in card.data["title"].lower()
     assert len(card.data["steps"]) >= 3
     assert all(isinstance(step, str) and step for step in card.data["steps"])
+    original_first_step = card.data["steps"][0]
+    card.data["steps"][0] = "Changed in test"
+
+    fresh = local_howto_card("How do I make pancakes?")
+    assert fresh is not None
+    assert fresh.data["steps"][0] == original_first_step
 
     cards = run_local_tools("How do I make pancakes?")
     howto = next(card for card in cards if card.type == "howto")

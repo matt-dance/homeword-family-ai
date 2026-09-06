@@ -64,7 +64,6 @@ const TOOL_TYPES = new Set([
   "howto",
 ]);
 const FENCE_OPEN_RE = /```homeward\s*/gi;
-const FENCE_RE = /```homeward\s*(\{[\s\S]*?\})\s*```/gi;
 const INCOMPLETE_FENCE_RE = /```homeward[\s\S]*$/i;
 const HOWTO_STEP_RE = /^\s*(?:\d+[.)]\s+|[-*•]\s+)(.+)$/;
 const HOWTO_HEADING_RE = /^\s*#{1,3}\s+(.+)$/;
@@ -110,12 +109,12 @@ export function howtoFromProse(content: string, title = "How to"): HowToTool | n
   const steps: string[] = [];
   let foundTitle = title;
   for (const line of content.split(/\r?\n/)) {
-    const heading = HOWTO_HEADING_RE.exec(line);
+    const heading = line.match(HOWTO_HEADING_RE);
     if (heading && foundTitle === "How to") {
       foundTitle = heading[1].trim();
       continue;
     }
-    const match = HOWTO_STEP_RE.exec(line);
+    const match = line.match(HOWTO_STEP_RE);
     if (match) {
       const step = match[1].replace(/\*\*/g, "").trim();
       if (step) steps.push(step);
@@ -188,16 +187,6 @@ function pullFencedTools(content: string): { cleaned: string; tools: ChatTool[] 
       cursor = end;
     }
     cleaned += content.slice(cursor);
-  } else {
-    cleaned = content.replace(FENCE_RE, (_, raw: string) => {
-      try {
-        const parsed = asChatTool(JSON.parse(raw));
-        if (parsed) tools.push(parsed);
-      } catch {
-        /* ignore malformed cards */
-      }
-      return "";
-    });
   }
 
   cleaned = cleaned.replace(INCOMPLETE_FENCE_RE, "").replace(/\n{3,}/g, "\n\n").trim();
