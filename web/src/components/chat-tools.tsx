@@ -387,7 +387,9 @@ function AskParentCard({ tool }: { tool: AskParentTool }) {
 }
 
 function HowToCard({ tool }: { tool: HowToTool }) {
-  const steps = Array.isArray(tool.steps) ? tool.steps : [];
+  const steps = (Array.isArray(tool.steps) ? tool.steps : [])
+    .map((step) => (typeof step === "string" ? step.trim() : ""))
+    .filter(Boolean);
   const [done, setDone] = useState<Record<number, boolean>>({});
   const finished = steps.length > 0 && steps.every((_, i) => done[i]);
 
