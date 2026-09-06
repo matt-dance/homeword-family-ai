@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asChatTool, constrainChatTools, extractChatTools, mergeChatTools } from "./chat-tools";
+import { asChatTool, constrainChatTools, extractChatTools, howtoFromProse, mergeChatTools } from "./chat-tools";
 
 describe("extractChatTools", () => {
   it("strips a complete homeward fence and parses the card", () => {
@@ -107,5 +107,64 @@ describe("extractChatTools", () => {
     };
     const routed = constrainChatTools([story], { allow: ["story"], storyPages: 2 });
     expect(routed[0]).toEqual({ ...story, pages: [{ text: "One" }, { text: "Two" }] });
+  });
+
+  it("renders a streamed howto card for the kid UI even without a model fence", () => {
+    const extra = {
+      type: "howto" as const,
+      title: "Make pancakes",
+      steps: ["Ask a grown-up to help with the stove.", "Mix flour, milk, and an egg.", "Cook and flip."],
+    };
+    const { text, tools } = extractChatTools(
+      "You can do it!",
+      [extra],
+      { allow: ["howto", "lookup"], storyPages: null },
+    );
+    expect(text).toBe("You can do it!");
+    expect(tools).toEqual([extra]);
+    expect(tools[0]?.type).toBe("howto");
+    expect(tools[0] && tools[0].type === "howto" ? tools[0].steps.length : 0).toBeGreaterThanOrEqual(2);
+  });
+
+  it("builds an interactive howto card from numbered recipe prose when the route is howto", () => {
+    const prose =
+      "Sure! Here is a pancake recipe:\n1. Mix flour and milk\n2. Heat the pan\n3. Flip when bubbly\n";
+    const { tools } = extractChatTools(prose, [], { allow: ["howto", "lookup"], storyPages: null });
+    expect(tools[0]).toMatchObject({
+      type: "howto",
+      steps: ["Mix flour and milk", "Heat the pan", "Flip when bubbly"],
+    });
+  });
+
+  it("does not invent a howto card from a numbered list when the route is timer", () => {
+    const prose = "Go!\n1. Think of an animal\n2. Count down\n";
+    const extra = [{ type: "timer" as const, seconds: 10, label: "10 seconds" }];
+    const { tools } = extractChatTools(prose, extra, { allow: ["timer", "lookup"], storyPages: null });
+    expect(tools).toEqual(extra);
+  });
+
+  it("normalizes nested howto step objects from a fence", () => {
+    const content = [
+      "```homeward",
+      JSON.stringify({
+        type: "howto",
+        title: "Pancakes",
+        steps: [{ text: "Mix flour" }, { instruction: "Cook gently" }],
+      }),
+      "```",
+    ].join("\n");
+    const { tools } = extractChatTools(content);
+    expect(tools[0]).toEqual({ type: "howto", title: "Pancakes", steps: ["Mix flour", "Cook gently"] });
+  });
+
+  it("replaces a generic howto with a richer incoming card", () => {
+    const generic = { type: "howto" as const, title: "How to", steps: ["Ask a grown-up.", "Go slowly."] };
+    const richer = { type: "howto" as const, title: "Make pancakes", steps: ["Mix", "Cook", "Eat"] };
+    expect(mergeChatTools([generic], [richer])).toEqual([richer]);
+  });
+
+  it("howtoFromProse needs at least two steps", () => {
+    expect(howtoFromProse("Just mix it.")).toBeNull();
+    expect(howtoFromProse("1. Only one step")).toBeNull();
   });
 });
