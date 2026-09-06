@@ -490,6 +490,13 @@ class TestPipeline:
         assert first_tools.tools[0]["type"] == "howto"
         assert first_tools.tools[0]["steps"]
         assert all(isinstance(step, str) for step in first_tools.tools[0]["steps"])
+        assert sum(
+            1
+            for item in events
+            if isinstance(item, ToolEvent)
+            for card in item.tools
+            if card.get("type") == "howto"
+        ) == 1
         assert not any(
             isinstance(item, ToolEvent) and any(card.get("type") == "quiz" for card in item.tools)
             for item in events

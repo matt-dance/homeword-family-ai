@@ -598,7 +598,11 @@ async def process_chat_stream(
         return
 
     # Only after output is allowed: turn a prose recipe into a howto card.
-    if "howto" in detect_intents(user_message) and not any(card.get("type") == "howto" for card in extra):
+    if (
+        "howto" in detect_intents(user_message)
+        and not any(card.get("type") == "howto" for card in extra)
+        and not any(card.type == "howto" for card in local_cards)
+    ):
         synthesized = howto_from_prose(visible, title=howto_title(user_message))
         if synthesized:
             routed = [card.to_dict() for card in apply_card_routing(user_message, [synthesized])]
