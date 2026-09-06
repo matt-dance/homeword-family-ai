@@ -95,22 +95,28 @@ if [[ ! -d "$APP" ]]; then
   exit 1
 fi
 
-if [[ "$SIGN" == "1" ]]; then
+sign_app() {
+  local target="$1"
   codesign --deep --force --options runtime \
     --entitlements "$ENTITLEMENTS" \
     --sign "$HOMEWARD_CODESIGN_IDENTITY" \
-    "$APP"
-  codesign --verify --verbose=2 "$APP"
-fi
+    "$target"
+  codesign --verify --verbose=2 "$target"
+}
 
 STAGE="$(mktemp -d)"
+STAGED_APP="$STAGE/Homeward.app"
 cleanup() {
   rm -rf "$STAGE"
 }
 trap cleanup EXIT
 
-cp -R "$APP" "$STAGE/"
+ditto "$APP" "$STAGED_APP"
 ln -s /Applications "$STAGE/Applications"
+
+if [[ "$SIGN" == "1" ]]; then
+  sign_app "$STAGED_APP"
+fi
 
 rm -f "$DMG"
 mkdir -p "$(dirname "$DMG")"
