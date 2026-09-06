@@ -3,6 +3,7 @@ package launchd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 )
 
@@ -45,4 +46,12 @@ func WritePlist(home, execPath string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+func Bootstrap(plist string) error {
+	return exec.Command("launchctl", "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plist).Run()
+}
+
+func Bootout() error {
+	return exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d/%s", os.Getuid(), Label)).Run()
 }
