@@ -16,6 +16,10 @@ Chat and speech model weights are not part of the app. The bundle installs the o
 
 `CGO_ENABLED=1` is required for the Darwin supervisor (`energye/systray` links Cocoa).
 
+CPython 3.12 is the official standalone build, copied into `Contents/Resources/runtime/python` via `UV_PYTHON_INSTALL_DIR` inside the `.app`. `bin/python` must resolve inside the bundle, not the builder’s `~/.local/share/uv/python`.
+
+ffmpeg and espeak-ng live at `Resources/runtime/<name>/bin/`. Their dylibs are copied to `Contents/Frameworks` with install names `@executable_path/../../../../Frameworks/<lib>` (four levels up from the binary). Homebrew `dylibbundler` is preferred; without it the script recursively rewrites Homebrew/Cellar deps with `install_name_tool` + `otool`. A non-skip Darwin build exits non-zero if neither tool can produce a relocatable binary.
+
 ## Unsigned `.app`
 
 From the repo root:

@@ -53,6 +53,10 @@ CONTENTS="$APP/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
 RES="$CONTENTS/Resources"
 RUNTIME="$RES/runtime"
+# ffmpeg/espeak live at Contents/Resources/runtime/<name>/bin/<tool>.
+# Contents/Frameworks is four levels up from that binary (bin → name → runtime → Resources → Contents).
+FRAMEWORKS_DIR="$CONTENTS/Frameworks"
+FRAMEWORKS_INSTALL_NAME="@executable_path/../../../../Frameworks"
 
 if [[ "$HOST" != "Darwin" && "$SKIP" != "1" ]]; then
   echo "must build on a Mac" >&2
@@ -117,35 +121,199 @@ else
   copy_web_standalone
 fi
 
-relpath_to_frameworks() {
-  # @executable_path relative from a binary under Resources/runtime/<name>/bin
-  printf '%s' '@executable_path/../../../Frameworks'
+is_system_dylib() {
+  case "$1" in
+    /System/*|/usr/lib/*|/Library/Apple/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+otool_deps() {
+  otool -L "$1" | awk '/^\t/ {print $1}'
+}
+
+otool_rpaths() {
+  otool -l "$1" | awk '
+    /cmd LC_RPATH/ { want = 1; next }
+    want && /path / {
+      sub(/^[[:space:]]*path[[:space:]]+/, "")
+      sub(/[[:space:]]+\(offset.*$/, "")
+      print
+      want = 0
+    }
+  '
+}
+
+realpath_portable() {
+  python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"
+}
+
+resolve_dylib() {
+  local name="$1"
+  local owner="$2"
+  local leaf prefix rp candidate
+
+  case "$name" in
+    "$FRAMEWORKS_INSTALL_NAME"/*|@executable_path/*|@loader_path/*)
+      return 1
+      ;;
+  esac
+
+  if [[ "$name" == @rpath/* ]]; then
+    leaf="${name#@rpath/}"
+    while IFS= read -r rp; do
+      [[ -z "$rp" ]] && continue
+      case "$rp" in
+        @loader_path)
+          candidate="$(dirname "$owner")/$leaf"
+          ;;
+        @loader_path/*)
+          candidate="$(dirname "$owner")/${rp#@loader_path/}/$leaf"
+          ;;
+        @executable_path|@executable_path/*)
+          continue
+          ;;
+        *)
+          candidate="$rp/$leaf"
+          ;;
+      esac
+      if [[ -f "$candidate" ]]; then
+        printf '%s' "$candidate"
+        return 0
+      fi
+    done < <(otool_rpaths "$owner")
+    prefix="$(brew_prefix 2>/dev/null || true)"
+    for rp in \
+      ${prefix:+"$prefix/lib"} \
+      ${prefix:+"$prefix/opt/ffmpeg/lib"} \
+      ${prefix:+"$prefix/opt/espeak-ng/lib"} \
+      /opt/homebrew/lib \
+      /usr/local/lib; do
+      if [[ -f "$rp/$leaf" ]]; then
+        printf '%s' "$rp/$leaf"
+        return 0
+      fi
+    done
+    return 1
+  fi
+
+  if [[ -f "$name" ]]; then
+    printf '%s' "$name"
+    return 0
+  fi
+  return 1
+}
+
+should_bundle_dylib() {
+  local path="$1"
+  local real
+  case "$path" in
+    /opt/homebrew/*|/usr/local/*|/opt/local/*)
+      return 0
+      ;;
+  esac
+  real="$(realpath_portable "$path")"
+  case "$real" in
+    */Cellar/*|/opt/homebrew/*|/usr/local/*|/opt/local/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+rewrite_dylibs_recursive() {
+  local root_bin="$1"
+  local frameworks="$2"
+  local dest_prefix="$3"
+  local work n i current lib resolved base dest key
+  work="$(mktemp -d)"
+  n=0
+
+  enqueue() {
+    n=$((n + 1))
+    printf '%s' "$1" > "$work/$n"
+  }
+
+  enqueue "$root_bin"
+  i=0
+  while [[ "$i" -lt "$n" ]]; do
+    i=$((i + 1))
+    current="$(cat "$work/$i")"
+    [[ -z "$current" || ! -f "$current" ]] && continue
+    key="$(printf '%s' "$current" | shasum -a 256 | awk '{print $1}')"
+    if [[ -f "$work/seen-$key" ]]; then
+      continue
+    fi
+    touch "$work/seen-$key"
+    chmod u+w "$current" 2>/dev/null || true
+
+    while IFS= read -r lib; do
+      [[ -z "$lib" ]] && continue
+      if is_system_dylib "$lib"; then
+        continue
+      fi
+      case "$lib" in
+        "$dest_prefix"/*)
+          continue
+          ;;
+      esac
+      if [[ "$(basename "$lib")" == "$(basename "$current")" ]]; then
+        continue
+      fi
+      if ! resolved="$(resolve_dylib "$lib" "$current")"; then
+        echo "cannot resolve dylib $lib (needed by $current)" >&2
+        exit 1
+      fi
+      if ! should_bundle_dylib "$resolved"; then
+        continue
+      fi
+      base="$(basename "$resolved")"
+      dest="$frameworks/$base"
+      if [[ ! -f "$dest" ]]; then
+        cp "$resolved" "$dest"
+        chmod u+w "$dest"
+        install_name_tool -id "$dest_prefix/$base" "$dest"
+        enqueue "$dest"
+      fi
+      if [[ "$lib" != "$dest_prefix/$base" ]]; then
+        install_name_tool -change "$lib" "$dest_prefix/$base" "$current"
+      fi
+    done < <(otool_deps "$current")
+  done
+  rm -rf "$work"
+}
+
+assert_no_homebrew_dylibs() {
+  local bin="$1"
+  local leftover
+  leftover="$(otool_deps "$bin" | grep -E '^(/opt/homebrew/|/usr/local/|/opt/local/)' || true)"
+  if [[ -n "$leftover" ]]; then
+    echo "unbundled Homebrew dylibs remain in $bin:" >&2
+    echo "$leftover" >&2
+    exit 1
+  fi
 }
 
 bundle_dylibs() {
   local bin="$1"
-  local frameworks="$CONTENTS/Frameworks"
-  mkdir -p "$frameworks"
+  mkdir -p "$FRAMEWORKS_DIR"
+
   if command -v dylibbundler >/dev/null 2>&1; then
-    dylibbundler -od -b -x "$bin" -d "$frameworks" -p "$(relpath_to_frameworks)/"
+    dylibbundler -od -b -x "$bin" -d "$FRAMEWORKS_DIR" -p "${FRAMEWORKS_INSTALL_NAME}/"
+    assert_no_homebrew_dylibs "$bin"
     return 0
   fi
-  if ! command -v install_name_tool >/dev/null 2>&1 || ! command -v otool >/dev/null 2>&1; then
-    echo "warning: neither dylibbundler nor install_name_tool available for $bin" >&2
+
+  if command -v install_name_tool >/dev/null 2>&1 && command -v otool >/dev/null 2>&1; then
+    rewrite_dylibs_recursive "$bin" "$FRAMEWORKS_DIR" "$FRAMEWORKS_INSTALL_NAME"
+    assert_no_homebrew_dylibs "$bin"
     return 0
   fi
-  local lib base
-  while read -r lib; do
-    case "$lib" in
-      /opt/homebrew/*|/usr/local/*|/opt/local/*)
-        base="$(basename "$lib")"
-        if [[ -f "$lib" ]]; then
-          cp "$lib" "$frameworks/$base"
-          install_name_tool -change "$lib" "$(relpath_to_frameworks)/$base" "$bin"
-        fi
-        ;;
-    esac
-  done < <(otool -L "$bin" | awk '/^\t/ {print $1}')
+
+  echo "dylibbundler or install_name_tool+otool is required to bundle ffmpeg/espeak dylibs into Contents/Frameworks" >&2
+  exit 1
 }
 
 brew_prefix() {
@@ -187,15 +355,67 @@ install_node() {
   rm -rf "$tmp"
 }
 
+find_cpython_prefix() {
+  local dir="$1"
+  local d
+  for d in "$dir"/cpython-*; do
+    if [[ -d "$d" ]] && { [[ -e "$d/bin/python" ]] || [[ -e "$d/bin/python3" ]] || [[ -e "$d/bin/python3.12" ]]; }; then
+      printf '%s' "$d"
+      return 0
+    fi
+  done
+  return 1
+}
+
 install_python_gateway() {
   if ! command -v uv >/dev/null 2>&1; then
     echo "uv is required to embed CPython 3.12 and install gateway" >&2
     exit 1
   fi
-  echo "installing CPython 3.12 and gateway venv"
-  uv python install 3.12
-  uv venv --python 3.12 "$RUNTIME/python"
+  echo "installing standalone CPython 3.12 into the app (not the builder uv cache)"
+  local managed prefix resolved
+  managed="$RUNTIME/.uv-managed-python"
+  rm -rf "$managed"
+  mkdir -p "$managed"
+  # python-build-standalone lands under this prefix, inside the .app — not ~/.local/share/uv/python.
+  UV_PYTHON_INSTALL_DIR="$managed" uv python install 3.12
+  if ! prefix="$(find_cpython_prefix "$managed")"; then
+    echo "uv python install 3.12 did not produce a cpython-* prefix under $managed" >&2
+    exit 1
+  fi
+  rm -rf "$RUNTIME/python"
+  mkdir -p "$RUNTIME/python"
+  cp -R "$prefix/." "$RUNTIME/python/"
+  if [[ ! -e "$RUNTIME/python/bin/python" ]]; then
+    if [[ -e "$RUNTIME/python/bin/python3" ]]; then
+      ln -s python3 "$RUNTIME/python/bin/python"
+    elif [[ -e "$RUNTIME/python/bin/python3.12" ]]; then
+      ln -s python3.12 "$RUNTIME/python/bin/python"
+    else
+      echo "standalone CPython prefix has no bin/python*" >&2
+      exit 1
+    fi
+  fi
+  resolved="$(realpath_portable "$RUNTIME/python/bin/python")"
+  case "$resolved" in
+    "$APP"/*) ;;
+    *)
+      echo "embedded CPython resolves outside the app: $resolved" >&2
+      exit 1
+      ;;
+  esac
+  if [[ -L "$RUNTIME/python/bin/python" ]]; then
+    local link
+    link="$(readlink "$RUNTIME/python/bin/python")"
+    case "$link" in
+      */.local/share/uv/python*|*/uv/python*)
+        echo "python still points at the builder uv cache: $link" >&2
+        exit 1
+        ;;
+    esac
+  fi
   uv pip install --python "$RUNTIME/python/bin/python" "$REPO/gateway"
+  rm -rf "$managed"
 }
 
 install_ollama() {
