@@ -48,10 +48,29 @@ func WritePlist(home, execPath string) (string, error) {
 	return path, nil
 }
 
+func guiDomain() string {
+	return fmt.Sprintf("gui/%d", os.Getuid())
+}
+
+func serviceTarget() string {
+	return guiDomain() + "/" + Label
+}
+
 func Bootstrap(plist string) error {
-	return exec.Command("launchctl", "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plist).Run()
+	return exec.Command("launchctl", "bootstrap", guiDomain(), plist).Run()
 }
 
 func Bootout() error {
-	return exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d/%s", os.Getuid(), Label)).Run()
+	return exec.Command("launchctl", "bootout", serviceTarget()).Run()
+}
+
+// KillArgs is the launchctl argv that SIGTERMs the login-item supervisor.
+// The agent's signal handler then Stop()s children (not adopted Ollama).
+func KillArgs() []string {
+	return []string{"launchctl", "kill", "SIGTERM", serviceTarget()}
+}
+
+func Kill() error {
+	args := KillArgs()
+	return exec.Command(args[0], args[1:]...).Run()
 }

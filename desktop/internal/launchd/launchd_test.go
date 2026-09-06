@@ -1,6 +1,7 @@
 package launchd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,5 +51,18 @@ func TestWritePlist(t *testing.T) {
 	}
 	if filepath.Base(path) != "ai.homeward.app.plist" {
 		t.Fatal(path)
+	}
+}
+
+func TestKillArgs(t *testing.T) {
+	args := KillArgs()
+	want := []string{"launchctl", "kill", "SIGTERM", fmt.Sprintf("gui/%d/%s", os.Getuid(), Label)}
+	if len(args) != len(want) {
+		t.Fatalf("%v", args)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("%v", args)
+		}
 	}
 }

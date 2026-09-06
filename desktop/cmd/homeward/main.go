@@ -66,13 +66,7 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 	marker := dataDir + "/.browser_opened"
 
 	if uninstallFlag {
-		_ = launchd.Bootout()
-		_ = os.Remove(launchd.PlistPath(home))
-		if wipeFlag {
-			return os.RemoveAll(dataDir)
-		}
-		log.Printf("Homeward data remains at %s", dataDir)
-		return nil
+		return runUninstall(home, dataDir, wipeFlag, nil)
 	}
 
 	plist, err := launchd.WritePlist(home, exe)
@@ -135,6 +129,25 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 	}
 
 	runTray(manager, status)
+	return nil
+}
+
+// runUninstall stops children, then removes the login item.
+// A second-process `Homeward --uninstall` has no local Manager; launchd.Kill
+// SIGTERMs the login-item supervisor so its handler Stop()s gateway/web
+// (and bundled ollama only). Adopted system Ollama is not signaled.
+func runUninstall(home, dataDir string, wipe bool, manager *proc.Manager) error {
+	if manager != nil {
+		_ = manager.Stop()
+	}
+	_ = launchd.Kill()
+	time.Sleep(time.Second)
+	_ = launchd.Bootout()
+	_ = os.Remove(launchd.PlistPath(home))
+	if wipe {
+		return os.RemoveAll(dataDir)
+	}
+	log.Printf("Homeward data remains at %s", dataDir)
 	return nil
 }
 
