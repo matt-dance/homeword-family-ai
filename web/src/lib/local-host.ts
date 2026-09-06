@@ -1,6 +1,6 @@
 /** Network URL helpers for Homeward. */
 
-const HOMEWARD_HOSTNAME = "homeward.local";
+export const HOMEWARD_HOSTNAME = "homeward.local";
 /** Public HTTP port advertised on the home network (standard port 80). */
 const HOMEWARD_PORT = 80;
 
@@ -15,6 +15,23 @@ export function homewardBaseUrl(
 }
 
 export const DEFAULT_HOMEWARD_URL = homewardBaseUrl();
+
+export function advertisedWebPort(locationPort?: string): number {
+  const raw =
+    locationPort ?? (typeof window === "undefined" ? "" : window.location.port);
+  if (!raw || raw === "80") return 80;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 80;
+}
+
+export function kidChatUrl(port: number = advertisedWebPort()): string {
+  return `${homewardBaseUrl(HOMEWARD_HOSTNAME, port)}/chat`;
+}
+
+export function parentLocalUrl(port: number = advertisedWebPort()): string {
+  if (port === 80) return "http://localhost";
+  return `http://localhost:${port}`;
+}
 
 export function normalizeHostname(hostHeader: string | null): string {
   return hostHeader?.split(":")[0]?.replace(/^\[|\]$/g, "").toLowerCase() ?? "";
