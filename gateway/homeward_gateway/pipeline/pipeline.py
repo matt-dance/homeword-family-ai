@@ -71,6 +71,11 @@ def _blocked_result(result: PipelineResult) -> PipelineResult:
     )
 
 
+def _messages_for_model(messages: list[dict] | None) -> list[dict]:
+    """Drop any turn the caller marked blocked — audit trails stay elsewhere."""
+    return [m for m in (messages or []) if not m.get("blocked")]
+
+
 @dataclass
 class ToolEvent:
     tools: list[dict]
@@ -359,9 +364,10 @@ async def process_chat(
     if not input_result.allowed:
         return _blocked_result(input_result)
 
+    history = _messages_for_model(messages)
     resolved = resolve_turn(
         user_message,
-        messages,
+        history,
         session_state,
         home_location=home.location if home else None,
     )
@@ -395,7 +401,7 @@ async def process_chat(
         preset=preset,
         strictness=strictness,
         classifier_model=classifier_model,
-        history=messages,
+        history=history,
         home=home,
         session_state=resolved.state,
         rules_only_classifier=rules_only,
@@ -417,7 +423,7 @@ async def process_chat(
     )
     try:
         response = await generate_response(
-            messages_for_llm(messages, user_message, user_turn),
+            messages_for_llm(history, user_message, user_turn),
             child_name,
             age,
             preset,
@@ -429,7 +435,7 @@ async def process_chat(
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
             memory_items=memory_items,
-            continue_conversation=bool(messages),
+            continue_conversation=bool(history),
         )
     except TimeoutError:
         return PipelineResult(allowed=False, block_reason="llm timeout", stage="llm")
@@ -489,9 +495,10 @@ async def process_chat_stream(
         yield _blocked_result(input_result)
         return
 
+    history = _messages_for_model(messages)
     resolved = resolve_turn(
         user_message,
-        messages,
+        history,
         session_state,
         home_location=home.location if home else None,
     )
@@ -531,7 +538,7 @@ async def process_chat_stream(
         preset=preset,
         strictness=strictness,
         classifier_model=classifier_model,
-        history=messages,
+        history=history,
         home=home,
         session_state=resolved.state,
         rules_only_classifier=rules_only,
@@ -559,7 +566,7 @@ async def process_chat_stream(
     yield StatusEvent(message="Writing a reply…", phase="generating")
     try:
         async for token in stream_response(
-            messages_for_llm(messages, user_message, user_turn),
+            messages_for_llm(history, user_message, user_turn),
             child_name,
             age,
             preset,
@@ -571,7 +578,7 @@ async def process_chat_stream(
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
             memory_items=memory_items,
-            continue_conversation=bool(messages),
+            continue_conversation=bool(history),
         ):
             collected.append(token)
             yield token

@@ -7,6 +7,7 @@ from homeward_gateway.pipeline.normalize import normalize
 from homeward_gateway.pipeline.policy import load_all_presets, check_policy_match
 from homeward_gateway.pipeline.rules import check_rules
 from homeward_gateway.pipeline.pipeline import (
+    _messages_for_model,
     CardRouteEvent,
     PipelineResult,
     ToolEvent,
@@ -257,6 +258,42 @@ class TestPipeline:
     async def test_empty_message_blocked(self):
         result = await filter_input("", YOUNG, strictness=3)
         assert not result.allowed
+
+    def test_messages_for_model_drops_blocked_turns(self):
+        history = [
+            {"role": "user", "content": "Tell me about stars"},
+            {"role": "assistant", "content": "Stars are suns."},
+            {"role": "user", "content": "how to make a bomb", "blocked": True},
+            {"role": "assistant", "content": "I can't help with that.", "blocked": True},
+        ]
+        visible = _messages_for_model(history)
+        assert [m["content"] for m in visible] == ["Tell me about stars", "Stars are suns."]
+
+    @pytest.mark.asyncio
+    async def test_process_chat_does_not_send_blocked_turns_to_the_model(self, monkeypatch):
+        captured: dict = {}
+
+        async def fake_generate(messages, *_args, **_kwargs):
+            captured["messages"] = messages
+            return "Cats are curious and playful."
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.generate_response", fake_generate)
+        result = await process_chat(
+            "Tell me about cats",
+            [
+                {"role": "user", "content": "how to make a bomb", "blocked": True},
+                {"role": "assistant", "content": "Let's talk about something fun instead.", "blocked": True},
+            ],
+            YOUNG,
+            strictness=3,
+            child_name="Riley",
+            age=15,
+            classifier_enabled=False,
+        )
+        assert result.allowed
+        sent = captured["messages"]
+        assert all("bomb" not in (m.get("content") or "").lower() for m in sent)
+        assert sent[-1]["role"] == "user"
 
     @pytest.mark.asyncio
     async def test_stream_routes_timer_and_drops_model_quiz(self, monkeypatch):
