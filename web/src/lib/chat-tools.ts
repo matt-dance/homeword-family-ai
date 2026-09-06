@@ -124,7 +124,7 @@ export function howtoFromProse(content: string, title = "How to"): HowToTool | n
   return { type: "howto", title: foundTitle || "How to", steps };
 }
 
-function extractBalancedJson(source: string, start: number): string | null {
+function extractBalancedJson(source: string, start: number): { raw: string; end: number } | null {
   if (source[start] !== "{") return null;
   let depth = 0;
   let inString = false;
@@ -150,7 +150,7 @@ function extractBalancedJson(source: string, start: number): string | null {
     if (char === "{") depth += 1;
     else if (char === "}") {
       depth -= 1;
-      if (depth === 0) return source.slice(start, i + 1);
+      if (depth === 0) return { raw: source.slice(start, i + 1), end: i + 1 };
     }
   }
   return null;
@@ -164,10 +164,11 @@ function pullFencedTools(content: string): { cleaned: string; tools: ChatTool[] 
   while ((match = FENCE_OPEN_RE.exec(content))) {
     const jsonStart = content.indexOf("{", match.index + match[0].length);
     if (jsonStart < 0) continue;
-    const raw = extractBalancedJson(content, jsonStart);
-    if (!raw) continue;
-    const close = content.indexOf("```", jsonStart + raw.length);
-    const end = close >= 0 ? close + 3 : jsonStart + raw.length;
+    const extracted = extractBalancedJson(content, jsonStart);
+    if (!extracted) continue;
+    const { raw, end: jsonEnd } = extracted;
+    const close = content.indexOf("```", jsonEnd);
+    const end = close >= 0 ? close + 3 : jsonEnd;
     try {
       const parsed = asChatTool(JSON.parse(raw));
       if (parsed) tools.push(parsed);

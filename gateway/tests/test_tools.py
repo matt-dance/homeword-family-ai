@@ -319,6 +319,21 @@ def test_extract_model_tools_nested_howto_fence():
     assert cards[0].data["steps"] == ["Mix flour", "Cook gently"]
 
 
+def test_extract_model_tools_keeps_trailing_text_after_whitespace_before_fence_close():
+    text = (
+        "Before\n"
+        "```homeward\n"
+        '{"type":"facts","topic":"dogs","facts":["They sniff."]}\n'
+        "\n"
+        "```\n"
+        "After"
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == "Before\n\nAfter"
+    assert cards[0].type == "facts"
+    assert cards[0].data["topic"] == "dogs"
+
+
 def test_howto_from_prose_numbered_recipe():
     prose = (
         "Sure! Here is a pancake recipe:\n"

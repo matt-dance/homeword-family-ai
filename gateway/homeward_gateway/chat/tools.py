@@ -943,7 +943,7 @@ def howto_from_prose(text: str, *, title: str | None = None) -> ToolCard | None:
     return ToolCard("howto", {"title": (found_title or "How to").strip(), "steps": steps})
 
 
-def _extract_balanced_json(text: str, start: int) -> str | None:
+def _extract_balanced_json(text: str, start: int) -> tuple[str, int] | None:
     if start < 0 or start >= len(text) or text[start] != "{":
         return None
     depth = 0
@@ -969,7 +969,7 @@ def _extract_balanced_json(text: str, start: int) -> str | None:
         elif char == "}":
             depth -= 1
             if depth == 0:
-                return text[start : index + 1]
+                return text[start : index + 1], index + 1
     return None
 
 
@@ -979,17 +979,18 @@ def _iter_fenced_json(text: str) -> list[tuple[int, int, dict[str, Any]]]:
         brace = text.find("{", match.end())
         if brace < 0:
             continue
-        raw = _extract_balanced_json(text, brace)
-        if not raw:
+        extracted = _extract_balanced_json(text, brace)
+        if not extracted:
             continue
+        raw, json_end = extracted
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
             continue
         if not isinstance(payload, dict):
             continue
-        close = text.find("```", brace + len(raw))
-        end = close + 3 if close >= 0 else brace + len(raw)
+        close = text.find("```", json_end)
+        end = close + 3 if close >= 0 else json_end
         found.append((match.start(), end, payload))
     return found
 
