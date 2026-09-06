@@ -11,7 +11,6 @@ from homeward_gateway.pipeline.pipeline import (
     CardRouteEvent,
     PipelineResult,
     ToolEvent,
-    _messages_for_model,
     filter_input,
     filter_output,
     process_chat,
