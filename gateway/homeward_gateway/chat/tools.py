@@ -467,6 +467,49 @@ def is_self_contained_card_request(message: str) -> bool:
     return True
 
 
+# Local cards that already hold the interaction — model prose must not continue
+# the previous turn (QA: timer after an animal quiz still talked about giraffes).
+_LOCAL_CHEER_CARD_TYPES = frozenset({"timer", "quiz", "practice", "ask_parent"})
+_LOCAL_CARD_CHEER = {
+    "timer": "All set! Watch the timer on the card.",
+    "quiz": "Quiz time! Use the card to pick your answers.",
+    "practice": "Let's practice — the card has your first prompt.",
+    "ask_parent": "A grown-up should help with this one.",
+}
+
+
+def messages_for_llm(
+    history: list[dict] | None,
+    user_message: str,
+    user_turn: str,
+) -> list[dict]:
+    """History for the chat model. Card turns omit prior turns so old quiz/story
+    copy cannot steer the reply. Regular questions keep full history."""
+    prior: list[dict] = []
+    if not is_self_contained_card_request(user_message):
+        prior = list(history or [])
+    return [*prior, {"role": "user", "content": user_turn}]
+
+
+def local_card_cheer(message: str, cards: list[ToolCard] | None = None) -> str | None:
+    """Deterministic one-liner when a local timer/quiz/practice/ask_parent card
+    already answers the turn. None means the model still needs to speak."""
+    local = cards if cards is not None else run_local_tools(message)
+    types = {card.type for card in local}
+    cheer_types = types & _LOCAL_CHEER_CARD_TYPES
+    if not cheer_types:
+        return None
+    if types - _LOCAL_CHEER_CARD_TYPES:
+        return None
+    leftover = set(detect_intents(message)) - types - {"lookup"}
+    if leftover:
+        return None
+    for card in local:
+        if card.type in _LOCAL_CARD_CHEER:
+            return _LOCAL_CARD_CHEER[card.type]
+    return None
+
+
 def allowed_card_types(intents: list[str]) -> set[str] | None:
     """Card types this turn may emit. None means the model may choose any type."""
     if not intents:
@@ -876,7 +919,8 @@ def local_howto_card(message: str) -> ToolCard | None:
     topic = howto_topic(message) or message
     key = _howto_bank_key(topic)
     if key:
-        return ToolCard("howto", dict(_HOWTO_BANK[key]))
+        data = _HOWTO_BANK[key]
+        return ToolCard("howto", {"title": data["title"], "steps": list(data["steps"])})
     return ToolCard("howto", {"title": howto_title(message), "steps": list(_GENERIC_HOWTO_STEPS)})
 
 
@@ -899,7 +943,7 @@ def howto_from_prose(text: str, *, title: str | None = None) -> ToolCard | None:
     return ToolCard("howto", {"title": (found_title or "How to").strip(), "steps": steps})
 
 
-def _extract_balanced_json(text: str, start: int) -> str | None:
+def _extract_balanced_json(text: str, start: int) -> tuple[str, int] | None:
     if start < 0 or start >= len(text) or text[start] != "{":
         return None
     depth = 0
@@ -925,7 +969,7 @@ def _extract_balanced_json(text: str, start: int) -> str | None:
         elif char == "}":
             depth -= 1
             if depth == 0:
-                return text[start : index + 1]
+                return text[start : index + 1], index + 1
     return None
 
 
@@ -935,17 +979,18 @@ def _iter_fenced_json(text: str) -> list[tuple[int, int, dict[str, Any]]]:
         brace = text.find("{", match.end())
         if brace < 0:
             continue
-        raw = _extract_balanced_json(text, brace)
-        if not raw:
+        extracted = _extract_balanced_json(text, brace)
+        if not extracted:
             continue
+        raw, json_end = extracted
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
             continue
         if not isinstance(payload, dict):
             continue
-        close = text.find("```", brace + len(raw))
-        end = close + 3 if close >= 0 else brace + len(raw)
+        close = text.find("```", json_end)
+        end = close + 3 if close >= 0 else json_end
         found.append((match.start(), end, payload))
     return found
 
@@ -1083,7 +1128,10 @@ def tool_prompt_hint(
         parts.append("This is a definition request — include a define card.")
     if "quiz" in intents:
         if "quiz" in already:
-            parts.append("A quiz card will already appear. Cheer them on in one short sentence. Do not emit another quiz.")
+            parts.append(
+                "A quiz card will already appear. Cheer them on in one short sentence "
+                "about this quiz only. Do not continue an earlier topic. Do not emit another quiz."
+            )
         else:
             need_model_fence = True
             parts.append(
@@ -1095,7 +1143,11 @@ def tool_prompt_hint(
     if "math" in intents:
         parts.append("A calculator card will already show the number. Explain the steps in plain words.")
     if "timer" in intents:
-        parts.append("A timer card will already appear. Cheer them on in one short sentence. Do not emit a quiz or story.")
+        parts.append(
+            "A timer card will already appear. Cheer them on in one short sentence "
+            "about the timer only. Do not mention any earlier quiz, story, or topic. "
+            "Do not emit a quiz or story."
+        )
     if "clock" in intents:
         parts.append(
             "A clock card shows the exact current local time and date. "
@@ -1118,7 +1170,10 @@ def tool_prompt_hint(
         parts.append("This is a riddle request — include a riddle card with riddle, answer, and optional hint.")
     if "practice" in intents:
         if "practice" in already:
-            parts.append("A practice card will already appear. Cheer them on in one short sentence. Do not emit another card.")
+            parts.append(
+                "A practice card will already appear. Cheer them on in one short sentence "
+                "about this practice only. Do not continue an earlier topic. Do not emit another card."
+            )
         else:
             need_model_fence = True
             parts.append(
@@ -1142,7 +1197,8 @@ def tool_prompt_hint(
     if "ask_parent" in intents:
         parts.append(
             "An ask-a-grown-up card will already appear. "
-            "One short sentence telling them to check with a parent. Do not tell a story."
+            "One short sentence telling them to check with a parent. "
+            "Do not continue an earlier topic. Do not tell a story."
         )
     if need_model_fence:
         shapes = [_MODEL_CARD_SHAPES[name] for name in allowed if name in _MODEL_CARD_SHAPES]

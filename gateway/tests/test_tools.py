@@ -11,9 +11,11 @@ from homeward_gateway.chat.tools import (
     howto_from_prose,
     is_clock_question,
     is_self_contained_card_request,
+    local_card_cheer,
     local_howto_card,
     local_practice_card,
     local_quiz_card,
+    messages_for_llm,
     normalize_howto_data,
     parse_timer_seconds,
     requested_story_pages,
@@ -259,6 +261,12 @@ def test_local_howto_card_for_pancake_prompt():
     assert "pancake" in card.data["title"].lower()
     assert len(card.data["steps"]) >= 3
     assert all(isinstance(step, str) and step for step in card.data["steps"])
+    original_first_step = card.data["steps"][0]
+    card.data["steps"][0] = "Changed in test"
+
+    fresh = local_howto_card("How do I make pancakes?")
+    assert fresh is not None
+    assert fresh.data["steps"][0] == original_first_step
 
     cards = run_local_tools("How do I make pancakes?")
     howto = next(card for card in cards if card.type == "howto")
@@ -311,6 +319,21 @@ def test_extract_model_tools_nested_howto_fence():
     assert cards[0].data["steps"] == ["Mix flour", "Cook gently"]
 
 
+def test_extract_model_tools_keeps_trailing_text_after_whitespace_before_fence_close():
+    text = (
+        "Before\n"
+        "```homeward\n"
+        '{"type":"facts","topic":"dogs","facts":["They sniff."]}\n'
+        "\n"
+        "```\n"
+        "After"
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == "Before\n\nAfter"
+    assert cards[0].type == "facts"
+    assert cards[0].data["topic"] == "dogs"
+
+
 def test_howto_from_prose_numbered_recipe():
     prose = (
         "Sure! Here is a pancake recipe:\n"
@@ -337,3 +360,53 @@ def test_self_contained_card_request():
     assert is_self_contained_card_request("Quiz me about animals!")
     assert not is_self_contained_card_request("Quiz me on that")
     assert not is_self_contained_card_request("why is the sky blue")
+
+
+def test_local_card_cheer_for_self_contained_local_cards():
+    timer = local_card_cheer("Set a 10-second timer")
+    assert timer is not None
+    assert "timer" in timer.lower()
+    assert "animal" not in timer.lower()
+    assert "quiz" not in timer.lower()
+
+    quiz = local_card_cheer("Quiz me about animals!")
+    assert quiz is not None
+    assert "card" in quiz.lower()
+
+    practice = local_card_cheer("Practice times tables")
+    assert practice is not None
+
+    parent = local_card_cheer("Ask my parent if I can stay up late")
+    assert parent is not None
+    assert "grown-up" in parent.lower()
+
+    # Model still has to write the card / explanation.
+    assert local_card_cheer("How do I make pancakes?") is None
+    assert local_card_cheer("Quiz me about dinosaurs!") is None
+    assert local_card_cheer("why is the sky blue") is None
+
+
+def test_messages_for_llm_omits_history_on_card_turns():
+    history = [
+        {"role": "user", "content": "Quiz me about animals!"},
+        {
+            "role": "assistant",
+            "content": "Think of an animal that has a long neck and spots.",
+        },
+    ]
+    timer_msgs = messages_for_llm(history, "Set a 10-second timer", "Set a 10-second timer")
+    blob = " ".join(item["content"] for item in timer_msgs)
+    assert "animal" not in blob.lower()
+    assert "spots" not in blob.lower()
+    assert timer_msgs == [{"role": "user", "content": "Set a 10-second timer"}]
+
+    howto_msgs = messages_for_llm(
+        [{"role": "user", "content": "Tell me a story about a curious fox"}],
+        "How do I make pancakes?",
+        "How do I make pancakes?",
+    )
+    assert "fox" not in " ".join(item["content"] for item in howto_msgs).lower()
+
+    follow_up = messages_for_llm(history, "why is that?", "why is that?")
+    assert follow_up[0]["content"] == "Quiz me about animals!"
+    assert follow_up[-1]["content"] == "why is that?"

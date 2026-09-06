@@ -157,6 +157,41 @@ describe("extractChatTools", () => {
     expect(tools[0]).toEqual({ type: "howto", title: "Pancakes", steps: ["Mix flour", "Cook gently"] });
   });
 
+  it("parses nested fenced JSON without relying on a regex capture fallback", () => {
+    const content = [
+      "Before",
+      "```homeward",
+      JSON.stringify({
+        type: "story",
+        title: "Moon hike",
+        pages: [{ text: "You land.", choices: [{ label: "Wave", message: "I wave." }] }],
+      }),
+      "```",
+      "After",
+    ].join("\n");
+    const { text, tools } = extractChatTools(content);
+    expect(text).toBe("Before\n\nAfter");
+    expect(tools[0]).toMatchObject({
+      type: "story",
+      title: "Moon hike",
+      pages: [{ text: "You land.", choices: [{ label: "Wave", message: "I wave." }] }],
+    });
+  });
+
+  it("keeps trailing text when whitespace appears before the closing fence", () => {
+    const content = [
+      "Before",
+      "```homeward",
+      JSON.stringify({ type: "facts", topic: "dogs", facts: ["They sniff."] }),
+      "",
+      "```",
+      "After",
+    ].join("\n");
+    const { text, tools } = extractChatTools(content);
+    expect(text).toBe("Before\n\nAfter");
+    expect(tools).toEqual([{ type: "facts", topic: "dogs", facts: ["They sniff."] }]);
+  });
+
   it("replaces a generic howto with a richer incoming card", () => {
     const generic = { type: "howto" as const, title: "How to", steps: ["Ask a grown-up.", "Go slowly."] };
     const richer = { type: "howto" as const, title: "Make pancakes", steps: ["Mix", "Cook", "Eat"] };
