@@ -231,10 +231,18 @@ def format_user_turn(
     lookup_notes: str = "",
 ) -> str:
     """Build the user message seen by the model, with context and lookup facts."""
+    from homeward_gateway.chat.tools import is_self_contained_card_request
+
     parts: list[str] = []
-    block = resolved.state.active_context_block()
-    if block:
-        parts.append(block)
+    # A fresh timer/quiz/howto/story request must not be steered by a prior Topic
+    # (QA: timer after "Quiz me about animals" became Animal Quiz Time!).
+    include_context = bool(lookup_notes) or (
+        resolved.is_follow_up and not is_self_contained_card_request(resolved.original_message)
+    )
+    if include_context:
+        block = resolved.state.active_context_block()
+        if block:
+            parts.append(block)
     if resolved.context_hint:
         parts.append(resolved.context_hint)
     question = filtered_content

@@ -25,10 +25,17 @@ from homeward_gateway.chat.session_state import (
     resolve_turn,
 )
 from homeward_gateway.chat.tools import (
+    apply_card_routing,
     ask_parent_card,
+    card_route_for_message,
     clock_tool_hint,
     detect_intents,
     extract_model_tools,
+    local_card_cheer,
+    messages_for_llm,
+    howto_from_prose,
+    howto_title,
+    requested_story_pages,
     run_local_tools,
     tool_prompt_hint,
 )
@@ -44,6 +51,14 @@ class PipelineResult:
     stage: str | None = None
     session_state: SessionState | None = None
     tools: list[dict] | None = None
+
+
+def _is_llm_timeout(exc: BaseException) -> bool:
+    """True when the model never produced a reply before a timeout."""
+    if isinstance(exc, TimeoutError):
+        return True
+    message = str(exc).lower()
+    return "timeout" in message or "timed out" in message
 
 
 def _blocked_result(result: PipelineResult) -> PipelineResult:
@@ -65,6 +80,12 @@ class ToolEvent:
 class StatusEvent:
     message: str | None = None
     phase: str | None = None
+
+
+@dataclass
+class CardRouteEvent:
+    allow: list[str] | None
+    story_pages: int | None = None
 
 
 def _rules_only_classifier(chat_model: str | None) -> bool:
@@ -258,13 +279,55 @@ async def resolve_live_lookup(
 def _combined_tool_hint(
     user_message: str,
     home: HomeContext | None = None,
+    *,
+    local_types: set[str] | None = None,
 ) -> str:
     tz = home.timezone if home else None
+    intents = detect_intents(user_message)
     parts = [
-        tool_prompt_hint(detect_intents(user_message)),
+        tool_prompt_hint(
+            intents,
+            local_types=local_types,
+            story_pages=requested_story_pages(user_message) if "story" in intents else None,
+        ),
         clock_tool_hint(user_message, timezone=tz),
     ]
     return "\n\n".join(part for part in parts if part)
+
+
+def _merge_tool_dicts(*groups: list[dict]) -> list[dict]:
+    """Keep one howto card (last wins) so a model/prose card can replace the local stub."""
+    merged: list[dict] = []
+    for group in groups:
+        for item in group:
+            if item.get("type") == "howto":
+                merged = [other for other in merged if other.get("type") != "howto"]
+                merged.append(item)
+                continue
+            if item not in merged:
+                merged.append(item)
+    return merged
+
+
+def _model_cards_for_turn(user_message: str, model_text: str) -> list[dict]:
+    visible, model_cards = extract_model_tools(model_text or "")
+    if "howto" in detect_intents(user_message) and not any(card.type == "howto" for card in model_cards):
+        synthesized = howto_from_prose(visible, title=howto_title(user_message))
+        if synthesized:
+            model_cards = [*model_cards, synthesized]
+    return [card.to_dict() for card in apply_card_routing(user_message, model_cards)]
+
+
+def _tools_for_turn(
+    user_message: str,
+    model_text: str,
+    *,
+    extra: list[dict] | None = None,
+    timezone: str | None = None,
+) -> list[dict]:
+    local = [card.to_dict() for card in run_local_tools(user_message, timezone=timezone)]
+    routed = _model_cards_for_turn(user_message, model_text or "")
+    return _merge_tool_dicts(extra or [], local, routed)
 
 
 async def process_chat(
@@ -302,7 +365,31 @@ async def process_chat(
         session_state,
         home_location=home.location if home else None,
     )
-    lookup_notes, _lookup_tools, intent, lookup_result = await resolve_live_lookup(
+    tz = home.timezone if home else None
+    local_cards = run_local_tools(user_message, timezone=tz)
+    updated_state = resolved.state.with_topic(user_message)
+    canned = local_card_cheer(user_message, local_cards)
+    if canned is not None:
+        output_result = await filter_output(
+            canned, preset, strictness, classifier_model,
+            classifier_enabled=classifier_enabled,
+            rules_only_classifier=rules_only,
+        )
+        if not output_result.allowed:
+            return _blocked_result(output_result)
+        return PipelineResult(
+            allowed=True,
+            content=output_result.content,
+            session_state=updated_state,
+            tools=_tools_for_turn(
+                user_message,
+                output_result.content or "",
+                extra=[],
+                timezone=tz,
+            ),
+        )
+
+    lookup_notes, lookup_tools, intent, lookup_result = await resolve_live_lookup(
         resolved.expanded_message,
         live_lookups=live_lookups,
         preset=preset,
@@ -313,11 +400,14 @@ async def process_chat(
         session_state=resolved.state,
         rules_only_classifier=rules_only,
     )
-    updated_state = resolved.state.with_topic(user_message)
     if intent and lookup_result:
         updated_state = updated_state.merge_lookup(intent, lookup_result)
 
-    hint = _combined_tool_hint(user_message, home)
+    hint = _combined_tool_hint(
+        user_message,
+        home,
+        local_types={card.type for card in local_cards},
+    )
     if resolved.context_hint:
         hint = "\n\n".join(part for part in (hint, resolved.context_hint) if part)
     user_turn = format_user_turn(
@@ -327,7 +417,7 @@ async def process_chat(
     )
     try:
         response = await generate_response(
-            messages + [{"role": "user", "content": user_turn}],
+            messages_for_llm(messages, user_message, user_turn),
             child_name,
             age,
             preset,
@@ -339,9 +429,13 @@ async def process_chat(
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
             memory_items=memory_items,
+            continue_conversation=bool(messages),
         )
-    except Exception:
-        return PipelineResult(allowed=False, block_reason="llm error", stage="llm")
+    except TimeoutError:
+        return PipelineResult(allowed=False, block_reason="llm timeout", stage="llm")
+    except Exception as exc:
+        reason = "llm timeout" if _is_llm_timeout(exc) else "llm error"
+        return PipelineResult(allowed=False, block_reason=reason, stage="llm")
 
     output_result = await filter_output(
         response, preset, strictness, classifier_model,
@@ -355,6 +449,12 @@ async def process_chat(
         allowed=True,
         content=output_result.content,
         session_state=updated_state,
+        tools=_tools_for_turn(
+            user_message,
+            output_result.content or "",
+            extra=lookup_tools,
+            timezone=tz,
+        ),
     )
 
 
@@ -376,7 +476,7 @@ async def process_chat_stream(
     quick_chat: bool = False,
     session_state: SessionState | None = None,
     memory_items: list[dict] | None = None,
-) -> AsyncIterator[str | PipelineResult | ToolEvent | StatusEvent]:
+) -> AsyncIterator[str | PipelineResult | ToolEvent | StatusEvent | CardRouteEvent]:
     """Stream pipeline: filter input first, then stream LLM, filter output at end."""
     rules_only = _rules_only_classifier(chat_model)
     yield StatusEvent(message="Checking your message…", phase="checking")
@@ -397,9 +497,31 @@ async def process_chat_stream(
     )
     # Tell the client the safety check finished so Thinking is not a silent hang.
     yield StatusEvent(message="Writing a reply…", phase="generating")
-    local_tools = [card.to_dict() for card in run_local_tools(user_message, timezone=home.timezone if home else None)]
+    route = card_route_for_message(user_message)
+    yield CardRouteEvent(allow=route["allow"], story_pages=route["story_pages"])
+    local_cards = run_local_tools(user_message, timezone=home.timezone if home else None)
+    local_tools = [card.to_dict() for card in local_cards]
     if local_tools:
         yield ToolEvent(local_tools)
+
+    canned = local_card_cheer(user_message, local_cards)
+    if canned is not None:
+        updated_state = resolved.state.with_topic(user_message)
+        output_result = await filter_output(
+            canned, preset, strictness, classifier_model,
+            classifier_enabled=classifier_enabled,
+            rules_only_classifier=rules_only,
+        )
+        if not output_result.allowed:
+            yield _blocked_result(output_result)
+            return
+        yield output_result.content or canned
+        yield PipelineResult(
+            allowed=True,
+            content=output_result.content,
+            session_state=updated_state,
+        )
+        return
 
     if live_lookups:
         yield StatusEvent(message="Looking that up…", phase="lookup")
@@ -421,7 +543,11 @@ async def process_chat_stream(
     if lookup_tools:
         yield ToolEvent(lookup_tools)
 
-    hint = _combined_tool_hint(user_message, home)
+    hint = _combined_tool_hint(
+        user_message,
+        home,
+        local_types={card.type for card in local_cards},
+    )
     if resolved.context_hint:
         hint = "\n\n".join(part for part in (hint, resolved.context_hint) if part)
     user_turn = format_user_turn(
@@ -433,7 +559,7 @@ async def process_chat_stream(
     yield StatusEvent(message="Writing a reply…", phase="generating")
     try:
         async for token in stream_response(
-            messages + [{"role": "user", "content": user_turn}],
+            messages_for_llm(messages, user_message, user_turn),
             child_name,
             age,
             preset,
@@ -445,6 +571,7 @@ async def process_chat_stream(
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
             memory_items=memory_items,
+            continue_conversation=bool(messages),
         ):
             collected.append(token)
             yield token
@@ -457,8 +584,8 @@ async def process_chat_stream(
         return
 
     full_response = "".join(collected)
-    _visible, model_cards = extract_model_tools(full_response)
-    extra = [card.to_dict() for card in model_cards]
+    visible, model_cards = extract_model_tools(full_response)
+    extra = [card.to_dict() for card in apply_card_routing(user_message, model_cards)]
     if extra:
         yield ToolEvent(extra)
     output_result = await filter_output(
@@ -469,6 +596,18 @@ async def process_chat_stream(
     if not output_result.allowed:
         yield _blocked_result(output_result)
         return
+
+    # Only after output is allowed: turn a prose recipe into a howto card.
+    if (
+        "howto" in detect_intents(user_message)
+        and not any(card.get("type") == "howto" for card in extra)
+        and not any(card.type == "howto" for card in local_cards)
+    ):
+        synthesized = howto_from_prose(visible, title=howto_title(user_message))
+        if synthesized:
+            routed = [card.to_dict() for card in apply_card_routing(user_message, [synthesized])]
+            if routed:
+                yield ToolEvent(routed)
 
     yield PipelineResult(
         allowed=True,

@@ -97,6 +97,7 @@ export default function SetupPage() {
           pin: "",
           homework_mode: c.homework_mode ?? false,
           live_lookups: c.live_lookups ?? false,
+          voice_gender: c.voice_gender ?? "female",
         }))
       );
       setStep("model");

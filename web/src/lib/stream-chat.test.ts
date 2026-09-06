@@ -55,6 +55,110 @@ describe("streamChat", () => {
     expect(tokens).toEqual(["Hello"]);
   });
 
+  it("forwards a card_route allowlist", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse([
+          'data: {"type":"card_route","allow":["timer","lookup"],"story_pages":null}\n\n',
+          'data: {"type":"tools","tools":[{"type":"timer","seconds":10,"label":"10 seconds"}]}\n\n',
+          'data: {"type":"done","session_id":1}\n\n',
+        ]),
+      ),
+    );
+
+    const routes: Array<{ allow: string[] | null }> = [];
+    const tools: unknown[] = [];
+    await streamChat(
+      "Set a 10-second timer",
+      1,
+      () => undefined,
+      () => {
+        throw new Error("should not block");
+      },
+      () => undefined,
+      1,
+      (incoming) => tools.push(...incoming),
+      undefined,
+      false,
+      undefined,
+      (route) => routes.push(route),
+    );
+    expect(routes[0]?.allow).toEqual(["timer", "lookup"]);
+    expect(tools[0]).toMatchObject({ type: "timer", seconds: 10 });
+  });
+
+  it("forwards a howto card_route and tools payload the kid UI can render", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse([
+          'data: {"type":"card_route","allow":["howto","lookup"],"story_pages":null}\n\n',
+          'data: {"type":"tools","tools":[{"type":"howto","title":"Make pancakes","steps":["Mix","Cook"]}]}\n\n',
+          'data: {"type":"token","content":"You can do it!"}\n\n',
+          'data: {"type":"done","session_id":1}\n\n',
+        ]),
+      ),
+    );
+
+    const routes: Array<{ allow: string[] | null }> = [];
+    const tools: unknown[] = [];
+    const tokens: string[] = [];
+    await streamChat(
+      "How do I make pancakes?",
+      1,
+      (token) => tokens.push(token),
+      () => {
+        throw new Error("should not block");
+      },
+      () => undefined,
+      1,
+      (incoming) => tools.push(...incoming),
+      undefined,
+      false,
+      undefined,
+      (route) => routes.push(route),
+    );
+    expect(routes[0]?.allow).toEqual(["howto", "lookup"]);
+    expect(tools[0]).toMatchObject({ type: "howto", title: "Make pancakes", steps: ["Mix", "Cook"] });
+    expect(tokens.join("")).toBe("You can do it!");
+  });
+
+  it("ignores SSE keepalive comments and still delivers tokens", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse([
+          ": connected\n\n",
+          ": keepalive\n\n",
+          'data: {"type":"status","phase":"generating","message":"Writing a reply…"}\n\n',
+          ": keepalive\n\n",
+          'data: {"type":"token","content":"Hi"}\n\n',
+          'data: {"type":"done","session_id":1}\n\n',
+        ]),
+      ),
+    );
+
+    const tokens: string[] = [];
+    const statuses: string[] = [];
+    await streamChat(
+      "hi",
+      1,
+      (token) => tokens.push(token),
+      () => {
+        throw new Error("should not block");
+      },
+      () => undefined,
+      1,
+      undefined,
+      undefined,
+      undefined,
+      (status) => statuses.push(status),
+    );
+    expect(tokens).toEqual(["Hi"]);
+    expect(statuses[0]).toMatch(/Writing/i);
+  });
+
   it("surfaces a gateway error instead of hanging", async () => {
     vi.stubGlobal(
       "fetch",
@@ -71,11 +175,48 @@ describe("streamChat", () => {
     expect(blocked[0]).toMatch(/nap|try again/i);
   });
 
-  it("throws when the stream ends with no reply", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => sseResponse([])));
+  it("surfaces a kid-safe message for raw Internal Server Error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        json: async () => ({ detail: "Internal Server Error" }),
+      })),
+    );
 
     await expect(
       streamChat("hi", 1, () => undefined, () => undefined, () => undefined, 1),
+    ).rejects.toThrow(/trouble answering|try again/i);
+  });
+
+  it("recovers a persisted reply when the SSE stream is empty", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(sseResponse([]))
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          messages: [
+            { role: "user", content: "hi" },
+            { role: "assistant", content: "The sky is blue because of scattering." },
+          ],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tokens: string[] = [];
+    await streamChat("hi", 1, (token) => tokens.push(token), () => undefined, () => undefined, 1);
+    expect(tokens.join("")).toMatch(/sky is blue/i);
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("throws when the stream ends with no reply and no session to recover", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponse([])));
+
+    await expect(
+      streamChat("hi", 1, () => undefined, () => undefined, () => undefined),
     ).rejects.toThrow(/too long to reply/i);
   });
 });

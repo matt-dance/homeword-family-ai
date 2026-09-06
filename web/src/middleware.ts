@@ -45,5 +45,13 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/setup", "/setup/:path*", "/api/v1/:path*"],
+  // /api/v1/chat/stream is omitted on purpose: Next.js middleware can buffer
+  // SSE bodies, which drops tokens in the kid chat UI while the gateway still
+  // finishes and writes the reply to the parent dashboard.
+  matcher: [
+    "/dashboard/:path*",
+    "/setup",
+    "/setup/:path*",
+    "/api/v1/((?!chat/stream$).*)",
+  ],
 };
