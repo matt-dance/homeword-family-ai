@@ -163,6 +163,12 @@ async def is_ollama_reachable() -> bool:
     return await resolved_ollama_url() is not None
 
 
+def ollama_unavailable_detail() -> str:
+    if settings.is_ollama_managed():
+        return "AI engine is still starting. Please wait a moment and try again."
+    return "Ollama is not running. Start it with: ollama serve"
+
+
 async def list_installed_models() -> list[str]:
     url = await resolved_ollama_url()
     if not url:

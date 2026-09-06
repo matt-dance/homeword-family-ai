@@ -1956,7 +1956,7 @@ async def ollama_pull(
     if not await ollama_service.is_ollama_reachable():
         raise HTTPException(
             status_code=503,
-            detail="Ollama is not running. Start it with: ollama serve",
+            detail=ollama_service.ollama_unavailable_detail(),
         )
     try:
         ollama_service.validate_model_id(body.model)
@@ -1986,7 +1986,7 @@ async def ollama_bootstrap(
     if not await ollama_service.is_ollama_reachable():
         raise HTTPException(
             status_code=503,
-            detail="AI engine is still starting. Please wait a moment and try again.",
+            detail=ollama_service.ollama_unavailable_detail(),
         )
     chat_model, classifier_model = await get_effective_models(session)
     status = await ollama_service.get_status(chat_model, classifier_model)

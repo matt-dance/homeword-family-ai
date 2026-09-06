@@ -41,6 +41,8 @@ async def lifespan(app: FastAPI):
     if await ollama_service.is_ollama_reachable():
         models = await ollama_service.list_installed_models()
         logger.info("Ollama reachable at %s — models: %s", settings.ollama_base_url, models or "none")
+    elif settings.is_ollama_managed():
+        logger.warning("Managed Ollama is not reachable yet at %s", settings.ollama_base_url)
     else:
         logger.warning(
             "Ollama not reachable at %s — install from https://ollama.com and run: ollama serve",

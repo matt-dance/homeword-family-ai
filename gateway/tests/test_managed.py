@@ -72,3 +72,27 @@ class TestGetStatusManaged:
             assert status["bootstrap_hint"] is None
         finally:
             _restore(*original)
+
+
+class TestUnavailableDetail:
+    def test_managed_copy(self):
+        original = (settings.managed, settings.docker_mode)
+        try:
+            settings.managed = True
+            settings.docker_mode = False
+            text = ollama_service.ollama_unavailable_detail()
+            assert "ollama.com" not in text.lower()
+            assert "ollama serve" not in text
+            assert "starting" in text.lower()
+        finally:
+            _restore(*original)
+
+    def test_unmanaged_copy_keeps_cli_hint(self):
+        original = (settings.managed, settings.docker_mode)
+        try:
+            settings.managed = False
+            settings.docker_mode = False
+            text = ollama_service.ollama_unavailable_detail()
+            assert "ollama serve" in text
+        finally:
+            _restore(*original)
