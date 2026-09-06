@@ -43,3 +43,7 @@ HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1 ./desktop/scripts/bundle-macos.sh arm64
 ```
 
 Creates the Contents tree and copies `policies/`. Skips Node / uv / Ollama / Homebrew runtime fetches. On non-Darwin hosts it also skips the supervisor `go build` (Cocoa cannot be linked here). A family DMG cannot be produced in skip mode.
+
+## Troubleshooting
+
+**Gatekeeper blocks an unsigned local build.** Expected for contributor `.app` / DMG builds without `--sign`. macOS may refuse to open or quarantine the bundle. For family machines, build with `./desktop/scripts/dmg-macos.sh <arch> --sign` after setting `HOMEWARD_CODESIGN_IDENTITY` and `HOMEWARD_NOTARY_PROFILE`.
