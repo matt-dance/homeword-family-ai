@@ -39,6 +39,8 @@ function ChildChatContent() {
       .childrenPublic()
       .then((kids) => {
         if (slug.toLowerCase() === QUICK_CHAT_SLUG) {
+          // Anonymous Quick Chat: reuse the default profile's safety settings.
+          // KidChatView skips that child's PIN when quickChat is set.
           const defaultChild = kids.find((child) => child.is_default);
           if (defaultChild) {
             setSelectedChild(defaultChild);
