@@ -435,7 +435,7 @@ async def process_chat(
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
             memory_items=memory_items,
-            continue_conversation=bool(messages),
+            continue_conversation=bool(history),
         )
     except TimeoutError:
         return PipelineResult(allowed=False, block_reason="llm timeout", stage="llm")
@@ -578,7 +578,7 @@ async def process_chat_stream(
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
             memory_items=memory_items,
-            continue_conversation=bool(messages),
+            continue_conversation=bool(history),
         ):
             collected.append(token)
             yield token
