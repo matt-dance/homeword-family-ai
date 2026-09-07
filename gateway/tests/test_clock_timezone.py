@@ -77,6 +77,14 @@ def test_now_in_timezone_converts_utc_instant():
     assert moment.strftime("%A") == "Sunday"
 
 
+def test_now_in_timezone_preserves_naive_wall_time():
+    naive = datetime(2026, 9, 6, 22, 36)
+    moment = now_in_timezone("America/Denver", naive)
+    assert moment.tzinfo == ZoneInfo("America/Denver")
+    assert moment.hour == 22
+    assert moment.day == 6
+
+
 async def test_resolve_home_location_uses_geocode_timezone(monkeypatch):
     async def fake_geocode(name: str):
         return {

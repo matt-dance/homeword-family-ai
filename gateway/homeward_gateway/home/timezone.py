@@ -49,7 +49,9 @@ def now_in_timezone(
     zone = zoneinfo_for(resolve_display_timezone(household))
     moment = now if now is not None else datetime.now(timezone.utc)
     if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=timezone.utc)
+        if zone is not None:
+            return moment.replace(tzinfo=zone)
+        return moment.astimezone()
     if zone is not None:
         return moment.astimezone(zone)
     return moment.astimezone()
