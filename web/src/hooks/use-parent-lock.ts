@@ -8,6 +8,7 @@ import {
   markParentUnlocked,
   subscribeParentLock,
 } from "@/lib/parent-lock";
+import { isParentSignedOut } from "@/lib/parent-session";
 
 const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll"] as const;
 
@@ -22,8 +23,9 @@ export function useParentLock() {
     const expired = isParentLockExpired();
     setLocked(expired);
     // Idle lock is real, not cosmetic: drop the server session so the cookie
-    // cannot be reused until the parent signs in again.
-    if (expired && wasLockedRef.current === false) {
+    // cannot be reused until the parent signs in again. Sign-out already
+    // clears the cookie and must not race a second restore path.
+    if (expired && wasLockedRef.current === false && !isParentSignedOut()) {
       void api.logout().catch(() => {});
     }
     wasLockedRef.current = expired;

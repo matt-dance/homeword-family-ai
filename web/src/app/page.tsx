@@ -4,23 +4,36 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { HomewardLogo } from "@/components/homeward-logo";
+import { isParentSignedOut, parentRouteAfterSessionCheck } from "@/lib/parent-session";
 
 export default function HomePage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    api.setupStatus()
-      .then((status) => {
-        if (!status.has_parent) {
-          router.replace("/setup");
-        } else if (!status.setup_complete) {
-          router.replace("/setup");
-        } else {
-          router.replace("/dashboard");
+    const go = (path: "/setup" | "/dashboard") => router.replace(path);
+    api
+      .setupStatus()
+      .then(async (status) => {
+        if (!status.has_parent || !status.setup_complete || isParentSignedOut()) {
+          go("/setup");
+          return;
+        }
+        try {
+          await api.me();
+          go(
+            parentRouteAfterSessionCheck({
+              setupComplete: true,
+              hasParent: true,
+              signedOut: isParentSignedOut(),
+              meOk: true,
+            }),
+          );
+        } catch {
+          go("/setup");
         }
       })
-      .catch(() => router.replace("/setup"))
+      .catch(() => go("/setup"))
       .finally(() => setChecking(false));
   }, [router]);
 

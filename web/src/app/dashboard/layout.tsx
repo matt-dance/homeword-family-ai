@@ -1,36 +1,77 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { clearParentUnlock, markParentUnlocked } from "@/lib/parent-lock";
+import { markParentUnlocked } from "@/lib/parent-lock";
 import { useParentLock } from "@/hooks/use-parent-lock";
 import { ParentNav } from "@/components/parent-nav";
 import { ParentLockOverlay } from "@/components/parent-lock-overlay";
+import {
+  applyAuthMeResult,
+  isParentSignedOut,
+  leaveParentDashboard,
+  parentDashboardShouldRender,
+  signOutParentSession,
+  type ParentAuthGate,
+} from "@/lib/parent-session";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const [ready, setReady] = useState(false);
+  const [auth, setAuth] = useState<ParentAuthGate>("checking");
+  const authEpochRef = useRef(0);
   const { locked, refreshActivity } = useParentLock();
 
   useEffect(() => {
+    const epoch = authEpochRef.current;
+    let cancelled = false;
+
+    const reject = () => {
+      if (cancelled || epoch !== authEpochRef.current) return;
+      setAuth("unauthed");
+      if (isParentSignedOut()) {
+        leaveParentDashboard();
+        return;
+      }
+      router.replace("/setup");
+    };
+
+    if (isParentSignedOut()) {
+      reject();
+      return () => {
+        cancelled = true;
+      };
+    }
+
     api
       .me()
       .then(() => {
-        // A valid host session is enough to open this tab; idle lock still applies after.
+        const next = applyAuthMeResult({
+          signedOut: isParentSignedOut(),
+          meOk: true,
+          cancelled: cancelled || epoch !== authEpochRef.current,
+        });
+        if (next !== "authed") {
+          reject();
+          return;
+        }
         markParentUnlocked();
-        setReady(true);
+        setAuth("authed");
       })
-      .catch(() => router.replace("/setup"));
+      .catch(() => reject());
+
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   const handleLogout = async () => {
-    clearParentUnlock();
-    await api.logout();
-    router.replace("/setup");
+    authEpochRef.current += 1;
+    setAuth("unauthed");
+    await signOutParentSession(() => api.logout(), leaveParentDashboard);
   };
 
-  if (!ready) {
+  if (!parentDashboardShouldRender(auth)) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <p className="text-muted-foreground">Loading…</p>

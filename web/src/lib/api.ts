@@ -1,6 +1,7 @@
 import { decodeSpeechPayload } from "@/lib/read-aloud";
 import type { CardRoute, ChatTool } from "@/lib/chat-tools";
 import { markParentUnlocked } from "@/lib/parent-lock";
+import { clearParentSignedOut } from "@/lib/parent-session";
 import {
   CHAT_UNAVAILABLE_MESSAGE,
   latestAssistantAfterUser,
@@ -144,9 +145,11 @@ export interface OllamaPullJob {
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
+    cache: "no-store",
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      "Cache-Control": "no-store",
       ...options?.headers,
     },
   });
@@ -166,6 +169,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 /** A fresh sign-in should not be greeted by the idle-lock overlay. */
 function unlockParentUi<T>(result: T): T {
+  clearParentSignedOut();
   markParentUnlocked();
   return result;
 }
