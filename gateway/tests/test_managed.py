@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from homeward_gateway.config import settings
+from homeward_gateway.config import Settings, settings
 from homeward_gateway.ollama import service as ollama_service
 
 
@@ -40,6 +40,16 @@ class TestIsOllamaManaged:
             assert settings.is_ollama_managed() is True
         finally:
             _restore(*original)
+
+
+class TestDockerModeEnvBinding:
+    def test_homeward_docker_env_sets_docker_mode(self, monkeypatch):
+        monkeypatch.setenv("HOMEWARD_DOCKER", "true")
+        monkeypatch.setenv("HOMEWARD_MANAGED", "false")
+        constructed = Settings(_env_file=None)
+        assert constructed.docker_mode is True
+        assert constructed.managed is False
+        assert constructed.is_ollama_managed() is True
 
 
 class TestGetStatusManaged:

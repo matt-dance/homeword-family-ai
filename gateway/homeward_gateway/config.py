@@ -3,13 +3,21 @@
 import secrets
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_SECRET_KEY = "change-me-in-production"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="HOMEWARD_", env_file=".env", extra="ignore")
+    # env_prefix_target='all' so aliases like DOCKER bind HOMEWARD_DOCKER
+    # (default 'variable' would look for a bare DOCKER env var).
+    model_config = SettingsConfigDict(
+        env_prefix="HOMEWARD_",
+        env_file=".env",
+        extra="ignore",
+        env_prefix_target="all",
+    )
 
     # Paths
     data_dir: Path = Path("./data")
@@ -42,8 +50,11 @@ class Settings(BaseSettings):
     cloud_enabled: bool = False
     openai_api_key: str = ""
 
-    # Packaging
-    docker_mode: bool = False
+    # Packaging — compose/docs use HOMEWARD_DOCKER; field name maps to HOMEWARD_DOCKER_MODE.
+    docker_mode: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("DOCKER", "DOCKER_MODE", "docker_mode"),
+    )
     managed: bool = False
 
     def is_ollama_managed(self) -> bool:
