@@ -44,6 +44,11 @@ class Settings(BaseSettings):
 
     # Packaging
     docker_mode: bool = False
+    managed: bool = False
+
+    def is_ollama_managed(self) -> bool:
+        """True when Homeward starts Ollama (native installer or Docker)."""
+        return self.managed or self.docker_mode
 
     # Local voice (Whisper + Kokoro TTS, Piper fallback)
     whisper_model: str = "tiny.en"

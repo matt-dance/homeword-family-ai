@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  advertisedWebPort,
   clientIpFromRequest,
   homewardBaseUrl,
   isLocalDashboardClient,
   isLoopbackHostname,
+  kidChatUrl,
   normalizeHostname,
+  parentLocalUrl,
 } from "./local-host";
 
 describe("local-host", () => {
@@ -42,5 +45,22 @@ describe("local-host", () => {
   it("omits port 80 from default URL", () => {
     expect(homewardBaseUrl()).toBe("http://homeward.local");
     expect(homewardBaseUrl("homeward.local", 43123)).toBe("http://homeward.local:43123");
+  });
+
+  it("treats missing or port 80 as the default HTTP port", () => {
+    expect(advertisedWebPort("")).toBe(80);
+    expect(advertisedWebPort("80")).toBe(80);
+    expect(advertisedWebPort(undefined)).toBe(80);
+  });
+
+  it("keeps non-80 ports for kid and parent URLs", () => {
+    expect(advertisedWebPort("43123")).toBe(43123);
+    expect(kidChatUrl(43123)).toBe("http://homeward.local:43123/chat");
+    expect(parentLocalUrl(43123)).toBe("http://localhost:43123");
+  });
+
+  it("omits port 80 from kid and parent URLs", () => {
+    expect(kidChatUrl(80)).toBe("http://homeward.local/chat");
+    expect(parentLocalUrl(80)).toBe("http://localhost");
   });
 });

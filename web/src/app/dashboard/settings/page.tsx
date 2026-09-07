@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { DEFAULT_HOMEWARD_URL } from "@/lib/local-host";
+import { kidChatUrl, parentLocalUrl } from "@/lib/local-host";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -425,12 +425,12 @@ export default function SettingsPage() {
             <p className="font-semibold text-foreground">
               Kids on Wi‑Fi:{" "}
               <code className="text-primary font-mono bg-primary/10 px-1.5 py-0.5 rounded">
-                {DEFAULT_HOMEWARD_URL}/chat
+                {kidChatUrl()}
               </code>
             </p>
             <p>
               On this computer, use{" "}
-              <code className="font-mono text-foreground">http://localhost</code> for setup and the
+              <code className="font-mono text-foreground">{parentLocalUrl()}</code> for setup and the
               parent dashboard. Kid chat is the only page that opens from other devices.
             </p>
           </div>

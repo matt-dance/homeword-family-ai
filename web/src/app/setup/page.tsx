@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DEFAULT_HOMEWARD_URL } from "@/lib/local-host";
+import { kidChatUrl, parentLocalUrl } from "@/lib/local-host";
 import { api, type Preset } from "@/lib/api";
 import { HomewardLogo } from "@/components/homeward-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -709,12 +709,12 @@ export default function SetupPage() {
                 <p className="font-semibold text-foreground">
                   Kids can chat from phones and tablets on your Wi‑Fi at{" "}
                   <code className="text-primary font-mono bg-primary/10 px-1.5 py-0.5 rounded">
-                    {DEFAULT_HOMEWARD_URL}/chat
+                    {kidChatUrl()}
                   </code>
                 </p>
                 <p className="text-muted-foreground">
                   On this computer, use{" "}
-                  <code className="font-mono">http://localhost</code> for setup and the
+                  <code className="font-mono">{parentLocalUrl()}</code> for setup and the
                   parent dashboard.
                 </p>
               </div>
