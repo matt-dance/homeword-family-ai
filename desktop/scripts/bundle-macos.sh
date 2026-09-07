@@ -414,7 +414,10 @@ install_python_gateway() {
         ;;
     esac
   fi
-  uv pip install --python "$RUNTIME/python/bin/python" "$REPO/gateway"
+  # Copied standalone CPython ships EXTERNALLY-MANAGED (PEP 668). This tree
+  # lives inside the .app; we own it and must install the gateway here.
+  rm -f "$RUNTIME/python"/lib/python3.*/EXTERNALLY-MANAGED
+  uv pip install --python "$RUNTIME/python/bin/python" --break-system-packages "$REPO/gateway"
   rm -rf "$managed"
 }
 
