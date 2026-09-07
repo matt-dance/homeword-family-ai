@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isResumableSession, shouldOfferResume } from "./resume-session";
+import {
+  actionAfterPinUnlock,
+  isResumableSession,
+  resumeTranscript,
+  shouldOfferResume,
+} from "./resume-session";
 
 describe("shouldOfferResume", () => {
   const session = {
@@ -37,5 +42,53 @@ describe("isResumableSession", () => {
     expect(isResumableSession({ session_id: 1, messages: [{ role: "user", content: "   " }] })).toBe(false);
     expect(isResumableSession({ session_id: 1, messages: [] })).toBe(false);
     expect(isResumableSession(null)).toBe(false);
+  });
+});
+
+describe("actionAfterPinUnlock", () => {
+  it("resumes immediately when Continue last chat already chose a session", () => {
+    expect(
+      actionAfterPinUnlock({ pendingChoice: "continue", allowResume: true, quickChat: false }),
+    ).toBe("resume");
+  });
+
+  it("starts fresh when that was the in-progress choice", () => {
+    expect(
+      actionAfterPinUnlock({ pendingChoice: "fresh", allowResume: true, quickChat: false }),
+    ).toBe("fresh");
+  });
+
+  it("offers resume after a first PIN unlock on a named profile", () => {
+    expect(
+      actionAfterPinUnlock({ pendingChoice: null, allowResume: true, quickChat: false }),
+    ).toBe("offer");
+  });
+
+  it("does not offer named resume for Quick Chat or when the parent disabled it", () => {
+    expect(
+      actionAfterPinUnlock({ pendingChoice: null, allowResume: true, quickChat: true }),
+    ).toBe("fresh");
+    expect(
+      actionAfterPinUnlock({ pendingChoice: null, allowResume: false, quickChat: false }),
+    ).toBe("fresh");
+  });
+});
+
+describe("resumeTranscript", () => {
+  it("keeps user and assistant turns with content", () => {
+    expect(
+      resumeTranscript({
+        session_id: 9,
+        messages: [
+          { role: "user", content: "hi" },
+          { role: "assistant", content: "hello" },
+          { role: "system", content: "ignore" },
+          { role: "user", content: "  " },
+        ],
+      }),
+    ).toEqual([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]);
   });
 });

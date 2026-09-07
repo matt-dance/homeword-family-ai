@@ -128,6 +128,7 @@ def set_child_access_cookie(response: Response, child_id: int) -> None:
         key=_child_cookie_name(child_id),
         value=token,
         max_age=settings.child_access_max_age,
+        path="/",
         httponly=True,
         samesite="lax",
         secure=False,
