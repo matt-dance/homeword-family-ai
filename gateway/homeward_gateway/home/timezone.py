@@ -5,7 +5,8 @@ Resolution order (first valid IANA name wins):
 1. Household timezone from the parent home location
 2. HOMEWARD_TIMEZONE
 3. TZ (standard host / container env)
-4. Process local zone (UTC in most Docker images unless TZ is set)
+4. Process local zone (from TZ or the host/container local zone; often UTC in
+   Docker images unless TZ or /etc/localtime is set)
 
 Python slim images do not ship tzdata. The gateway depends on the ``tzdata``
 package so names like America/Denver resolve instead of silently becoming UTC.
@@ -48,7 +49,9 @@ def now_in_timezone(
     zone = zoneinfo_for(resolve_display_timezone(household))
     moment = now if now is not None else datetime.now(timezone.utc)
     if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=timezone.utc)
+        if zone is not None:
+            return moment.replace(tzinfo=zone)
+        return moment.astimezone()
     if zone is not None:
         return moment.astimezone(zone)
     return moment.astimezone()
