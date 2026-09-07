@@ -24,6 +24,7 @@ dependencies = [
     "onnx>=1.16.0",
     "numpy>=1.26.0",
     "zeroconf>=0.131.0",
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

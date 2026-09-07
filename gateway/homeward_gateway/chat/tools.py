@@ -374,18 +374,10 @@ def format_local_time(now: datetime) -> str:
 
 
 def current_clock_card(now: datetime | None = None, timezone: str | None = None) -> ToolCard:
-    moment = now
-    if moment is None:
-        if timezone:
-            try:
-                from zoneinfo import ZoneInfo
+    from homeward_gateway.home.timezone import now_in_timezone, resolve_display_timezone
 
-                moment = datetime.now(ZoneInfo(timezone))
-            except Exception:
-                moment = datetime.now().astimezone()
-        else:
-            moment = datetime.now().astimezone()
-    tz = moment.tzname() or timezone or "local time"
+    moment = now_in_timezone(timezone, now)
+    tz = moment.tzname() or resolve_display_timezone(timezone) or "local time"
     return ToolCard(
         "clock",
         {
@@ -396,8 +388,12 @@ def current_clock_card(now: datetime | None = None, timezone: str | None = None)
     )
 
 
-def clock_tool_hint(message: str, timezone: str | None = None) -> str:
-    card = current_clock_card(timezone=timezone)
+def clock_tool_hint(
+    message: str,
+    timezone: str | None = None,
+    now: datetime | None = None,
+) -> str:
+    card = current_clock_card(now=now, timezone=timezone)
     return (
         "CURRENT LOCAL TIME from this device — not a guess. "
         f"Time: {card.data['time']}. Date: {card.data['date']} ({card.data['timezone']}). "

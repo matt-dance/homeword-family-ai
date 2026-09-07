@@ -104,6 +104,16 @@ def test_clock_tool_hint_is_always_on():
     assert any(ch.isdigit() for ch in hint)
 
 
+def test_clock_tool_hint_uses_household_timezone_not_utc():
+    from datetime import datetime, timezone
+
+    utc = datetime(2026, 9, 7, 4, 36, tzinfo=timezone.utc)
+    hint = clock_tool_hint("Tell me a joke", timezone="America/Denver", now=utc)
+    assert "Sunday, September 06, 2026" in hint
+    assert "10:36 PM" in hint
+    assert "Monday" not in hint
+
+
 def test_run_local_math_and_timer():
     cards = run_local_tools("What is 5+3?")
     assert any(card.type == "math" and card.data["result"] == "8" for card in cards)
