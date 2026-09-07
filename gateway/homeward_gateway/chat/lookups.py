@@ -630,7 +630,8 @@ async def resolve_home_location(name: str) -> tuple[str, str, str | None] | None
     if not geo:
         return None
     label = format_geo_label(geo)
-    timezone = await timezone_for_geo(geo)
+    timezone = geo.get("timezone")
+    timezone = str(timezone) if timezone else await timezone_for_geo(geo)
     return name.strip(), label, timezone
 
 

@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     cloud_enabled: bool = False
     openai_api_key: str = ""
 
+    # Household clock: used when parent home location has no IANA timezone.
+    # Empty means fall through to TZ, then the process local zone.
+    timezone: str = ""
+
     # Packaging
     docker_mode: bool = False
     managed: bool = False
