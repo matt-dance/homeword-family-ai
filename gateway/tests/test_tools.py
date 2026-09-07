@@ -97,6 +97,13 @@ def test_clock_tool_hint_includes_actual_time():
     assert any(ch.isdigit() for ch in hint)
 
 
+def test_clock_tool_hint_is_always_on():
+    hint = clock_tool_hint("Tell me a joke")
+    assert "Time:" in hint
+    assert "Date:" in hint
+    assert any(ch.isdigit() for ch in hint)
+
+
 def test_run_local_math_and_timer():
     cards = run_local_tools("What is 5+3?")
     assert any(card.type == "math" and card.data["result"] == "8" for card in cards)
