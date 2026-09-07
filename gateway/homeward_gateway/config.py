@@ -50,8 +50,8 @@ class Settings(BaseSettings):
     cloud_enabled: bool = False
     openai_api_key: str = ""
 
-    # Household clock: used when parent home location has no IANA timezone.
-    # Empty means fall through to TZ, then the process local zone.
+    # Household clock: HOMEWARD_TIMEZONE when the parent home location has no
+    # IANA timezone. Empty means fall through to TZ, then the process local zone.
     timezone: str = ""
 
     # Packaging — compose/docs use HOMEWARD_DOCKER; field name maps to HOMEWARD_DOCKER_MODE.
