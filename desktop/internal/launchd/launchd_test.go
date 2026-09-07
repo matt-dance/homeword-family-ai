@@ -54,6 +54,18 @@ func TestWritePlist(t *testing.T) {
 	}
 }
 
+func TestAlreadyLoaded(t *testing.T) {
+	if !alreadyLoaded("Bootstrap failed: 5: Input/output error\nservice already loaded") {
+		t.Fatal("already loaded")
+	}
+	if !alreadyLoaded("Load failed: 5: Input/output error\nAlready exists") {
+		t.Fatal("already exists")
+	}
+	if alreadyLoaded("permission denied") {
+		t.Fatal("unrelated error")
+	}
+}
+
 func TestKillArgs(t *testing.T) {
 	args := KillArgs()
 	want := []string{"launchctl", "kill", "SIGTERM", fmt.Sprintf("gui/%d/%s", os.Getuid(), Label)}

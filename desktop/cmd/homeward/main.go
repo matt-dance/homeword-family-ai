@@ -21,6 +21,7 @@ import (
 	"homeward/desktop/internal/launchd"
 	"homeward/desktop/internal/paths"
 	"homeward/desktop/internal/proc"
+	"homeward/desktop/internal/singleton"
 )
 
 const parentURL = "http://127.0.0.1:43123"
@@ -69,6 +70,18 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 		return runUninstall(home, dataDir, wipeFlag, nil)
 	}
 
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return err
+	}
+	lock, held, err := singleton.TryAcquire(singleton.Path(dataDir))
+	if err != nil {
+		return err
+	}
+	if !held {
+		return runSecondary(openFlag, marker)
+	}
+	defer lock.Release()
+
 	plist, err := launchd.WritePlist(home, exe)
 	if err != nil {
 		log.Printf("write LaunchAgent plist: %v", err)
@@ -110,26 +123,49 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 		os.Exit(0)
 	}()
 
+	webOK := false
 	if err := waitHealthy(decision.Reason != "blocked"); err != nil {
 		log.Printf("health: %v", err)
 		if status != "Port 11434 is in use" {
 			status = err.Error()
 		}
-	} else if status != "Port 11434 is in use" {
-		status = "Running"
+		webOK = webHealthy()
+	} else {
+		webOK = true
+		if status != "Port 11434 is in use" {
+			status = "Running"
+		}
 	}
 
-	if openFlag || browser.ShouldOpenOnBoot(marker) {
+	maybeOpenBrowser(openFlag, browser.ShouldOpenOnBoot(marker), webOK, true, marker)
+	runTray(manager, status)
+	return nil
+}
+
+// runSecondary handles a second Homeward (launchd after user launch, or
+// Finder while the tray is already up). It must not Start children.
+func runSecondary(openFlag bool, marker string) error {
+	maybeOpenBrowser(openFlag, browser.ShouldOpenOnBoot(marker), webHealthy(), false, marker)
+	return nil
+}
+
+func webHealthy() bool {
+	status, err := health.HTTPChecker{}.Get(parentURL + "/")
+	return err == nil && status == 200
+}
+
+func maybeOpenBrowser(openFlag, firstRun, webOK, holder bool, marker string) {
+	doOpen, doMark := browser.DecideLaunchOpen(openFlag, firstRun, webOK, holder)
+	if doOpen {
 		if err := browser.OpenURL(parentURL).Start(); err != nil {
 			log.Printf("open browser: %v", err)
 		}
+	}
+	if doMark {
 		if err := browser.MarkOpened(marker); err != nil {
 			log.Printf("mark opened: %v", err)
 		}
 	}
-
-	runTray(manager, status)
-	return nil
 }
 
 // runUninstall stops children, then removes the login item.

@@ -21,3 +21,21 @@ func MarkOpened(markerPath string) error {
 func OpenURL(rawURL string) *exec.Cmd {
 	return exec.Command("open", rawURL)
 }
+
+// DecideLaunchOpen reports whether this invocation should open the parent
+// URL and write .browser_opened.
+//
+// holder is the flock owner (the only process that starts children).
+// webOK is a successful HTTP 200 from http://127.0.0.1:43123/.
+// --open always opens. First-run on the holder opens only after webOK.
+// A non-holder may open on first-run without marking unless webOK.
+func DecideLaunchOpen(openFlag, firstRun, webOK, holder bool) (open, mark bool) {
+	if !openFlag && !firstRun {
+		return false, false
+	}
+	mark = webOK
+	if openFlag || !holder {
+		return true, mark
+	}
+	return webOK, mark
+}

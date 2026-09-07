@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const Label = "ai.homeward.app"
@@ -56,8 +57,21 @@ func serviceTarget() string {
 	return guiDomain() + "/" + Label
 }
 
+func alreadyLoaded(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "already loaded") || strings.Contains(lower, "already exists")
+}
+
 func Bootstrap(plist string) error {
-	return exec.Command("launchctl", "bootstrap", guiDomain(), plist).Run()
+	cmd := exec.Command("launchctl", "bootstrap", guiDomain(), plist)
+	out, err := cmd.CombinedOutput()
+	if err == nil || alreadyLoaded(string(out)) {
+		return nil
+	}
+	if len(out) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 }
 
 func Bootout() error {

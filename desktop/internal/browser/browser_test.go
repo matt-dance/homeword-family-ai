@@ -30,3 +30,33 @@ func TestOpenURLUsesOpen(t *testing.T) {
 		t.Fatalf("%v", cmd.Args)
 	}
 }
+
+func TestDecideLaunchOpen(t *testing.T) {
+	cases := []struct {
+		name     string
+		openFlag bool
+		firstRun bool
+		webOK    bool
+		holder   bool
+		wantOpen bool
+		wantMark bool
+	}{
+		{name: "holder first-run after health", firstRun: true, webOK: true, holder: true, wantOpen: true, wantMark: true},
+		{name: "holder first-run health failed", firstRun: true, holder: true},
+		{name: "holder --open after health", openFlag: true, webOK: true, holder: true, wantOpen: true, wantMark: true},
+		{name: "holder --open health failed", openFlag: true, holder: true, wantOpen: true},
+		{name: "holder later login", holder: true},
+		{name: "non-holder first-run web down", firstRun: true, wantOpen: true},
+		{name: "non-holder first-run web up", firstRun: true, webOK: true, wantOpen: true, wantMark: true},
+		{name: "non-holder --open web down", openFlag: true, wantOpen: true},
+		{name: "non-holder later login"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			open, mark := DecideLaunchOpen(tc.openFlag, tc.firstRun, tc.webOK, tc.holder)
+			if open != tc.wantOpen || mark != tc.wantMark {
+				t.Fatalf("open=%v mark=%v", open, mark)
+			}
+		})
+	}
+}
