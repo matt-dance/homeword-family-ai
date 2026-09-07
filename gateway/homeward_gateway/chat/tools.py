@@ -397,8 +397,6 @@ def current_clock_card(now: datetime | None = None, timezone: str | None = None)
 
 
 def clock_tool_hint(message: str, timezone: str | None = None) -> str:
-    if not is_clock_question(message):
-        return ""
     card = current_clock_card(timezone=timezone)
     return (
         "CURRENT LOCAL TIME from this device — not a guess. "
