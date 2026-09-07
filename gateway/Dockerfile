@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir ./gateway
 
 ENV HOMEWARD_POLICIES_DIR=/app/policies
 ENV HOMEWARD_DATA_DIR=/data
+ENV ESPEAK_DATA_PATH=/usr/share/espeak-ng-data
 
 EXPOSE 8000
 

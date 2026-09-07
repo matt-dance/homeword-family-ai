@@ -9,6 +9,7 @@ import (
 func ChildEnv(dataDir, policiesDir, resourceRoot string) []string {
 	ffmpegBin := filepath.Join(resourceRoot, "runtime", "ffmpeg", "bin")
 	espeakBin := filepath.Join(resourceRoot, "runtime", "espeak", "bin")
+	espeakData := filepath.Join(resourceRoot, "runtime", "espeak", "share", "espeak-ng-data")
 
 	overrides := map[string]string{
 		"HOMEWARD_HOST":              "127.0.0.1",
@@ -26,6 +27,7 @@ func ChildEnv(dataDir, policiesDir, resourceRoot string) []string {
 		"OLLAMA_HOST":                "127.0.0.1:11434",
 		"OLLAMA_MODELS":              filepath.Join(dataDir, "ollama"),
 		"PATH":                       buildPath(ffmpegBin, espeakBin),
+		"ESPEAK_DATA_PATH":           espeakData,
 	}
 
 	env := os.Environ()

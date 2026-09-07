@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -38,6 +40,48 @@ KOKORO_VOICES_URL = (
     "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
 )
 SELF_TEST_PHRASE = "Homeward read aloud is working"
+
+_ESPEAK_DATA_CANDIDATES = (
+    Path("/usr/share/espeak-ng-data"),
+    Path("/opt/homebrew/share/espeak-ng-data"),
+    Path("/usr/local/share/espeak-ng-data"),
+)
+
+
+def _is_espeak_data_dir(path: Path) -> bool:
+    return path.is_dir() and (path / "phontab").is_file()
+
+
+def resolve_espeak_data_path() -> Path | None:
+    """Find a real espeak-ng data dir. The macOS kokoro/espeakng_loader wheel
+    bakes in a GitHub Actions path, so ESPEAK_DATA_PATH must point at the
+    bundled or system share — not the wheel's own copy."""
+    existing = os.environ.get("ESPEAK_DATA_PATH")
+    if existing:
+        current = Path(existing)
+        if _is_espeak_data_dir(current):
+            return current
+
+    binary = shutil.which("espeak-ng")
+    if binary:
+        sibling = Path(binary).resolve().parent.parent / "share" / "espeak-ng-data"
+        if _is_espeak_data_dir(sibling):
+            return sibling
+
+    for candidate in _ESPEAK_DATA_CANDIDATES:
+        if _is_espeak_data_dir(candidate):
+            return candidate
+    return None
+
+
+def ensure_espeak_data_path() -> Path | None:
+    path = resolve_espeak_data_path()
+    if path is not None:
+        os.environ["ESPEAK_DATA_PATH"] = str(path)
+    return path
+
+
+ensure_espeak_data_path()
 
 
 def piper_available() -> bool:
@@ -312,6 +356,7 @@ def synthesize_speech(text: str, voice_gender: str | None = None) -> dict[str, A
     if not cleaned:
         raise ValueError("Nothing to read aloud")
 
+    ensure_espeak_data_path()
     voice = resolve_voice(voice_gender)
     try:
         if voice.engine == "kokoro":
