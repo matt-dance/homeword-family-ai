@@ -127,4 +127,11 @@ async def classify(
         result = classify_rules_fallback(text)
         return result
 
-    return await classify_with_ollama(text, model=model)
+    try:
+        return await asyncio.wait_for(
+            classify_with_ollama(text, model=model),
+            timeout=settings.classifier_timeout + 1.0,
+        )
+    except (TimeoutError, asyncio.TimeoutError):
+        logger.warning("Classifier wall-clock timeout")
+        return _with_fallback("classifier: timeout", text)

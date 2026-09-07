@@ -1,10 +1,14 @@
 import { NextRequest } from "next/server";
 import { clientIpFromRequest, normalizeHostname } from "@/lib/local-host";
+import { LLM_UNAVAILABLE_MESSAGE } from "@/lib/nonstream-chat-error";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const fetchCache = "force-no-store";
 export const maxDuration = 120;
+
+/** Give the gateway time to return SSE headers; do not wait the full 120s empty. */
+export const GATEWAY_HEADER_TIMEOUT_MS = 20_000;
 
 const GATEWAY_URL = process.env.GATEWAY_URL || "http://localhost:8000";
 
@@ -34,40 +38,70 @@ function isEventStream(contentType: string | null): boolean {
   return (contentType || "").includes("text/event-stream");
 }
 
+function combineAbortSignals(signals: AbortSignal[]): AbortSignal {
+  const active = signals.filter(Boolean);
+  if (active.length === 1) return active[0];
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any(active);
+  }
+  const controller = new AbortController();
+  for (const signal of active) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      break;
+    }
+    signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+  }
+  return controller.signal;
+}
+
+function sseNapResponse(): Response {
+  const encoder = new TextEncoder();
+  const body =
+    `: connected\n\n` +
+    `data: ${JSON.stringify({ type: "error", message: LLM_UNAVAILABLE_MESSAGE })}\n\n`;
+  return new Response(encoder.encode(body), {
+    status: 200,
+    headers: SSE_HEADERS,
+  });
+}
+
 /**
  * Dedicated SSE proxy so Next.js rewrites/middleware cannot buffer chat tokens.
  * Kid chat stays on /api/v1/chat/stream; only this path is handled here.
  */
 export async function POST(request: NextRequest) {
+  const body = await request.text();
+  const headerAbort = new AbortController();
+  const headerTimer = setTimeout(() => headerAbort.abort("header-timeout"), GATEWAY_HEADER_TIMEOUT_MS);
+
   let upstream: Response;
   try {
     upstream = await fetch(`${GATEWAY_URL}/api/v1/chat/stream`, {
       method: "POST",
       headers: gatewayHeaders(request),
-      body: await request.text(),
+      body,
       cache: "no-store",
-      signal: request.signal,
+      signal: combineAbortSignals([request.signal, headerAbort.signal]),
     });
   } catch {
-    return Response.json(
-      {
-        detail:
-          "Homeward could not reach the chat service. Ask a parent to check that Homeward is running.",
-      },
-      { status: 502 },
-    );
+    // Gateway never sent headers (setup stall / wedged Ollama). Kid-safe nap,
+    // not a silent 120s empty timeout through this proxy.
+    return sseNapResponse();
+  } finally {
+    clearTimeout(headerTimer);
   }
 
   const contentType = upstream.headers.get("content-type");
   if (!upstream.body) {
-    return Response.json({ detail: "Stream failed" }, { status: 502 });
+    return sseNapResponse();
   }
 
   // PIN / rate-limit / setup failures are JSON. Forward them so the kid UI
   // can show the real message instead of a generic Internal Server Error.
   if (!isEventStream(contentType)) {
-    const body = await upstream.text();
-    return new Response(body, {
+    const raw = await upstream.text();
+    return new Response(raw, {
       status: upstream.status,
       headers: { "Content-Type": contentType || "application/json" },
     });

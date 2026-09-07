@@ -135,6 +135,7 @@ async def stream_response(
 
     total = 0
     first_token_timeout = getattr(settings, "llm_first_token_timeout", 45.0)
+    deadline = asyncio.get_running_loop().time() + first_token_timeout
     try:
         if _use_cloud():
             llm_model, api_key, api_base, llm_extra = resolve_litellm_target(model)
@@ -158,7 +159,13 @@ async def stream_response(
                     return None, True
 
             while True:
-                timeout = first_token_timeout if total == 0 else settings.llm_timeout
+                if total == 0:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        raise RuntimeError("LLM stream produced no tokens before timeout")
+                    timeout = remaining
+                else:
+                    timeout = settings.llm_timeout
                 try:
                     chunk, done = await asyncio.wait_for(_next_chunk(), timeout=timeout)
                 except (TimeoutError, asyncio.TimeoutError) as exc:

@@ -73,7 +73,7 @@ from homeward_gateway.ollama import service as ollama_service
 from homeward_gateway.ollama.catalog import pick_classifier_model
 from homeward_gateway.ollama.runtime import get_effective_models
 from homeward_gateway.models.router import strip_thinking
-from homeward_gateway.api.sse import with_sse_heartbeats
+from homeward_gateway.api.sse import SSE_CONNECTED, with_sse_heartbeats
 from homeward_gateway.pipeline.pipeline import (
     CardRouteEvent,
     PipelineResult,
@@ -1505,6 +1505,9 @@ async def chat_stream(
         parent = await _load_parent_account(session, child.parent_id)
         home = home_context_from_parent(parent)
         ai_prefs = _serialize_ai_preferences(parent)
+        # Drop the request transaction so the stream's log session can write
+        # without waiting on this connection (SQLite after a hard block).
+        await session.commit()
     except HTTPException:
         raise
     except Exception:
@@ -1513,6 +1516,8 @@ async def chat_stream(
 
     async def event_stream() -> AsyncIterator[str]:
         from homeward_gateway.db.database import async_session_factory
+
+        yield SSE_CONNECTED
 
         async def chat_events() -> AsyncIterator[str]:
             yield f"data: {json.dumps({'type': 'status', 'phase': 'checking'})}\n\n"

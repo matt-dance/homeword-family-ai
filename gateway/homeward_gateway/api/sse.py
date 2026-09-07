@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from typing import AsyncIterator
 
 SSE_HEARTBEAT_SECONDS = 8.0
 SSE_KEEPALIVE = ": keepalive\n\n"
+SSE_CONNECTED = ": connected\n\n"
+SSE_CLOSE_TIMEOUT_SECONDS = 2.0
 
 
 async def with_sse_heartbeats(
@@ -49,5 +50,4 @@ async def with_sse_heartbeats(
                 break
     finally:
         task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await asyncio.wait({task}, timeout=SSE_CLOSE_TIMEOUT_SECONDS)
