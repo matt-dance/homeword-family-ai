@@ -5,7 +5,8 @@ Resolution order (first valid IANA name wins):
 1. Household timezone from the parent home location
 2. HOMEWARD_TIMEZONE
 3. TZ (standard host / container env)
-4. Process local zone (UTC in most Docker images unless TZ is set)
+4. Process local zone (from TZ or the host/container local zone; often UTC in
+   Docker images unless TZ or /etc/localtime is set)
 
 Python slim images do not ship tzdata. The gateway depends on the ``tzdata``
 package so names like America/Denver resolve instead of silently becoming UTC.
