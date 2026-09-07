@@ -224,6 +224,7 @@ pytest tests/test_speak.py -v -m slow
 | `HOMEWARD_CLASSIFIER_MODEL` | `llama3.2:3b` | Safety classifier model |
 | `HOMEWARD_DATA_DIR` | `./data` | SQLite database directory |
 | `HOMEWARD_POLICIES_DIR` | `../policies` | Age preset YAML directory |
+| `HOMEWARD_TIMEZONE` | *(unset)* | IANA zone for chat clock hints/cards when the household home location has no timezone. Falls back to `TZ`, then the process local zone (**UTC in most Docker images**). Set home location in Settings, or export `HOMEWARD_TIMEZONE=America/Denver` (or `TZ`) on the host so Compose can pass it through. |
 | `GATEWAY_URL` | `http://localhost:8000` | Web app proxy target |
 
 ## Local data & starting fresh

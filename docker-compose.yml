@@ -48,6 +48,8 @@ services:
       # Leave unset to auto-generate a per-install key in the data volume.
       - HOMEWARD_SECRET_KEY=${HOMEWARD_SECRET_KEY:-}
       - HOMEWARD_POLICIES_DIR=/app/policies
+      # Clock hints/cards: household home-location TZ wins; this is the host fallback.
+      - HOMEWARD_TIMEZONE=${HOMEWARD_TIMEZONE:-${TZ:-}}
     volumes:
       - homeward_data:/data
       - ./policies:/app/policies:ro
