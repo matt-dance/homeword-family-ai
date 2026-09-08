@@ -106,9 +106,46 @@ class TestPinAPI:
         cookie = resp.headers.get("set-cookie", "")
         assert f"homeward_kid_{child['id']}" in cookie
         assert "httponly" in cookie.lower()
+        assert "path=/" in cookie.lower()
 
         session = await client.post("/api/v1/chat/sessions", json={"child_id": child["id"]}, headers=LAN)
         assert session.status_code == 200
+
+        resume = await client.get(f"/api/v1/children/{child['id']}/sessions/resume", headers=LAN)
+        assert resume.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_pin_unlock_then_resume_twice_keeps_access(self, client: AsyncClient, monkeypatch):
+        """Welcome-back chooser and Continue last chat both GET resume after one PIN."""
+        child = await _pin_child(client)
+        rate_limit._attempts.clear()
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Hi Avery!")
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+
+        unlock = await client.post(
+            f"/api/v1/children/{child['id']}/verify-pin", json={"pin": "1234"}, headers=LAN
+        )
+        assert unlock.status_code == 200
+        named = await client.post("/api/v1/chat/sessions", json={"child_id": child["id"]}, headers=LAN)
+        assert named.status_code == 200
+        named_id = named.json()["session_id"]
+        await client.post(
+            "/api/v1/chat",
+            json={"message": "hello", "child_id": child["id"], "session_id": named_id},
+            headers=LAN,
+        )
+
+        first = await client.get(f"/api/v1/children/{child['id']}/sessions/resume", headers=LAN)
+        assert first.status_code == 200
+        assert first.json()["session_id"] == named_id
+        second = await client.get(f"/api/v1/children/{child['id']}/sessions/resume", headers=LAN)
+        assert second.status_code == 200
+        assert second.json()["session_id"] == named_id
+        contents = " ".join(m["content"] for m in second.json()["messages"])
+        assert "hello" in contents
 
     @pytest.mark.asyncio
     async def test_pin_attempts_are_rate_limited(self, client: AsyncClient):

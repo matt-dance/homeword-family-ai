@@ -20,8 +20,15 @@ import {
   type StoryTool,
 } from "@/lib/chat-tools";
 import { shouldShowReplyChips } from "@/lib/reply-chips";
-import { shouldOfferResume } from "@/lib/resume-session";
-import { chatRequiresPin } from "@/lib/chat-pin";
+import {
+  actionAfterPinUnlock,
+  isResumableSession,
+  resumeTranscript,
+  shouldOfferResume,
+  type ResumeChoice,
+  type ResumeSessionLike,
+} from "@/lib/resume-session";
+import { chatRequiresPin, isPinAccessError } from "@/lib/chat-pin";
 import {
   BARGE_IN_TAP_HINT,
   conversationMicLabel,
@@ -107,6 +114,8 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
   const abortRef = useRef<AbortController | null>(null);
   const cardRouteRef = useRef<CardRoute | null>(null);
   const conversationActiveRef = useRef(false);
+  const pendingChoiceRef = useRef<ResumeChoice | null>(null);
+  const offeredSessionRef = useRef<ResumeSessionLike | null>(null);
 
   const handleVoiceTranscript = useCallback((text: string) => {
     autoReadNextRef.current = true;
@@ -141,6 +150,8 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     voiceGender: selectedChild.voice_gender,
   });
 
+  const stopConversationRef = useRef(stopConversation);
+  stopConversationRef.current = stopConversation;
   conversationActiveRef.current = conversationActive;
   const conversationAvailable = conversationModeAvailable({
     voiceSupported,
@@ -173,7 +184,9 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
 
   useEffect(() => {
     conversationActiveRef.current = false;
-    stopConversation();
+    stopConversationRef.current();
+    pendingChoiceRef.current = null;
+    offeredSessionRef.current = null;
     setPinVerified(!pinRequired);
     setPin("");
     setPinError("");
@@ -184,7 +197,9 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     setResumeChecking(false);
     setStoryPageText({});
     setStarters([]);
-  }, [selectedChild.id, pinRequired, stopConversation]);
+    // stopConversation is kept in a ref so voice-hook identity changes cannot
+    // re-lock a PIN that was just unlocked (Welcome back → Continue loop).
+  }, [selectedChild.id, pinRequired]);
 
   useEffect(() => {
     if (!pinVerified) return;
@@ -196,56 +211,97 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, simpleMode, streaming]);
 
+  const applyResumedSession = useCallback((session: ResumeSessionLike) => {
+    const history = resumeTranscript(session);
+    if (typeof session.session_id !== "number" || history.length === 0) return false;
+    setChatSessionId(session.session_id);
+    setMessages(history);
+    setResumeOffered(false);
+    setResumeChecking(false);
+    setSessionReady(true);
+    setPinError("");
+    pendingChoiceRef.current = null;
+    return true;
+  }, []);
+
   const initSession = useCallback(
     async (resume: boolean) => {
       setSessionReady(false);
       setPinError("");
 
       if (resume && selectedChild.allow_resume !== false) {
+        const cached = offeredSessionRef.current;
+        if (cached && applyResumedSession(cached)) {
+          return;
+        }
         try {
           const resumed = await api.resumeSession(selectedChild.id);
-          const history = (resumed.messages ?? []).filter(
-            (m) => m.content && (m.role === "user" || m.role === "assistant"),
-          );
-          if (history.length > 0) {
-            setChatSessionId(resumed.session_id);
-            setMessages(
-              history.map((m) => ({
-                role: m.role as "user" | "assistant",
-                content: m.content,
-                blocked: m.blocked,
-              })),
-            );
-            setResumeOffered(false);
-            setSessionReady(true);
+          offeredSessionRef.current = resumed;
+          if (applyResumedSession(resumed)) {
             return;
           }
-        } catch {
+        } catch (error) {
+          if (isPinAccessError(error)) {
+            pendingChoiceRef.current = "continue";
+            setPinVerified(false);
+            setResumeOffered(false);
+            setResumeChecking(false);
+            return;
+          }
           // fall through to new session
         }
       }
 
       try {
         const session = await api.createChatSession(selectedChild.id, undefined, quickChat);
+        pendingChoiceRef.current = null;
         setChatSessionId(session.session_id);
         setMessages([]);
         setSessionReady(true);
-      } catch {
+      } catch (error) {
+        if (isPinAccessError(error)) {
+          pendingChoiceRef.current = resume ? "continue" : (pendingChoiceRef.current ?? "fresh");
+          setPinVerified(false);
+          setResumeOffered(false);
+          setResumeChecking(false);
+          return;
+        }
         setPinError(SESSION_ERROR_MESSAGE);
       }
     },
-    [selectedChild, quickChat],
+    [applyResumedSession, selectedChild, quickChat],
   );
 
   useEffect(() => {
     if (!pinVerified || chatSessionId !== null) return;
     let cancelled = false;
 
+    const afterPin = actionAfterPinUnlock({
+      pendingChoice: pendingChoiceRef.current,
+      allowResume: selectedChild.allow_resume,
+      quickChat,
+    });
+
+    if (afterPin === "resume") {
+      setResumeOffered(false);
+      setResumeChecking(false);
+      void initSession(true);
+      return;
+    }
+
     // Quick Chat is anonymous and shared, so never offer another kid's last chat.
-    if (selectedChild.allow_resume === false || quickChat) {
+    if (afterPin === "fresh") {
+      pendingChoiceRef.current = null;
       setResumeOffered(false);
       setResumeChecking(false);
       void initSession(false);
+      return;
+    }
+
+    const cached = offeredSessionRef.current;
+    if (shouldOfferResume({ allowResume: selectedChild.allow_resume, quickChat, session: cached })) {
+      setResumeOffered(true);
+      setResumeChecking(false);
       return;
     }
 
@@ -257,15 +313,22 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       .then((resumed) => {
         if (cancelled) return;
         if (shouldOfferResume({ allowResume: selectedChild.allow_resume, quickChat, session: resumed })) {
+          offeredSessionRef.current = resumed;
           setResumeOffered(true);
           setResumeChecking(false);
           return;
         }
+        offeredSessionRef.current = null;
         setResumeChecking(false);
         void initSession(false);
       })
-      .catch(() => {
+      .catch((error) => {
         if (cancelled) return;
+        if (isPinAccessError(error)) {
+          setPinVerified(false);
+          setResumeChecking(false);
+          return;
+        }
         setResumeChecking(false);
         void initSession(false);
       });
@@ -281,17 +344,24 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     stopConversation();
     stopReadAloud();
     const previousSessionId = chatSessionId;
-    setChatSessionId(null);
-    setMessages([]);
+    pendingChoiceRef.current = "fresh";
+    offeredSessionRef.current = null;
     setSessionReady(false);
     setResumeOffered(false);
     setResumeChecking(false);
     setStoryPageText({});
     try {
       const session = await api.createChatSession(selectedChild.id, previousSessionId ?? undefined, quickChat);
+      pendingChoiceRef.current = null;
       setChatSessionId(session.session_id);
+      setMessages([]);
       setSessionReady(true);
-    } catch {
+    } catch (error) {
+      if (isPinAccessError(error)) {
+        pendingChoiceRef.current = "fresh";
+        setPinVerified(false);
+        return;
+      }
       setPinError(SESSION_ERROR_MESSAGE);
     }
   };
@@ -301,6 +371,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     try {
       await api.verifyPin(selectedChild.id, pin);
       setPinError("");
+      setPin("");
       setPinVerified(true);
       setChatSessionId(null);
       setMessages([]);
@@ -608,7 +679,14 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           <div className="flex flex-col gap-3">
             <Button
               className="h-12 text-base font-semibold rounded-xl shadow-sm shadow-primary/25"
-              onClick={() => initSession(true)}
+              onClick={() => {
+                pendingChoiceRef.current = "continue";
+                const offered = offeredSessionRef.current;
+                if (isResumableSession(offered) && applyResumedSession(offered)) {
+                  return;
+                }
+                void initSession(true);
+              }}
             >
               <RotateCcw className="mr-2 h-4 w-4" />
               Continue last chat
@@ -616,7 +694,11 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             <Button
               variant="outline"
               className="h-12 text-base font-semibold rounded-xl border-border/80 bg-card/80"
-              onClick={() => initSession(false)}
+              onClick={() => {
+                pendingChoiceRef.current = "fresh";
+                offeredSessionRef.current = null;
+                void initSession(false);
+              }}
             >
               <PlusCircle className="mr-2 h-4 w-4" />
               Start fresh chat
