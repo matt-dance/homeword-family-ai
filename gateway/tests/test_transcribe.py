@@ -16,6 +16,7 @@ from homeward_gateway.voice.transcribe import (
     SELF_TEST_WEBM_FIXTURE,
     WHISPER_SAMPLE_RATE,
     decode_audio_16k_mono,
+    load_fixture_bytes,
     normalize_transcript,
     resolve_fixture,
     run_voice_self_test,
@@ -143,6 +144,60 @@ class TestFixtureResolution:
         assert path.parent.name == "fixtures"
 
 
+class TestFixtureLoad:
+    def test_load_fixture_bytes_retries_truncated_read(self, tmp_path: Path):
+        voice = tmp_path / "homeward_gateway" / "voice"
+        packaged = tmp_path / "homeward_gateway" / "fixtures"
+        voice.mkdir(parents=True)
+        packaged.mkdir()
+        target = packaged / "jfk-sample.flac"
+        target.write_bytes(b"x" * 80_000)
+        fake_module = voice / "transcribe.py"
+        fake_module.write_text("")
+
+        reads = {"n": 0}
+        original_read_bytes = Path.read_bytes
+
+        def flaky_read(self: Path):
+            if self.resolve() == target.resolve():
+                reads["n"] += 1
+                if reads["n"] == 1:
+                    return b"tiny"
+            return original_read_bytes(self)
+
+        with patch.object(Path, "read_bytes", flaky_read):
+            data = load_fixture_bytes("jfk-sample.flac", module_file=fake_module)
+
+        assert reads["n"] == 2
+        assert len(data) == 80_000
+
+    def test_load_fixture_bytes_caches_complete_read(self):
+        payload = b"w" * 12_000
+        reads = {"n": 0}
+
+        class Resource:
+            def is_file(self) -> bool:
+                return True
+
+            def read_bytes(self) -> bytes:
+                reads["n"] += 1
+                return payload if reads["n"] == 1 else b"changed-should-not-be-used"
+
+        with (
+            patch.dict("homeward_gateway.voice.transcribe._fixture_bytes", {}, clear=True),
+            patch(
+                "homeward_gateway.voice.transcribe._package_fixture_resource",
+                return_value=Resource(),
+            ),
+        ):
+            first = load_fixture_bytes("jfk-sample.webm")
+            second = load_fixture_bytes("jfk-sample.webm")
+
+        assert first == payload
+        assert second == payload
+        assert reads["n"] == 1
+
+
 class TestTranscriptMatch:
     def test_normalize_strips_punctuation_and_case(self):
         assert (
@@ -162,11 +217,24 @@ class TestTranscriptMatch:
         )
         assert transcript_matches_self_test(SELF_TEST_SNIPPET.upper())
 
+    def test_tiny_en_jfk_paraphrase_matches(self):
+        """Nightly 2026-09-07: tiny.en said 'asked not' / 'Oh, America' and 503'd."""
+        assert transcript_matches_self_test(
+            "And so my Oh, America asked not what your country can do for you "
+            "ask what you can do for your country."
+        )
+        assert transcript_matches_self_test(
+            "And so my fellow American asked not what your country can do for you."
+        )
+
     def test_garbage_transcripts_do_not_match(self):
         assert not transcript_matches_self_test("and so electroc")
         assert not transcript_matches_self_test("Mr. oceans, Senator")
         assert not transcript_matches_self_test("")
         assert not transcript_matches_self_test("   ")
+        assert not transcript_matches_self_test(
+            "hello this is a long random sentence about school and homework tonight kids"
+        )
 
 
 class TestWebmDecode:
@@ -286,7 +354,23 @@ class TestWebmDecode:
 PUNCTUATED_JFK = (
     "Ask not, what your country can do for you — ask what you can do for your country."
 )
+NIGHTLY_FLAC_DRIFT = (
+    "And so my Oh, America asked not what your country can do for you "
+    "ask what you can do for your country."
+)
 GARBAGE_WEBM = "and so electroc"
+
+
+def _suffix_calls(mock) -> list[str]:
+    suffixes: list[str] = []
+    for call in mock.call_args_list:
+        if "suffix" in call.kwargs:
+            suffixes.append(call.kwargs["suffix"])
+        elif len(call.args) > 1:
+            suffixes.append(call.args[1])
+        else:
+            suffixes.append(".webm")
+    return suffixes
 
 
 class TestVoiceSelfTest:
@@ -295,24 +379,22 @@ class TestVoiceSelfTest:
             patch("homeward_gateway.voice.transcribe.whisper_available", return_value=True),
             patch("homeward_gateway.voice.transcribe.ensure_model"),
             patch(
-                "homeward_gateway.voice.transcribe.transcribe_file",
-                return_value=PUNCTUATED_JFK,
-            ) as flac,
-            patch(
                 "homeward_gateway.voice.transcribe.transcribe_bytes",
                 return_value=PUNCTUATED_JFK,
-            ) as webm,
+            ) as transcribe,
         ):
             result = run_voice_self_test()
 
         assert result["ok"] is True
         assert result["webm_ok"] is True
         assert result["text"] == PUNCTUATED_JFK
-        flac.assert_called_once()
-        webm.assert_called_once()
+        assert transcribe.call_count == 2
+        assert _suffix_calls(transcribe) == [".flac", ".webm"]
 
     def test_retries_webm_decode_without_vad_then_succeeds(self):
         def fake_bytes(data, suffix=".webm", *, vad_filter=None):
+            if suffix == ".flac":
+                return PUNCTUATED_JFK
             if vad_filter is False:
                 return PUNCTUATED_JFK
             return GARBAGE_WEBM
@@ -321,33 +403,30 @@ class TestVoiceSelfTest:
             patch("homeward_gateway.voice.transcribe.whisper_available", return_value=True),
             patch("homeward_gateway.voice.transcribe.ensure_model"),
             patch(
-                "homeward_gateway.voice.transcribe.transcribe_file",
-                return_value=PUNCTUATED_JFK,
-            ),
-            patch(
                 "homeward_gateway.voice.transcribe.transcribe_bytes",
                 side_effect=fake_bytes,
-            ) as webm,
+            ) as transcribe,
         ):
             result = run_voice_self_test()
 
         assert result["ok"] is True
         assert result["webm_ok"] is True
-        assert webm.call_count == 2
-        assert webm.call_args.kwargs.get("vad_filter") is False
+        assert _suffix_calls(transcribe).count(".webm") == 2
+        assert transcribe.call_args.kwargs.get("vad_filter") is False
 
     def test_webm_mismatch_after_retry_is_soft_warn(self):
+        def fake_bytes(data, suffix=".webm", *, vad_filter=None):
+            if suffix == ".flac":
+                return PUNCTUATED_JFK
+            return GARBAGE_WEBM
+
         with (
             patch("homeward_gateway.voice.transcribe.whisper_available", return_value=True),
             patch("homeward_gateway.voice.transcribe.ensure_model"),
             patch(
-                "homeward_gateway.voice.transcribe.transcribe_file",
-                return_value=PUNCTUATED_JFK,
-            ),
-            patch(
                 "homeward_gateway.voice.transcribe.transcribe_bytes",
-                return_value=GARBAGE_WEBM,
-            ) as webm,
+                side_effect=fake_bytes,
+            ) as transcribe,
         ):
             result = run_voice_self_test()
 
@@ -355,33 +434,75 @@ class TestVoiceSelfTest:
         assert result["webm_ok"] is False
         assert result["webm_text"] == GARBAGE_WEBM
         assert "WebM" in result["message"]
-        assert webm.call_count == 2
+        assert _suffix_calls(transcribe).count(".webm") == 2
+
+    def test_empty_webm_after_retries_is_soft_warn(self):
+        def fake_bytes(data, suffix=".webm", *, vad_filter=None):
+            if suffix == ".flac":
+                return NIGHTLY_FLAC_DRIFT
+            return ""
+
+        with (
+            patch("homeward_gateway.voice.transcribe.whisper_available", return_value=True),
+            patch("homeward_gateway.voice.transcribe.ensure_model"),
+            patch(
+                "homeward_gateway.voice.transcribe.transcribe_bytes",
+                side_effect=fake_bytes,
+            ) as transcribe,
+        ):
+            result = run_voice_self_test()
+
+        assert result["ok"] is True
+        assert result["webm_ok"] is False
+        assert result["webm_text"] == ""
+        assert result["text"] == NIGHTLY_FLAC_DRIFT
+        assert _suffix_calls(transcribe).count(".webm") == 3
 
     def test_flac_mismatch_after_retry_is_hard_fail(self):
-        def fake_file(path, *, vad_filter=None):
+        def fake_bytes(data, suffix=".webm", *, vad_filter=None):
             return GARBAGE_WEBM
 
         with (
             patch("homeward_gateway.voice.transcribe.whisper_available", return_value=True),
             patch("homeward_gateway.voice.transcribe.ensure_model"),
             patch(
-                "homeward_gateway.voice.transcribe.transcribe_file",
-                side_effect=fake_file,
-            ) as flac,
-            patch("homeward_gateway.voice.transcribe.transcribe_bytes"),
+                "homeward_gateway.voice.transcribe.transcribe_bytes",
+                side_effect=fake_bytes,
+            ) as transcribe,
         ):
             result = run_voice_self_test()
 
         assert result["ok"] is False
         assert result["stage"] == "transcribe"
-        assert flac.call_count == 2
+        assert result["webm_ok"] is False
+        assert _suffix_calls(transcribe).count(".flac") == 2
+
+    def test_webm_match_saves_flac_drift_from_hard_fail(self):
+        def fake_bytes(data, suffix=".webm", *, vad_filter=None):
+            if suffix == ".flac":
+                return "and so electroc"
+            return PUNCTUATED_JFK
+
+        with (
+            patch("homeward_gateway.voice.transcribe.whisper_available", return_value=True),
+            patch("homeward_gateway.voice.transcribe.ensure_model"),
+            patch(
+                "homeward_gateway.voice.transcribe.transcribe_bytes",
+                side_effect=fake_bytes,
+            ),
+        ):
+            result = run_voice_self_test()
+
+        assert result["ok"] is True
+        assert result["webm_ok"] is True
+        assert "WebM" in result["message"]
 
     def test_overlapping_self_tests_do_not_interleave(self):
         in_flight = 0
         max_in_flight = 0
         gate = threading.Lock()
 
-        def fake_file(path, *, vad_filter=None):
+        def fake_bytes(data, suffix=".webm", *, vad_filter=None):
             nonlocal in_flight, max_in_flight
             with gate:
                 in_flight += 1
@@ -395,12 +516,8 @@ class TestVoiceSelfTest:
             patch("homeward_gateway.voice.transcribe.whisper_available", return_value=True),
             patch("homeward_gateway.voice.transcribe.ensure_model"),
             patch(
-                "homeward_gateway.voice.transcribe.transcribe_file",
-                side_effect=fake_file,
-            ),
-            patch(
                 "homeward_gateway.voice.transcribe.transcribe_bytes",
-                return_value=PUNCTUATED_JFK,
+                side_effect=fake_bytes,
             ),
         ):
             results: list[dict] = []
