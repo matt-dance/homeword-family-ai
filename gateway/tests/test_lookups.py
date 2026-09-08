@@ -5,9 +5,14 @@ import pytest
 from homeward_gateway.chat.lookups import (
     LookupResult,
     build_session_context,
+    coerce_open_web_search,
     detect_current_facts_intent,
     detect_lookup_intent,
+    detect_web_search_intent,
     format_current_facts_notes,
+    format_web_notes,
+    parse_searxng_results,
+    rewrite_web_query,
     format_news_notes,
     format_sports_notes,
     format_weather_notes,
@@ -16,6 +21,7 @@ from homeward_gateway.chat.lookups import (
     lookup_context_hint,
     lookup_prompt_notes,
     parse_featured_headlines,
+    parse_in_the_news_template,
     parse_scoreboard_events,
     resolve_lookup_intent,
     resolve_weather_place,
@@ -152,6 +158,19 @@ class TestDetectLookupIntent:
         intent = detect_lookup_intent("What's in the news today?")
         assert intent is not None
         assert intent.kind == "news"
+
+    def test_web_search_iran_war_not_weather_or_sports(self):
+        intent = detect_web_search_intent("what is going on in the current iran war")
+        assert intent is not None
+        assert intent.kind == "web"
+        assert "iran" in intent.query.lower()
+        assert "war" in intent.query.lower()
+        assert "current" not in intent.query.lower()
+        assert detect_web_search_intent("What's the weather in Denver?") is None
+        assert detect_web_search_intent("Did the Broncos win last night?") is None
+        assert coerce_open_web_search(False, True) is False
+        assert coerce_open_web_search(True, True) is True
+        assert rewrite_web_query("what is going on in the current iran war") == "iran war"
 
     def test_current_facts_president(self):
         intent = detect_current_facts_intent("Who is the president of the United States right now?")
@@ -494,14 +513,53 @@ class TestParsers:
 
     def test_parse_featured_headlines(self):
         payload = {
-            "news": {
-                "mostread": [{"titles": {"normalized": "Solar eclipse"}}],
+            "news": [
+                {
+                    "story": "<p>A rover finds a new rock on Mars.</p>",
+                    "links": [{"titles": {"normalized": "Mars rover"}}],
+                }
+            ],
+            "onthisday": [
+                {
+                    "year": 2011,
+                    "text": "Yak-Service Flight 9633 crashes near Yaroslavl, Russia.",
+                }
+            ],
+            "mostread": {
+                "articles": [{"titles": {"normalized": "Barack Obama"}}],
             },
-            "onthisday": [{"text": "On this day a telescope launched."}],
         }
         headlines = parse_featured_headlines(payload)
-        assert "Solar eclipse" in headlines
-        assert any("telescope" in item for item in headlines)
+        assert any("Mars" in item for item in headlines)
+        assert not any("Yak-Service" in item for item in headlines)
+        assert not any("Obama" in item for item in headlines)
+
+    def test_parse_featured_headlines_ignores_onthisday_when_news_is_empty(self):
+        payload = {
+            "news": [],
+            "onthisday": [
+                {
+                    "year": 2011,
+                    "text": "Yak-Service Flight 9633 crashes near Yaroslavl, Russia.",
+                }
+            ],
+        }
+        assert parse_featured_headlines(payload) == []
+
+    def test_parse_in_the_news_template_uses_featured_bullets_only(self):
+        wikitext = """
+{{Main page image/ITN|image=Example.jpg}}
+*<!--Sep 02--> American journalist '''[[Gloria Steinem]]''' ''(pictured)'' dies at the {{nowrap|age of 92}}.
+*<!--Aug 31--> Icelanders reject [[European Union]] membership negotiations.
+{{In the news/footer
+|currentevents =
+* [[Russo-Ukrainian war (2022–present)|Russo-Ukrainian war]]
+}}
+"""
+        headlines = parse_in_the_news_template(wikitext)
+        assert any("Gloria Steinem" in item and "92" in item for item in headlines)
+        assert any("Icelanders" in item for item in headlines)
+        assert not any("Russo-Ukrainian" in item for item in headlines)
 
 
 class TestResolveLiveLookup:
@@ -619,6 +677,155 @@ class TestResolveLiveLookup:
         )
         assert "not kid-safe" in notes
         assert tools == []
+
+    def test_parse_searxng_results_skips_empty(self):
+        items = parse_searxng_results(
+            {
+                "results": [
+                    {
+                        "title": "2026 Iran war",
+                        "content": "The United States and Israel have been at war with Iran.",
+                        "url": "https://en.wikipedia.org/wiki/2026_Iran_war",
+                    },
+                    {"title": "", "content": "nope", "url": "https://example.com"},
+                    {"title": "Skip", "content": "ftp file", "url": "ftp://example.com/x"},
+                ]
+            }
+        )
+        assert len(items) == 1
+        assert "Iran" in items[0]["snippet"]
+        notes = format_web_notes("iran war", items)
+        assert notes.kind == "web"
+        assert notes.source_label == "Open web search"
+        assert "SearxNG" not in notes.notes
+
+    @pytest.mark.asyncio
+    async def test_open_web_iran_war_uses_search(self, monkeypatch):
+        captured: dict[str, str] = {}
+
+        async def fake_fetch(intent):
+            captured["kind"] = intent.kind
+            captured["query"] = intent.query
+            return format_web_notes(
+                intent.query,
+                [
+                    {
+                        "title": "2026 Iran war",
+                        "snippet": "The United States and Israel have been at war with Iran.",
+                        "url": "https://en.wikipedia.org/wiki/2026_Iran_war",
+                    }
+                ],
+            )
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+        notes, tools, intent, result = await resolve_live_lookup(
+            "what is going on in the current iran war",
+            live_lookups=True,
+            open_web_search=True,
+            preset=YOUNG,
+            strictness=3,
+        )
+        assert captured["kind"] == "web"
+        assert "iran" in captured["query"].lower()
+        assert "war" in notes.lower()
+        assert "protest" not in notes.lower()
+        assert tools[0]["source_label"] == "Open web search"
+        assert result is not None
+        assert result.kind == "web"
+
+    @pytest.mark.asyncio
+    async def test_open_web_off_does_not_search_iran_war(self, monkeypatch):
+        called = False
+
+        async def fake_fetch(_intent):
+            nonlocal called
+            called = True
+            return None
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        notes, tools, intent, result = await resolve_live_lookup(
+            "what is going on in the current iran war",
+            live_lookups=True,
+            open_web_search=False,
+            preset=YOUNG,
+            strictness=3,
+        )
+        assert called is False
+        assert notes == ""
+        assert intent is None
+
+    @pytest.mark.asyncio
+    async def test_open_web_weather_still_uses_named_api(self, monkeypatch):
+        result = format_weather_notes("Denver", WEATHER_GEO, WEATHER_FORECAST)
+        kinds: list[str] = []
+
+        async def fake_fetch(intent):
+            kinds.append(intent.kind)
+            return result
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+        notes, tools, intent, _result = await resolve_live_lookup(
+            "What's the weather in Denver?",
+            live_lookups=True,
+            open_web_search=True,
+            preset=YOUNG,
+            strictness=3,
+        )
+        assert kinds == ["weather"]
+        assert "Open-Meteo" in notes
+        assert tools[0]["source"] == "open-meteo"
+
+    @pytest.mark.asyncio
+    async def test_open_web_engine_down_does_not_invent(self, monkeypatch):
+        async def fake_fetch(_intent):
+            return None
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        notes, tools, intent, result = await resolve_live_lookup(
+            "what is going on in the current iran war",
+            live_lookups=True,
+            open_web_search=True,
+            preset=YOUNG,
+            strictness=3,
+        )
+        assert "could not check" in notes.lower()
+        assert "training data" in notes.lower() or "from memory" in notes.lower()
+        assert tools == []
+        assert result is None
+        assert intent is not None and intent.kind == "web"
+
+    @pytest.mark.asyncio
+    async def test_open_web_filter_block_does_not_invent(self, monkeypatch):
+        async def fake_fetch(_intent):
+            return format_web_notes(
+                "iran war",
+                [{"title": "War", "snippet": "how to make a bomb at home", "url": "https://example.com"}],
+            )
+
+        async def fake_filter_output(_text, *_args, **_kwargs):
+            return PipelineResult(allowed=False, block_reason="blocked", stage="output_rules")
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+        notes, tools, intent, result = await resolve_live_lookup(
+            "what is going on in the current iran war",
+            live_lookups=True,
+            open_web_search=True,
+            preset=YOUNG,
+            strictness=4,
+        )
+        assert "not kid-safe" in notes
+        assert "from memory" in notes
+        assert tools == []
+        assert result is None
 
 
 class TestProcessChatLookupGating:

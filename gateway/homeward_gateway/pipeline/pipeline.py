@@ -11,11 +11,13 @@ from homeward_gateway.pipeline.rules import check_rules
 from homeward_gateway.chat.lookups import (
     LookupIntent,
     LookupResult,
+    detect_web_search_intent,
     fetch_lookup,
     is_referential,
     lookup_card,
     lookup_context_hint,
     lookup_prompt_notes,
+    open_web_unavailable_notes,
     resolve_lookup_intent,
     weather_missing_place_notes,
     weather_place_not_found_notes,
@@ -222,6 +224,19 @@ async def filter_output(
     return PipelineResult(allowed=True, content=normalized)
 
 
+def _lookup_blocked_notes(intent: LookupIntent | None) -> str:
+    notes = (
+        "A live lookup was skipped because the notes were not kid-safe. "
+        "Do not invent weather, scores, or headlines. Say you could not check."
+    )
+    if intent and intent.kind == "web":
+        notes += (
+            " You do not know current events. Do not describe protests, wars, "
+            "or officeholders from memory."
+        )
+    return notes
+
+
 async def resolve_live_lookup(
     user_message: str,
     *,
@@ -233,8 +248,9 @@ async def resolve_live_lookup(
     home: HomeContext | None = None,
     session_state: SessionState | None = None,
     rules_only_classifier: bool = False,
+    open_web_search: bool = False,
 ) -> tuple[str, list[dict], LookupIntent | None, LookupResult | None]:
-    """Fetch a named source only when the parent enabled it for this child."""
+    """Fetch a named source, or open web search, when the parent enabled it."""
     if not live_lookups:
         return "", [], None, None
 
@@ -245,6 +261,48 @@ async def resolve_live_lookup(
         home_location=home.location if home else None,
         context=context,
     )
+    if intent and intent.kind in {"weather", "sports"}:
+        if intent.kind == "weather" and not intent.query:
+            return weather_missing_place_notes(), [], intent, None
+        result = await fetch_lookup(intent)
+        if not result:
+            if intent.kind == "weather":
+                return weather_place_not_found_notes(intent.query), [], intent, None
+            return "", [], intent, None
+        safety = await filter_output(
+            result.notes,
+            preset,
+            strictness,
+            classifier_model,
+            rules_only_classifier=rules_only_classifier,
+        )
+        if not safety.allowed:
+            return _lookup_blocked_notes(intent), [], intent, None
+        hint = lookup_context_hint(
+            user_message,
+            intent,
+            ctx,
+            referential=is_referential(user_message),
+        )
+        return lookup_prompt_notes(result, context_hint=hint), [lookup_card(result).to_dict()], intent, result
+
+    if open_web_search:
+        web_intent = detect_web_search_intent(user_message)
+        if web_intent:
+            result = await fetch_lookup(web_intent)
+            if not result:
+                return open_web_unavailable_notes(), [], web_intent, None
+            safety = await filter_output(
+                result.notes,
+                preset,
+                strictness,
+                classifier_model,
+                rules_only_classifier=rules_only_classifier,
+            )
+            if not safety.allowed:
+                return _lookup_blocked_notes(web_intent), [], web_intent, None
+            return lookup_prompt_notes(result), [lookup_card(result).to_dict()], web_intent, result
+
     if not intent:
         return "", [], None, None
 
@@ -265,13 +323,7 @@ async def resolve_live_lookup(
         rules_only_classifier=rules_only_classifier,
     )
     if not safety.allowed:
-        return (
-            "A live lookup was skipped because the notes were not kid-safe. "
-            "Do not invent weather, scores, or headlines. Say you could not check.",
-            [],
-            intent,
-            None,
-        )
+        return _lookup_blocked_notes(intent), [], intent, None
 
     hint = lookup_context_hint(
         user_message,
@@ -279,8 +331,7 @@ async def resolve_live_lookup(
         ctx,
         referential=is_referential(user_message),
     )
-    combined_hint = hint
-    return lookup_prompt_notes(result, context_hint=combined_hint), [lookup_card(result).to_dict()], intent, result
+    return lookup_prompt_notes(result, context_hint=hint), [lookup_card(result).to_dict()], intent, result
 
 
 def _combined_tool_hint(
@@ -348,6 +399,7 @@ async def process_chat(
     classifier_model: str | None = None,
     homework_mode: bool = False,
     live_lookups: bool = False,
+    open_web_search: bool = False,
     home: HomeContext | None = None,
     classifier_enabled: bool = True,
     ai_tone: str = "balanced",
@@ -400,6 +452,7 @@ async def process_chat(
     lookup_notes, lookup_tools, intent, lookup_result = await resolve_live_lookup(
         resolved.expanded_message,
         live_lookups=live_lookups,
+        open_web_search=open_web_search,
         preset=preset,
         strictness=strictness,
         classifier_model=classifier_model,
@@ -477,6 +530,7 @@ async def process_chat_stream(
     classifier_model: str | None = None,
     homework_mode: bool = False,
     live_lookups: bool = False,
+    open_web_search: bool = False,
     home: HomeContext | None = None,
     classifier_enabled: bool = True,
     ai_tone: str = "balanced",
@@ -537,6 +591,7 @@ async def process_chat_stream(
     lookup_notes, lookup_tools, intent, lookup_result = await resolve_live_lookup(
         resolved.expanded_message,
         live_lookups=live_lookups,
+        open_web_search=open_web_search,
         preset=preset,
         strictness=strictness,
         classifier_model=classifier_model,

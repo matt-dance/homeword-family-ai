@@ -196,6 +196,11 @@ function ChatPickerContent() {
                           · <Globe className="h-3 w-3" /> Lookups
                         </span>
                       )}
+                      {child.open_web_search && (
+                        <span className="font-semibold text-sky-600 dark:text-sky-400 flex items-center gap-1">
+                          · <Globe className="h-3 w-3" /> Open web
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

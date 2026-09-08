@@ -198,6 +198,7 @@ function lookupTitle(kind: string): string {
   if (kind === "weather") return "Looked up the weather";
   if (kind === "sports") return "Looked up the score";
   if (kind === "news") return "Looked up current events";
+  if (kind === "web") return "Looked this up on the web";
   return "Looked this up";
 }
 
@@ -224,9 +225,11 @@ function LookupCard({ tool }: { tool: LookupTool }) {
         <p className="text-sm sm:text-base text-foreground leading-relaxed">
           {tool.summary}
         </p>
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          Checked a named source — not a generic web search.
-        </p>
+        {tool.kind !== "web" && (
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Checked a named source — not a generic web search.
+          </p>
+        )}
       </div>
     </CardShell>
   );

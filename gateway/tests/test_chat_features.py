@@ -86,6 +86,41 @@ class TestChatFeaturesAPI:
         assert public.json()[0]["live_lookups"] is True
 
     @pytest.mark.asyncio
+    async def test_open_web_search_defaults_off_and_requires_live_lookups(
+        self, authenticated_client: AsyncClient
+    ):
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+        assert child["open_web_search"] is False
+        assert "SearxNG" not in str(child)
+
+        rejected = await authenticated_client.patch(
+            f"/api/v1/children/{child['id']}",
+            json={"open_web_search": True},
+        )
+        assert rejected.status_code == 200
+        assert rejected.json()["open_web_search"] is False
+        assert "SearxNG" not in rejected.text
+
+        enabled = await authenticated_client.patch(
+            f"/api/v1/children/{child['id']}",
+            json={"live_lookups": True, "open_web_search": True},
+        )
+        assert enabled.status_code == 200
+        assert enabled.json()["live_lookups"] is True
+        assert enabled.json()["open_web_search"] is True
+
+        cleared = await authenticated_client.patch(
+            f"/api/v1/children/{child['id']}",
+            json={"live_lookups": False},
+        )
+        assert cleared.json()["open_web_search"] is False
+
+        status = await authenticated_client.get("/api/v1/open-web-search")
+        assert status.status_code == 200
+        assert status.json()["available"] in {True, False}
+        assert "SearxNG" not in status.text
+
+    @pytest.mark.asyncio
     async def test_blocked_stats(self, authenticated_client: AsyncClient):
         resp = await authenticated_client.get("/api/v1/dashboard/blocked/stats")
         assert resp.status_code == 200

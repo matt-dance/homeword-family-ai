@@ -301,7 +301,9 @@ bundle_dylibs() {
   mkdir -p "$FRAMEWORKS_DIR"
 
   if command -v dylibbundler >/dev/null 2>&1; then
-    dylibbundler -od -b -x "$bin" -d "$FRAMEWORKS_DIR" -p "${FRAMEWORKS_INSTALL_NAME}/"
+    # -of/-cd merge into Frameworks. -od wipes the directory and drops
+    # ffmpeg dylibs when espeak is bundled second.
+    dylibbundler -of -cd -b -x "$bin" -d "$FRAMEWORKS_DIR" -p "${FRAMEWORKS_INSTALL_NAME}/"
     assert_no_homebrew_dylibs "$bin"
     return 0
   fi
@@ -430,8 +432,10 @@ install_ollama() {
   local url="https://github.com/ollama/ollama/releases/download/${version}/ollama-darwin.tgz"
   local arch_url="https://github.com/ollama/ollama/releases/download/${version}/ollama-darwin-${ARCH}.tgz"
   echo "downloading official Ollama ${version} (engine only, no model weights)"
-  if ! curl -fsSL -o "$tmp/ollama.tgz" "$arch_url"; then
-    curl -fsSL -o "$tmp/ollama.tgz" "$url"
+  # Official macOS asset is ollama-darwin.tgz (no arch suffix). The
+  # arch-specific URL 404s and, with set -e, can abort before the fallback.
+  if ! curl -fsSL -o "$tmp/ollama.tgz" "$url"; then
+    curl -fsSL -o "$tmp/ollama.tgz" "$arch_url"
   fi
   tar -xzf "$tmp/ollama.tgz" -C "$dest"
   local bin=""

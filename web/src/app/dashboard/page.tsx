@@ -269,6 +269,16 @@ function DashboardContent() {
                           {theme.title}
                         </span>
                       )}
+                      {child.live_lookups && (
+                        <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">
+                          Live lookups
+                        </span>
+                      )}
+                      {child.open_web_search && (
+                        <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">
+                          Open web search
+                        </span>
+                      )}
                     </div>
                   </Link>
                   <Link href={chatPathForChild(child)} className="relative z-10 mt-4 block">

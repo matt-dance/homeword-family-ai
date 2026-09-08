@@ -136,6 +136,7 @@ class TestChildren:
         assert child["name"] == "Emma"
         assert child["preset_id"] == "young_explorer"
         assert child["live_lookups"] is False
+        assert child["open_web_search"] is False
 
     @pytest.mark.asyncio
     async def test_list_children_requires_auth(self, client):

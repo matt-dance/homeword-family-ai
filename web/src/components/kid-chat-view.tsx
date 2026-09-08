@@ -792,6 +792,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                     Live lookups ·
                   </span>
                 )}
+                {selectedChild.open_web_search && (
+                  <span className="font-semibold text-sky-600 dark:text-sky-400 flex items-center gap-1">
+                    <Globe className="h-3 w-3" />
+                    Open web search ·
+                  </span>
+                )}
                 <span className="flex items-center gap-1">
                   <ShieldCheck className="h-3 w-3 text-emerald-500" />
                   Safe & protected

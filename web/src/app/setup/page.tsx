@@ -35,6 +35,7 @@ interface ChildForm {
   pin: string;
   homework_mode: boolean;
   live_lookups: boolean;
+  open_web_search: boolean;
   voice_gender: VoiceGender;
 }
 
@@ -57,7 +58,7 @@ export default function SetupPage() {
   const [statusLoaded, setStatusLoaded] = useState(false);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [children, setChildren] = useState<ChildForm[]>([
-    { name: "", age: 8, preset_id: "young_explorer", strictness: 4, pin: "", homework_mode: false, live_lookups: false, voice_gender: "female" },
+    { name: "", age: 8, preset_id: "young_explorer", strictness: 4, pin: "", homework_mode: false, live_lookups: false, open_web_search: false, voice_gender: "female" },
   ]);
   const [ollamaReady, setOllamaReady] = useState(false);
 
@@ -113,6 +114,7 @@ export default function SetupPage() {
           pin: "",
           homework_mode: c.homework_mode ?? false,
           live_lookups: c.live_lookups ?? false,
+          open_web_search: c.open_web_search ?? false,
           voice_gender: c.voice_gender ?? "female",
         }))
       );
@@ -235,7 +237,7 @@ export default function SetupPage() {
   const addChild = () => {
     setChildren([
       ...children,
-      { name: "", age: 10, preset_id: "curious_explorer", strictness: 3, pin: "", homework_mode: false, live_lookups: false, voice_gender: "female" },
+      { name: "", age: 10, preset_id: "curious_explorer", strictness: 3, pin: "", homework_mode: false, live_lookups: false, open_web_search: false, voice_gender: "female" },
     ]);
   };
 
@@ -276,6 +278,7 @@ export default function SetupPage() {
           pin: child.pin.trim() || undefined,
           homework_mode: child.homework_mode,
           live_lookups: child.live_lookups,
+          open_web_search: child.open_web_search,
           voice_gender: child.voice_gender,
         });
       }
@@ -655,6 +658,8 @@ export default function SetupPage() {
                       compact
                       checked={child.live_lookups}
                       onChange={(value) => updateChild(i, "live_lookups", value)}
+                      openWebSearch={child.open_web_search}
+                      onOpenWebSearchChange={(value) => updateChild(i, "open_web_search", value)}
                     />
                   </CardContent>
                 </Card>
