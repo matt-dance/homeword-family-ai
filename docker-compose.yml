@@ -50,6 +50,7 @@ services:
       - HOMEWARD_POLICIES_DIR=/app/policies
       # Clock hints/cards: household home-location TZ wins; this is the host fallback.
       - HOMEWARD_TIMEZONE=${HOMEWARD_TIMEZONE:-${TZ:-}}
+      - HOMEWARD_SEARXNG_URL=http://searxng:8080
     volumes:
       - homeward_data:/data
       - ./policies:/app/policies:ro
@@ -84,6 +85,17 @@ services:
       - GATEWAY_URL=http://gateway:8000
     ports:
       - "80:43123"
+    restart: unless-stopped
+
+  searxng:
+    profiles: ["open-web"]
+    image: docker.io/searxng/searxng:latest
+    container_name: homeward-open-web
+    volumes:
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    # Host-only: kids on the LAN never talk to the search engine.
+    ports:
+      - "127.0.0.1:8888:8080"
     restart: unless-stopped
 
   mdns:

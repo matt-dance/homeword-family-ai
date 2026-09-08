@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # llama3.2:3b on CPU can sit quiet this long after the classifier turn.
     llm_first_token_timeout: float = 45.0
     lookup_timeout: float = 8.0
+    # Host-only open-web engine (SearxNG). Empty disables the household check.
+    searxng_url: str = "http://127.0.0.1:8888"
+    searxng_timeout: float = 6.0
     cloud_enabled: bool = False
     openai_api_key: str = ""
 

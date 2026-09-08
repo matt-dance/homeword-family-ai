@@ -19,6 +19,7 @@ import {
   ChevronDown,
   SlidersHorizontal,
   Users,
+  Globe,
 } from "lucide-react";
 
 export default function SettingsPage() {
@@ -46,10 +47,11 @@ export default function SettingsPage() {
   const [advancedMessage, setAdvancedMessage] = useState("");
   const [advancedError, setAdvancedError] = useState("");
   const [advancedSaving, setAdvancedSaving] = useState(false);
+  const [openWebAvailable, setOpenWebAvailable] = useState<boolean | null>(null);
 
   useEffect(() => {
-    Promise.all([api.me(), api.homeLocation(), api.advancedSettings()])
-      .then(([, home, advanced]) => {
+    Promise.all([api.me(), api.homeLocation(), api.advancedSettings(), api.openWebSearchStatus()])
+      .then(([, home, advanced, openWeb]) => {
         setHomeLocation(home.location || "");
         setHomeLabel(home.label);
         setHomeTimezone(home.timezone);
@@ -58,6 +60,7 @@ export default function SettingsPage() {
         setAiTone(advanced.ai_tone);
         setAiVerbosity(advanced.ai_verbosity);
         setAdvancedChildren(advanced.children);
+        setOpenWebAvailable(openWeb.available);
       })
       .catch(() => setLoadError("Couldn't load settings. Check that Homeward is running, then refresh."))
       .finally(() => setLoading(false));
@@ -167,6 +170,26 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent>
           <OllamaSetup />
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/80 shadow-xs">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-lg font-bold flex items-center gap-2">
+            <Globe className="h-5 w-5 text-primary" />
+            Open web search
+          </CardTitle>
+          <CardDescription>
+            Optional household lookup for timely questions. Every snippet is
+            safety-filtered the same way as weather and Wikipedia notes.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-foreground">
+            {openWebAvailable
+              ? "Open web search is ready on this computer."
+              : "Open web search isn't available on this computer right now."}
+          </p>
         </CardContent>
       </Card>
 

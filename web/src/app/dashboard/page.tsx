@@ -447,6 +447,11 @@ function DashboardContent() {
                             <Globe className="h-3 w-3" /> Live lookups
                           </span>
                         )}
+                        {child.open_web_search && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-600 dark:text-sky-400 mt-0.5">
+                            <Globe className="h-3 w-3" /> Open web search
+                          </span>
+                        )}
                       </div>
                     </button>
                     <Link href={chatPathForChild(child)}>

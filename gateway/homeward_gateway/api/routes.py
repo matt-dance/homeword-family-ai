@@ -34,6 +34,7 @@ from homeward_gateway.auth.recovery import (
     verify_recovery_code,
 )
 from homeward_gateway.chat.history import is_hard_safety_stage, model_visible_history
+from homeward_gateway.chat.lookups import coerce_open_web_search, open_web_search_available
 from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.chat.starters import get_conversation_starters
 from homeward_gateway.chat.summary import summarize_session
@@ -123,6 +124,7 @@ class ChildCreate(BaseModel):
     pin: str | None = Field(default=None, pattern=PIN_PATTERN)
     homework_mode: bool = False
     live_lookups: bool = False
+    open_web_search: bool = False
     voice_gender: Literal["female", "male"] = "female"
 
 
@@ -135,6 +137,7 @@ class ChildUpdate(BaseModel):
     clear_pin: bool = False
     homework_mode: bool | None = None
     live_lookups: bool | None = None
+    open_web_search: bool | None = None
     allow_resume: bool | None = None
     quiet_hours_enabled: bool | None = None
     quiet_hours_start: str | None = None
@@ -321,6 +324,14 @@ async def health(session: Annotated[AsyncSession, Depends(get_session)]):
         "cloud_enabled": settings.cloud_enabled,
         "ollama": public_ollama,
     }
+
+
+@router.get("/open-web-search")
+async def open_web_search_status(
+    _parent: Annotated[ParentAccount, Depends(require_parent)],
+):
+    """Household status for the optional open-web engine. Do not name the engine."""
+    return {"available": await open_web_search_available()}
 
 
 # --- Presets ---
@@ -546,6 +557,7 @@ def _serialize_child(c: ChildProfile) -> dict:
         "has_pin": c.pin is not None,
         "homework_mode": c.homework_mode,
         "live_lookups": c.live_lookups,
+        "open_web_search": c.open_web_search,
         "voice_gender": c.voice_gender or "female",
         "allow_resume": c.allow_resume,
         "quiet_hours_enabled": c.quiet_hours_enabled,
@@ -576,6 +588,7 @@ def _serialize_child_public(c: ChildProfile, *, is_default: bool = False) -> dic
         "chat_unavailable_message": unavailable_message,
         "homework_mode": c.homework_mode,
         "live_lookups": c.live_lookups,
+        "open_web_search": c.open_web_search,
         "voice_gender": c.voice_gender or "female",
         "is_default": is_default,
     }
@@ -660,6 +673,7 @@ async def create_child(
         pin=hash_pin(body.pin) if body.pin else None,
         homework_mode=body.homework_mode,
         live_lookups=body.live_lookups,
+        open_web_search=coerce_open_web_search(body.live_lookups, body.open_web_search),
         voice_gender=body.voice_gender,
     )
     session.add(child)
@@ -711,6 +725,9 @@ async def update_child(
         child.homework_mode = body.homework_mode
     if body.live_lookups is not None:
         child.live_lookups = body.live_lookups
+    if body.open_web_search is not None:
+        child.open_web_search = body.open_web_search
+    child.open_web_search = coerce_open_web_search(child.live_lookups, child.open_web_search)
     if body.voice_gender is not None:
         child.voice_gender = body.voice_gender
     if body.allow_resume is not None:
@@ -1402,6 +1419,7 @@ async def chat(
             classifier_model=classifier_model,
             homework_mode=child.homework_mode,
             live_lookups=child.live_lookups,
+            open_web_search=child.open_web_search,
             home=home,
             classifier_enabled=ai_prefs["classifier_enabled"],
             ai_tone=ai_prefs["ai_tone"],
@@ -1556,6 +1574,7 @@ async def chat_stream(
                         classifier_model=classifier_model,
                         homework_mode=child.homework_mode,
                         live_lookups=child.live_lookups,
+                        open_web_search=child.open_web_search,
                         home=home,
                         classifier_enabled=ai_prefs["classifier_enabled"],
                         ai_tone=ai_prefs["ai_tone"],

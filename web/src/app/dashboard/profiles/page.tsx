@@ -50,6 +50,7 @@ export default function ProfilesPage() {
     pin: "",
     homework_mode: false,
     live_lookups: false,
+    open_web_search: false,
     voice_gender: "female" as VoiceGender,
   });
   const [addError, setAddError] = useState("");
@@ -108,6 +109,7 @@ export default function ProfilesPage() {
         clear_pin: childDraft.clear_pin,
         homework_mode: childDraft.homework_mode,
         live_lookups: childDraft.live_lookups,
+        open_web_search: childDraft.open_web_search,
         voice_gender: childDraft.voice_gender,
         allow_resume: childDraft.allow_resume,
         quiet_hours_enabled: childDraft.quiet_hours_enabled,
@@ -130,6 +132,7 @@ export default function ProfilesPage() {
       pin: "",
       homework_mode: false,
       live_lookups: false,
+      open_web_search: false,
       voice_gender: "female" as VoiceGender,
     });
     setAddError("");
@@ -160,6 +163,7 @@ export default function ProfilesPage() {
         pin: newChild.pin.trim() || undefined,
         homework_mode: newChild.homework_mode,
         live_lookups: newChild.live_lookups,
+        open_web_search: newChild.open_web_search,
         voice_gender: newChild.voice_gender,
       });
       setChildren((prev) => [...prev, created]);
@@ -450,7 +454,17 @@ export default function ProfilesPage() {
               />
               <LiveLookupsToggle
                 checked={newChild.live_lookups}
-                onChange={(live_lookups) => setNewChild({ ...newChild, live_lookups })}
+                onChange={(live_lookups) =>
+                  setNewChild({
+                    ...newChild,
+                    live_lookups,
+                    open_web_search: live_lookups ? newChild.open_web_search : false,
+                  })
+                }
+                openWebSearch={newChild.open_web_search}
+                onOpenWebSearchChange={(open_web_search) =>
+                  setNewChild({ ...newChild, open_web_search })
+                }
               />
               {addError && (
                 <p className="text-xs font-semibold text-destructive">{addError}</p>
@@ -520,6 +534,7 @@ export default function ProfilesPage() {
                           {child.homework_mode && " · 📚 Homework Mode"}
                           {child.voice_gender === "male" ? " · Male voice" : " · Female voice"}
                           {child.live_lookups && " · Live lookups on"}
+                          {child.open_web_search && " · Open web search"}
                           {child.quiet_hours_enabled && " · 🌙 Quiet Hours"}
                         </p>
                       </div>
@@ -903,7 +918,15 @@ export default function ProfilesPage() {
                       <LiveLookupsToggle
                         checked={childDraft.live_lookups || false}
                         onChange={(live_lookups) =>
-                          setChildDraft({ ...childDraft, live_lookups })
+                          setChildDraft({
+                            ...childDraft,
+                            live_lookups,
+                            open_web_search: live_lookups ? childDraft.open_web_search : false,
+                          })
+                        }
+                        openWebSearch={childDraft.open_web_search || false}
+                        onOpenWebSearchChange={(open_web_search) =>
+                          setChildDraft({ ...childDraft, open_web_search })
                         }
                       />
 

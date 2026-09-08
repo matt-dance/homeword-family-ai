@@ -1,7 +1,8 @@
-"""Named live lookups: weather, sports scores, and Wikipedia current events.
+"""Named live lookups plus optional open-web search.
 
-These are specific APIs — not a generic web search. Lookups only run when a
-parent enables them for a child and the child's question matches a known kind.
+Weather, sports, and Wikipedia stay on named APIs. When a parent also enables
+open web search, timely topic questions can use the household search engine.
+Lookups only run when a parent enables them for a child.
 """
 
 from __future__ import annotations
@@ -145,6 +146,23 @@ _TEAM_STOP = {
 NEWS_RE = re.compile(
     r"\b(current events|in the news|today'?s news|world news|news headlines|"
     r"what(?:'s| is) (?:in )?the news)\b",
+    re.IGNORECASE,
+)
+TIMELY_TOPIC_RE = re.compile(
+    r"\b("
+    r"now|current|today|tonight|latest|going on|happening|"
+    r"in the news|who(?:'s| is)|war|election|"
+    r"current events|today'?s news|world news|news headlines"
+    r")\b",
+    re.IGNORECASE,
+)
+WEB_QUERY_FILLER_RE = re.compile(
+    r"\b("
+    r"what(?:'s| is)|whats|tell me|please|about|"
+    r"going on|happening|right now|"
+    r"in|the|a|an|of|"
+    r"current|latest|today|tonight|now"
+    r")\b",
     re.IGNORECASE,
 )
 US_PRESIDENT_RE = re.compile(
@@ -354,6 +372,32 @@ def detect_lookup_intent(message: str) -> LookupIntent | None:
             return LookupIntent("sports", team_key, date_range=date_range, schedule=schedule)
         return None
 
+    return None
+
+
+def coerce_open_web_search(live_lookups: bool, open_web_search: bool) -> bool:
+    """Open web search cannot stay on unless live lookups are on."""
+    return bool(live_lookups and open_web_search)
+
+
+def rewrite_web_query(message: str) -> str:
+    cleaned = WEB_QUERY_FILLER_RE.sub(" ", message or "")
+    cleaned = re.sub(r"[^\w\s-]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or (message or "").strip()
+
+
+def detect_web_search_intent(message: str) -> LookupIntent | None:
+    """Timely/topic questions that should not go through weather or sports APIs."""
+    text = (message or "").strip()
+    if not text:
+        return None
+    if WEATHER_RE.search(text):
+        return None
+    if SPORTS_ASK_RE.search(text) or _matching_team_key(text) or _extract_sports_team(text):
+        return None
+    if NEWS_RE.search(text) or TIMELY_TOPIC_RE.search(text):
+        return LookupIntent("web", rewrite_web_query(text))
     return None
 
 
@@ -809,6 +853,63 @@ def format_news_notes(headlines: list[str]) -> LookupResult:
     )
 
 
+def format_web_notes(query: str, items: list[dict[str, str]]) -> LookupResult:
+    if not items:
+        notes = "Open web search did not return any matching results."
+        return LookupResult(
+            kind="web",
+            source="open-web-search",
+            source_label="Open web search",
+            query=query,
+            summary=notes,
+            notes=notes,
+            found=False,
+        )
+    lines = ["Open web search results:"]
+    for item in items[:5]:
+        title = item.get("title") or ""
+        snippet = item.get("snippet") or ""
+        url = item.get("url") or ""
+        line = f"- {title}: {snippet}".strip()
+        if url:
+            line = f"{line} ({url})"
+        lines.append(line)
+    return LookupResult(
+        kind="web",
+        source="open-web-search",
+        source_label="Open web search",
+        query=query,
+        summary=items[0].get("title") or items[0].get("snippet") or query,
+        notes="\n".join(lines),
+    )
+
+
+def open_web_unavailable_notes() -> str:
+    return (
+        "Open web search isn't available. You do not know current events. "
+        "Say you could not check. Do not describe protests, wars, or officeholders "
+        "from memory. Do not invent headlines."
+    )
+
+
+def parse_searxng_results(payload: dict[str, Any]) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for row in payload.get("results") or []:
+        if not isinstance(row, dict):
+            continue
+        title = str(row.get("title") or "").strip()
+        snippet = str(row.get("content") or row.get("snippet") or "").strip()
+        url = str(row.get("url") or "").strip()
+        if not title or not snippet:
+            continue
+        if url and not url.startswith("http"):
+            continue
+        items.append({"title": title, "snippet": snippet, "url": url})
+        if len(items) >= 5:
+            break
+    return items
+
+
 def lookup_card(result: LookupResult) -> ToolCard:
     return ToolCard(
         "lookup",
@@ -828,6 +929,26 @@ def lookup_prompt_notes(
     context_hint: str = "",
 ) -> str:
     prefix = f"{context_hint} " if context_hint else ""
+    if result.kind == "web":
+        if result.found:
+            return (
+                f"{prefix}"
+                "LIVE LOOKUP RESULTS from open web search. "
+                f"Source: {result.source_label}. "
+                "These snippets were fetched just now. Use only them. "
+                "Do not use training data about this topic. "
+                "If they do not answer the question, say you could not check.\n\n"
+                f"{result.notes}"
+            )
+        return (
+            f"{prefix}"
+            "LIVE LOOKUP from open web search. "
+            f"Source: {result.source_label}. "
+            "No matching results were found. Say you could not check. "
+            "Do not invent current events from training data. "
+            "Do not describe protests, wars, or officeholders from memory.\n\n"
+            f"{result.notes}"
+        )
     if result.found:
         sports_hint = ""
         facts_hint = ""
@@ -1078,7 +1199,74 @@ async def fetch_lookup(intent: LookupIntent) -> LookupResult | None:
         return await _fetch_news()
     if intent.kind == "current_facts":
         return await _fetch_current_facts(intent.query)
+    if intent.kind == "web":
+        if not intent.query:
+            return None
+        return await _fetch_web_search(intent.query)
     return None
+
+
+async def open_web_search_available() -> bool:
+    url = str(getattr(settings, "searxng_url", "") or "").rstrip("/")
+    if not url:
+        return False
+    timeout = float(getattr(settings, "searxng_timeout", 6.0))
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        ) as client:
+            resp = await client.get(f"{url}/healthz")
+            if resp.status_code < 500:
+                return True
+    except Exception:
+        pass
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        ) as client:
+            resp = await client.get(
+                f"{url}/search",
+                params={
+                    "q": "homeward",
+                    "format": "json",
+                    "safesearch": "2",
+                    "categories": "general",
+                },
+            )
+            resp.raise_for_status()
+            return isinstance(resp.json(), dict)
+    except Exception as exc:
+        logger.info("Open web search health check failed: %s", exc)
+        return False
+
+
+async def _fetch_web_search(query: str) -> LookupResult | None:
+    url = str(getattr(settings, "searxng_url", "") or "").rstrip("/")
+    if not url:
+        return None
+    timeout = float(getattr(settings, "searxng_timeout", 6.0))
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        ) as client:
+            resp = await client.get(
+                f"{url}/search",
+                params={
+                    "q": query,
+                    "format": "json",
+                    "safesearch": "2",
+                    "categories": "general",
+                },
+            )
+            resp.raise_for_status()
+            items = parse_searxng_results(resp.json())
+            return format_web_notes(query, items)
+    except Exception as exc:
+        logger.info("Open web search failed: %s", exc)
+        return None
 
 
 def _client() -> httpx.AsyncClient:

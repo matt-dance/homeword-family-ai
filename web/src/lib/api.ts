@@ -29,6 +29,7 @@ export interface Child {
   has_pin?: boolean;
   homework_mode?: boolean;
   live_lookups?: boolean;
+  open_web_search?: boolean;
   voice_gender?: "female" | "male";
   allow_resume?: boolean;
   quiet_hours_enabled?: boolean;
@@ -211,6 +212,7 @@ export const api = {
       has_recovery_code: boolean;
     }>("/auth/me"),
   presets: () => request<Preset[]>("/presets"),
+  openWebSearchStatus: () => request<{ available: boolean }>("/open-web-search"),
   children: () => request<Child[]>("/children"),
   childrenPublic: () => request<Child[]>("/children/public"),
   createChild: (data: {
@@ -221,6 +223,7 @@ export const api = {
     pin?: string;
     homework_mode?: boolean;
     live_lookups?: boolean;
+    open_web_search?: boolean;
     voice_gender?: "female" | "male";
   }) =>
     request<Child>("/children", {
@@ -238,6 +241,7 @@ export const api = {
       clear_pin: boolean;
       homework_mode: boolean;
       live_lookups: boolean;
+      open_web_search: boolean;
       voice_gender: "female" | "male";
       allow_resume: boolean;
       quiet_hours_enabled: boolean;

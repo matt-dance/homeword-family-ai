@@ -1,0 +1,21 @@
+# Household open-web engine. Parents never see this product name.
+use_default_settings: true
+
+general:
+  instance_name: Homeward open web search
+
+search:
+  safe_search: 2
+  autocomplete: ""
+  default_lang: "en"
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "homeward-open-web-change-me"
+  limiter: false
+  image_proxy: false
+  bind_address: "0.0.0.0"
+  port: 8080
+  public_instance: false
