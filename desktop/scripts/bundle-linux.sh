@@ -20,6 +20,11 @@ Homeward-linux-amd64.tar.gz.
       scripts without fetching Node, CPython, Ollama, ffmpeg, or espeak.
       Does not fail if the linux homeward supervisor is missing.
 
+  HOMEWARD_BUNDLE_OUT_DIR=<dir>
+      Write Homeward-linux-amd64 and the tarball under this directory
+      instead of dist/linux/amd64. Layout tests use a temp dir so they
+      do not replace a family tip pack.
+
 A family Linux tarball should be produced with Docker (Ubuntu), especially
 from macOS (CGO/GTK cannot be linked here). Skip mode cannot produce one.
 
@@ -50,7 +55,10 @@ HOST="$(uname -s)"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
-OUT_DIR="$REPO/dist/linux/$ARCH"
+OUT_DIR="${HOMEWARD_BUNDLE_OUT_DIR:-$REPO/dist/linux/$ARCH}"
+if [[ "$OUT_DIR" != /* ]]; then
+  OUT_DIR="$REPO/$OUT_DIR"
+fi
 STAGE="$OUT_DIR/Homeward-linux-amd64"
 TARBALL="$OUT_DIR/Homeward-linux-amd64.tar.gz"
 RES="$STAGE/resources"
@@ -79,6 +87,7 @@ maybe_reexec_docker() {
     -w /src \
     -e HOMEWARD_BUNDLE_IN_CONTAINER=1 \
     -e HOMEWARD_BUNDLE_SKIP_DOWNLOADS=0 \
+    -e HOMEWARD_BUNDLE_OUT_DIR="${HOMEWARD_BUNDLE_OUT_DIR:-}" \
     -e HOMEWARD_NODE_VERSION="${HOMEWARD_NODE_VERSION:-}" \
     -e HOMEWARD_OLLAMA_VERSION="${HOMEWARD_OLLAMA_VERSION:-}" \
     ubuntu:24.04 \

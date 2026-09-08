@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Skip-downloads layout + install/uninstall path checks for the Linux tarball.
+# Assembles and stubs under a temp OUT_DIR so a real tip-pack homeward ELF
+# in dist/linux/amd64/Homeward-linux-amd64 is never overwritten.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$ROOT/desktop/scripts/bundle-linux.sh"
-STAGE="$ROOT/dist/linux/amd64/Homeward-linux-amd64"
-TARBALL="$ROOT/dist/linux/amd64/Homeward-linux-amd64.tar.gz"
+TIP_STAGE="$ROOT/dist/linux/amd64/Homeward-linux-amd64"
+TIP_HOMEWARD="$TIP_STAGE/homeward"
 
 test -x "$SCRIPT"
 
@@ -15,7 +17,26 @@ if HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1 "$SCRIPT" arm64 >/dev/null 2>&1; then
   exit 1
 fi
 
-HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1 "$SCRIPT" amd64
+WORK="$(mktemp -d)"
+FAKE="$(mktemp -d)"
+cleanup() {
+  rm -rf "$WORK" "$FAKE"
+}
+trap cleanup EXIT
+
+# Snapshot a pre-existing tip-pack supervisor so we can prove this test
+# never clobbers it (skip-downloads + stub used to write that path).
+TIP_CKSUM=""
+if [[ -f "$TIP_HOMEWARD" ]]; then
+  TIP_CKSUM="$(cksum "$TIP_HOMEWARD")"
+fi
+
+OUT_DIR="$WORK/out"
+STAGE="$OUT_DIR/Homeward-linux-amd64"
+TARBALL="$OUT_DIR/Homeward-linux-amd64.tar.gz"
+DISPOSABLE="$WORK/install-stage"
+
+HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1 HOMEWARD_BUNDLE_OUT_DIR="$OUT_DIR" "$SCRIPT" amd64
 
 test -x "$STAGE/install.sh"
 test -x "$STAGE/uninstall.sh"
@@ -50,21 +71,33 @@ if grep -q '[.]ollama' "$STAGE/install.sh" "$STAGE/uninstall.sh"; then
   exit 1
 fi
 
-FAKE="$(mktemp -d)"
-cleanup() {
-  rm -rf "$FAKE"
-}
-trap cleanup EXIT
+# Stub/install/uninstall run on a disposable copy, never the tip pack or the
+# skip-downloads stage (that copy may hold a real linux ELF).
+cp -R "$STAGE" "$DISPOSABLE"
 
-# Dummy supervisor so install can copy a binary without a real linux build.
-cat > "$STAGE/homeward" <<'EOF'
+write_supervisor_stub() {
+  local dest="$1"
+  local tip=""
+  if [[ -e "$TIP_HOMEWARD" ]]; then
+    tip="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$TIP_HOMEWARD")"
+  fi
+  local resolved
+  resolved="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$dest")"
+  if [[ -n "$tip" && "$resolved" == "$tip" ]]; then
+    echo "refusing to stub tip pack homeward at $TIP_HOMEWARD" >&2
+    exit 1
+  fi
+  cat > "$dest" <<'EOF'
 #!/bin/sh
 echo "homeward $*" >> "${HOMEWARD_TEST_LOG:-/dev/null}"
 exit 0
 EOF
-chmod +x "$STAGE/homeward"
+  chmod +x "$dest"
+}
 
-HOME="$FAKE" HOMEWARD_TEST_LOG="$FAKE/supervisor.log" "$STAGE/install.sh"
+write_supervisor_stub "$DISPOSABLE/homeward"
+
+HOME="$FAKE" HOMEWARD_TEST_LOG="$FAKE/supervisor.log" "$DISPOSABLE/install.sh"
 
 test -x "$FAKE/.local/share/homeward/app/homeward"
 test -d "$FAKE/.local/share/homeward/app/resources/policies"
@@ -81,14 +114,21 @@ grep -q -- '--version' "$FAKE/supervisor.log"
 printf 'keep\n' > "$FAKE/.local/share/homeward/family.db"
 test ! -e "$FAKE/.local/share/homeward/app/family.db"
 
-HOME="$FAKE" "$STAGE/uninstall.sh"
+HOME="$FAKE" "$DISPOSABLE/uninstall.sh"
 test ! -e "$FAKE/.local/share/homeward/app"
 test ! -e "$FAKE/.local/bin/homeward"
 test ! -e "$FAKE/.config/autostart/homeward.desktop"
 test -f "$FAKE/.local/share/homeward/family.db"
 
-HOME="$FAKE" HOMEWARD_TEST_LOG="$FAKE/supervisor.log" "$STAGE/install.sh"
-HOME="$FAKE" "$STAGE/uninstall.sh" --wipe-data
+HOME="$FAKE" HOMEWARD_TEST_LOG="$FAKE/supervisor.log" "$DISPOSABLE/install.sh"
+HOME="$FAKE" "$DISPOSABLE/uninstall.sh" --wipe-data
 test ! -e "$FAKE/.local/share/homeward"
 test ! -e "$FAKE/.local/bin/homeward"
 test ! -e "$FAKE/.config/autostart/homeward.desktop"
+
+if [[ -n "$TIP_CKSUM" ]]; then
+  if [[ ! -f "$TIP_HOMEWARD" ]] || [[ "$(cksum "$TIP_HOMEWARD")" != "$TIP_CKSUM" ]]; then
+    echo "layout test must not modify tip pack homeward at $TIP_HOMEWARD" >&2
+    exit 1
+  fi
+fi
