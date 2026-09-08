@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Globe } from "lucide-react";
 import { api } from "@/lib/api";
+import { openWebSearchControlState } from "@/lib/open-web-search";
 
 const SOURCES = [
   {
@@ -58,7 +59,11 @@ export function LiveLookupsToggle({
     if (!next) onOpenWebSearchChange?.(false);
   };
 
-  const webDisabled = !checked || engineAvailable === false;
+  const web = openWebSearchControlState({
+    liveLookupsOn: checked,
+    openWebSearch,
+    engineAvailable,
+  });
 
   return (
     <div
@@ -110,13 +115,13 @@ export function LiveLookupsToggle({
       {onOpenWebSearchChange && (
         <label
           className={`mt-3 flex items-start gap-2.5 rounded-lg border p-2.5 ${
-            webDisabled ? "opacity-70 cursor-not-allowed" : "cursor-pointer"
+            web.disabled ? "opacity-70 cursor-not-allowed" : "cursor-pointer"
           }`}
         >
           <input
             type="checkbox"
-            checked={checked && openWebSearch}
-            disabled={webDisabled}
+            checked={web.checked}
+            disabled={web.disabled}
             onChange={(e) => onOpenWebSearchChange(e.target.checked)}
             className="accent-primary rounded h-4 w-4 mt-0.5 shrink-0"
           />
@@ -127,7 +132,7 @@ export function LiveLookupsToggle({
               Every snippet is safety-filtered the same way as weather and
               Wikipedia notes. Homeward will not show raw web pages.
             </p>
-            {engineAvailable === false && (
+            {web.showUnavailable && (
               <p className="text-xs text-muted-foreground leading-relaxed">
                 Open web search isn&apos;t available on this computer right now.
               </p>
