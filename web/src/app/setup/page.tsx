@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { kidChatUrl, parentLocalUrl } from "@/lib/local-host";
 import { api, type Preset } from "@/lib/api";
+import { isParentSignedOut, parentRouteAfterSessionCheck } from "@/lib/parent-session";
 import { HomewardLogo } from "@/components/homeward-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -65,8 +66,23 @@ export default function SetupPage() {
       try {
         const s = await api.setupStatus();
         if (s.setup_complete) {
+          if (isParentSignedOut()) {
+            setStep("login");
+            return;
+          }
           try {
             await api.me();
+            if (
+              parentRouteAfterSessionCheck({
+                setupComplete: true,
+                hasParent: true,
+                signedOut: isParentSignedOut(),
+                meOk: true,
+              }) !== "/dashboard"
+            ) {
+              setStep("login");
+              return;
+            }
             router.replace("/dashboard");
             return;
           } catch {
