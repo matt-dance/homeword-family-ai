@@ -131,15 +131,15 @@ function ChatPickerContent() {
             <button
               type="button"
               onClick={handleQuickChat}
-              className="group relative flex w-full items-center justify-between rounded-2xl border border-primary/40 bg-primary/5 p-4 sm:p-5 shadow-xs transition-all hover:border-primary/70 hover:shadow-md active:scale-[0.99]"
+              className="group relative flex w-full items-center justify-between rounded-2xl border border-accent/40 bg-accent/5 p-4 sm:p-5 shadow-xs transition-all hover:border-accent/70 hover:bg-accent/10 hover:shadow-md active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
               <div className="flex items-center gap-4 min-w-0 text-left">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/15 text-primary shadow-xs">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl accent-gradient text-white shadow-lg shadow-orange-200 dark:shadow-orange-950/40">
                   <Star className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-lg font-bold text-foreground group-hover:text-primary transition-colors truncate">
+                    <span className="text-lg font-bold text-slate-900 dark:text-foreground group-hover:text-accent transition-colors truncate">
                       {QUICK_CHAT_LABEL}
                     </span>
                   </div>
@@ -148,7 +148,7 @@ function ChatPickerContent() {
                   </p>
                 </div>
               </div>
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shrink-0">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-900 text-white shrink-0 dark:bg-white dark:text-slate-900">
                 <ArrowRight className="h-4 w-4" />
               </div>
             </button>
