@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 )
 
 func ShouldOpenOnBoot(markerPath string) bool {
@@ -19,7 +20,14 @@ func MarkOpened(markerPath string) error {
 }
 
 func OpenURL(rawURL string) *exec.Cmd {
-	return exec.Command("open", rawURL)
+	return exec.Command(openProgram(runtime.GOOS), rawURL)
+}
+
+func openProgram(goos string) string {
+	if goos == "linux" {
+		return "xdg-open"
+	}
+	return "open"
 }
 
 // DecideLaunchOpen reports whether this invocation should open the parent

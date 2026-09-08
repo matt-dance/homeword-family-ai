@@ -3,6 +3,7 @@ package browser
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -26,8 +27,26 @@ func TestShouldOpenOnBoot(t *testing.T) {
 
 func TestOpenURLUsesOpen(t *testing.T) {
 	cmd := OpenURL("http://127.0.0.1:43123")
-	if cmd.Args[0] != "open" || cmd.Args[1] != "http://127.0.0.1:43123" {
+	want := openProgram(runtime.GOOS)
+	if cmd.Args[0] != want || cmd.Args[1] != "http://127.0.0.1:43123" {
 		t.Fatalf("%v", cmd.Args)
+	}
+}
+
+func TestOpenProgram(t *testing.T) {
+	cases := []struct {
+		goos string
+		want string
+	}{
+		{goos: "darwin", want: "open"},
+		{goos: "linux", want: "xdg-open"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.goos, func(t *testing.T) {
+			if got := openProgram(tc.goos); got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
 	}
 }
 

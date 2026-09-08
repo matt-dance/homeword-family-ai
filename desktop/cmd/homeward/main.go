@@ -6,14 +6,19 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/energye/systray"
 
 	"homeward/desktop/internal/adopt"
+	"homeward/desktop/internal/autostart"
 	"homeward/desktop/internal/browser"
 	"homeward/desktop/internal/children"
 	"homeward/desktop/internal/env"
@@ -40,7 +45,7 @@ var trayIcon = []byte{
 func main() {
 	openFlag := flag.Bool("open", false, "open Homeward in the browser")
 	uninstallFlag := flag.Bool("uninstall", false, "remove the login item")
-	wipeFlag := flag.Bool("wipe-data", false, "delete Application Support data (requires --uninstall)")
+	wipeFlag := flag.Bool("wipe-data", false, "delete family data (requires --uninstall)")
 	flag.Parse()
 	if err := run(*openFlag, *uninstallFlag, *wipeFlag); err != nil {
 		log.Fatal(err)
@@ -55,6 +60,9 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -82,11 +90,8 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 	}
 	defer lock.Release()
 
-	plist, err := launchd.WritePlist(home, exe)
-	if err != nil {
-		log.Printf("write LaunchAgent plist: %v", err)
-	} else if err := launchd.Bootstrap(plist); err != nil {
-		log.Printf("launchctl bootstrap: %v", err)
+	if err := ensureLoginItem(home, exe); err != nil {
+		log.Printf("login item: %v", err)
 	}
 
 	if err := os.MkdirAll(filepath.Join(dataDir, "ollama"), 0o755); err != nil {
@@ -142,8 +147,8 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 	return nil
 }
 
-// runSecondary handles a second Homeward (launchd after user launch, or
-// Finder while the tray is already up). It must not Start children.
+// runSecondary handles a second Homeward (login item after user launch, or
+// opening the app while the tray is already up). It must not Start children.
 func runSecondary(openFlag bool, marker string) error {
 	maybeOpenBrowser(openFlag, browser.ShouldOpenOnBoot(marker), webHealthy(), false, marker)
 	return nil
@@ -169,22 +174,69 @@ func maybeOpenBrowser(openFlag, firstRun, webOK, holder bool, marker string) {
 }
 
 // runUninstall stops children, then removes the login item.
-// A second-process `Homeward --uninstall` has no local Manager; launchd.Kill
-// SIGTERMs the login-item supervisor so its handler Stop()s gateway/web
-// (and bundled ollama only). Adopted system Ollama is not signaled.
+// A second-process `--uninstall` has no local Manager. On Darwin, launchd.Kill
+// SIGTERMs the login-item supervisor; on Linux, other `homeward` processes
+// are signaled. The handler Stop()s gateway/web (and bundled ollama only).
+// Adopted system Ollama is not signaled.
 func runUninstall(home, dataDir string, wipe bool, manager *proc.Manager) error {
 	if manager != nil {
 		_ = manager.Stop()
 	}
-	_ = launchd.Kill()
-	time.Sleep(time.Second)
-	_ = launchd.Bootout()
-	_ = os.Remove(launchd.PlistPath(home))
+	removeLoginItem(home)
 	if wipe {
 		return os.RemoveAll(dataDir)
 	}
 	log.Printf("Homeward data remains at %s", dataDir)
 	return nil
+}
+
+func ensureLoginItem(home, exe string) error {
+	if runtime.GOOS == "linux" {
+		_, err := autostart.Write(home, exe)
+		return err
+	}
+	plist, err := launchd.WritePlist(home, exe)
+	if err != nil {
+		return fmt.Errorf("write LaunchAgent plist: %w", err)
+	}
+	if err := launchd.Bootstrap(plist); err != nil {
+		return fmt.Errorf("launchctl bootstrap: %w", err)
+	}
+	return nil
+}
+
+func removeLoginItem(home string) {
+	if runtime.GOOS == "linux" {
+		_ = autostart.Remove(home)
+		signalOtherSupervisors()
+		time.Sleep(time.Second)
+		return
+	}
+	_ = launchd.Kill()
+	time.Sleep(time.Second)
+	_ = launchd.Bootout()
+	_ = os.Remove(launchd.PlistPath(home))
+}
+
+// signalOtherSupervisors SIGTERMs other `homeward` processes so a second-process
+// `--uninstall` can stop the tray supervisor and its children.
+func signalOtherSupervisors() {
+	out, err := exec.Command("pgrep", "-x", "homeward").Output()
+	if err != nil {
+		return
+	}
+	self := os.Getpid()
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		pid, err := strconv.Atoi(line)
+		if err != nil || pid == self {
+			continue
+		}
+		p, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		_ = p.Signal(syscall.SIGTERM)
+	}
 }
 
 func waitHealthy(waitOllama bool) error {
