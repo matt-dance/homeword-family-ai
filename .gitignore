@@ -37,6 +37,7 @@ venv/
 uv.lock
 .coverage
 htmlcov/
+uv.lock
 
 # Logs
 *.log

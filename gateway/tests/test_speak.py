@@ -1,5 +1,6 @@
 """Local read-aloud (Piper TTS) tests."""
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -8,7 +9,9 @@ from httpx import AsyncClient
 from homeward_gateway.voice.speak import (
     SELF_TEST_PHRASE,
     build_word_timings,
+    ensure_espeak_data_path,
     piper_available,
+    resolve_espeak_data_path,
     run_speak_self_test,
     sanitize_for_speech,
     synthesize_speech,
@@ -69,6 +72,44 @@ class TestSpeakAPI:
             headers={"X-Homeward-Client-Ip": "192.168.1.42"},
         )
         assert resp.status_code == 403
+
+
+class TestEspeakDataPath:
+    def test_resolve_keeps_existing_env(self, tmp_path, monkeypatch):
+        data = tmp_path / "custom-espeak"
+        data.mkdir()
+        (data / "phontab").write_bytes(b"x")
+        monkeypatch.setenv("ESPEAK_DATA_PATH", str(data))
+        assert resolve_espeak_data_path() == data
+
+    def test_resolve_uses_espeak_share_sibling(self, tmp_path, monkeypatch):
+        root = tmp_path / "espeak"
+        bin_dir = root / "bin"
+        data = root / "share" / "espeak-ng-data"
+        bin_dir.mkdir(parents=True)
+        data.mkdir(parents=True)
+        (data / "phontab").write_bytes(b"x")
+        binary = bin_dir / "espeak-ng"
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+        monkeypatch.delenv("ESPEAK_DATA_PATH", raising=False)
+        monkeypatch.setenv("PATH", str(bin_dir))
+        assert resolve_espeak_data_path() == data
+
+    def test_ensure_sets_process_env(self, tmp_path, monkeypatch):
+        root = tmp_path / "espeak"
+        bin_dir = root / "bin"
+        data = root / "share" / "espeak-ng-data"
+        bin_dir.mkdir(parents=True)
+        data.mkdir(parents=True)
+        (data / "phontab").write_bytes(b"x")
+        binary = bin_dir / "espeak-ng"
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+        monkeypatch.delenv("ESPEAK_DATA_PATH", raising=False)
+        monkeypatch.setenv("PATH", str(bin_dir))
+        assert ensure_espeak_data_path() == data
+        assert os.environ["ESPEAK_DATA_PATH"] == str(data)
 
 
 class TestSpeakHelpers:

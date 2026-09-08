@@ -43,4 +43,7 @@ func TestChildEnvNativeFlags(t *testing.T) {
 	if !strings.Contains(path, "/app/Contents/Resources/runtime/ffmpeg/bin") {
 		t.Fatalf("PATH missing ffmpeg: %s", path)
 	}
+	if lookup(items, "ESPEAK_DATA_PATH") != "/app/Contents/Resources/runtime/espeak/share/espeak-ng-data" {
+		t.Fatalf("ESPEAK_DATA_PATH=%q", lookup(items, "ESPEAK_DATA_PATH"))
+	}
 }
