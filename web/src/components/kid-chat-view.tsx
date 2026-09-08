@@ -20,6 +20,8 @@ import {
   type StoryTool,
 } from "@/lib/chat-tools";
 import { shouldShowReplyChips } from "@/lib/reply-chips";
+import { shouldShowStreamThinking } from "@/lib/stream-progress";
+import { StreamComposerHint, StreamWorkingBubble } from "@/components/stream-working";
 import {
   actionAfterPinUnlock,
   isResumableSession,
@@ -1005,6 +1007,17 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                     />
                   )}
 
+                  {streaming &&
+                    i === messages.length - 1 &&
+                    shouldShowStreamThinking(streaming, msg) && (
+                      <StreamWorkingBubble
+                        status={streamStatus}
+                        simpleMode={simpleMode}
+                        onStop={handleStop}
+                        showAvatar={false}
+                      />
+                    )}
+
                   {/* Speaking indicator / audio player */}
                   {isReading && readAloudState.isSpeaking && (
                     <SpeakingIndicator simpleMode={simpleMode} />
@@ -1055,35 +1068,14 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             );
           })}
 
-          {/* Thinking shimmer indicator */}
-          {streaming && messages[messages.length - 1]?.role !== "assistant" && (
-            <div className="flex gap-2.5 justify-start animate-slide-up">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl accent-gradient text-primary-foreground text-xs font-bold shadow-xs mt-1 animate-pulse">
-                <Sparkles className="h-4 w-4" />
-              </div>
-              <div
-                className={`rounded-2xl border border-border/70 bg-card/90 px-4 py-3 shadow-xs flex items-center gap-2 ${
-                  simpleMode ? "text-base" : "text-sm"
-                }`}
-              >
-                <span className="flex gap-1 items-center">
-                  <span className="h-2 w-2 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]" />
-                  <span className="h-2 w-2 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]" />
-                  <span className="h-2 w-2 rounded-full bg-primary animate-bounce" />
-                </span>
-                <span className="text-xs text-muted-foreground font-medium pl-1">
-                  {streamStatus || "Writing a reply…"}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleStop}
-                  className="ml-2 rounded-lg px-2 py-0.5 text-xs font-semibold text-destructive hover:bg-destructive/10"
-                >
-                  Stop
-                </button>
-              </div>
-            </div>
-          )}
+          {shouldShowStreamThinking(streaming, messages[messages.length - 1]) &&
+            messages[messages.length - 1]?.role !== "assistant" && (
+              <StreamWorkingBubble
+                status={streamStatus}
+                simpleMode={simpleMode}
+                onStop={handleStop}
+              />
+            )}
 
           <div ref={bottomRef} />
         </div>
@@ -1119,6 +1111,10 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             <p className="text-xs text-center font-medium text-primary animate-pulse">
               Understanding what you said…
             </p>
+          )}
+
+          {streaming && !conversationActive && (
+            <StreamComposerHint status={streamStatus} simpleMode={simpleMode} />
           )}
 
           {conversationAvailable && (
@@ -1185,7 +1181,9 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             />
             <Input
               placeholder={
-                displayName
+                streaming
+                  ? "Wait for this answer, or tap Stop…"
+                  : displayName
                   ? "Ask me anything…"
                   : voiceSupported
                   ? `Ask me anything, ${selectedChild.name}…`

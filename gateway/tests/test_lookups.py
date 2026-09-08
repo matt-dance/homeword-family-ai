@@ -28,6 +28,7 @@ from homeward_gateway.chat.lookups import (
     weather_missing_place_notes,
     _parse_wikipedia_incumbent,
 )
+from homeward_gateway.chat.session_state import SessionState
 from homeward_gateway.pipeline.pipeline import (
     PipelineResult,
     ToolEvent,
@@ -159,6 +160,17 @@ class TestDetectLookupIntent:
         assert intent is not None
         assert intent.kind == "news"
 
+    def test_news_stories_from_today(self):
+        for question in (
+            "what are some news stories from today",
+            "what are some of the latest news stories today?",
+            "look up on the web a news story from today",
+        ):
+            intent = detect_lookup_intent(question)
+            assert intent is not None, question
+            assert intent.kind == "news", question
+            assert detect_web_search_intent(question) is None, question
+
     def test_web_search_iran_war_not_weather_or_sports(self):
         intent = detect_web_search_intent("what is going on in the current iran war")
         assert intent is not None
@@ -251,6 +263,24 @@ class TestSessionContext:
         assert intent is not None
         assert intent.kind == "sports"
         assert intent.query == "boise state"
+        assert intent.schedule is False
+
+    def test_last_game_score_is_recent_scores_not_schedule(self):
+        intent, _context = resolve_lookup_intent(
+            "what was the score of their last game",
+            self.GAME_HISTORY,
+        )
+        assert intent is not None
+        assert intent.kind == "sports"
+        assert intent.query == "boise state"
+        assert intent.schedule is False
+        assert intent.date_range is not None
+        assert "-" in intent.date_range
+
+        named = detect_lookup_intent("what was the score of Boise State's last game")
+        assert named is not None
+        assert named.kind == "sports"
+        assert named.schedule is False
 
     def test_resolve_lookup_does_not_use_stale_place_for_general_weather(self):
         intent, _context = resolve_lookup_intent(
@@ -572,7 +602,7 @@ class TestResolveLiveLookup:
             called = True
             return None
 
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         notes, tools, intent, result = await resolve_live_lookup(
             "What's the weather in Denver?",
             live_lookups=False,
@@ -593,7 +623,7 @@ class TestResolveLiveLookup:
         async def fake_filter_output(text, *_args, **_kwargs):
             return PipelineResult(allowed=True, content=text)
 
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
         notes, tools, intent, result = await resolve_live_lookup(
             "What's the weather in Denver?",
@@ -614,7 +644,7 @@ class TestResolveLiveLookup:
             fetched = True
             return None
 
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         notes, tools, intent, result = await resolve_live_lookup(
             "What's the weather tomorrow?",
             live_lookups=True,
@@ -637,7 +667,7 @@ class TestResolveLiveLookup:
         async def fake_filter_output(text, *_args, **_kwargs):
             return PipelineResult(allowed=True, content=text)
 
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
         notes, tools, intent, result = await resolve_live_lookup(
             "What's the weather tomorrow?",
@@ -667,7 +697,7 @@ class TestResolveLiveLookup:
         async def fake_filter_output(_text, *_args, **_kwargs):
             return PipelineResult(allowed=False, block_reason="blocked", stage="output_rules")
 
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
         notes, tools, intent, result = await resolve_live_lookup(
             "What's in the news today?",
@@ -720,7 +750,7 @@ class TestResolveLiveLookup:
         async def fake_filter_output(text, *_args, **_kwargs):
             return PipelineResult(allowed=True, content=text)
 
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
         notes, tools, intent, result = await resolve_live_lookup(
             "what is going on in the current iran war",
@@ -738,6 +768,34 @@ class TestResolveLiveLookup:
         assert result.kind == "web"
 
     @pytest.mark.asyncio
+    async def test_news_stories_use_wikipedia_even_when_open_web_on(self, monkeypatch):
+        captured: dict[str, str] = {}
+
+        async def fake_fetch(intent):
+            captured["kind"] = intent.kind
+            return format_news_notes(["Gloria Steinem dies at the age of 92"])
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+        notes, tools, intent, result = await resolve_live_lookup(
+            "what are some news stories from today",
+            live_lookups=True,
+            open_web_search=True,
+            preset=YOUNG,
+            strictness=3,
+        )
+        assert captured["kind"] == "news"
+        assert intent is not None
+        assert intent.kind == "news"
+        assert result is not None
+        assert result.kind == "news"
+        assert "Gloria Steinem" in notes
+        assert tools[0]["source_label"] == "Wikipedia Current Events"
+
+    @pytest.mark.asyncio
     async def test_open_web_off_does_not_search_iran_war(self, monkeypatch):
         called = False
 
@@ -746,7 +804,7 @@ class TestResolveLiveLookup:
             called = True
             return None
 
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         notes, tools, intent, result = await resolve_live_lookup(
             "what is going on in the current iran war",
             live_lookups=True,
@@ -755,8 +813,11 @@ class TestResolveLiveLookup:
             strictness=3,
         )
         assert called is False
-        assert notes == ""
-        assert intent is None
+        assert "could not check" in notes.lower()
+        assert "SearxNG" not in notes
+        assert tools == []
+        assert intent is not None
+        assert intent.kind == "web"
 
     @pytest.mark.asyncio
     async def test_open_web_weather_still_uses_named_api(self, monkeypatch):
@@ -770,7 +831,7 @@ class TestResolveLiveLookup:
         async def fake_filter_output(text, *_args, **_kwargs):
             return PipelineResult(allowed=True, content=text)
 
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
         notes, tools, intent, _result = await resolve_live_lookup(
             "What's the weather in Denver?",
@@ -788,7 +849,7 @@ class TestResolveLiveLookup:
         async def fake_fetch(_intent):
             return None
 
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         notes, tools, intent, result = await resolve_live_lookup(
             "what is going on in the current iran war",
             live_lookups=True,
@@ -813,7 +874,7 @@ class TestResolveLiveLookup:
         async def fake_filter_output(_text, *_args, **_kwargs):
             return PipelineResult(allowed=False, block_reason="blocked", stage="output_rules")
 
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
         notes, tools, intent, result = await resolve_live_lookup(
             "what is going on in the current iran war",
@@ -844,14 +905,17 @@ class TestProcessChatLookupGating:
         captured: dict[str, str] = {}
 
         async def fake_generate(messages, *_args, **_kwargs):
-            captured["user_turn"] = messages[-1]["content"]
+            captured["messages"] = messages
+            captured["user_turn"] = next(
+                item["content"] for item in reversed(messages) if item.get("role") == "user"
+            )
             return "Ask a parent to look outside."
 
         async def fake_filter_output(text, *_args, **_kwargs):
             return PipelineResult(allowed=True, content=text)
 
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.generate_response", fake_generate)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
 
@@ -881,14 +945,17 @@ class TestProcessChatLookupGating:
         captured: dict[str, str] = {}
 
         async def fake_generate(messages, *_args, **_kwargs):
-            captured["user_turn"] = messages[-1]["content"]
+            captured["messages"] = messages
+            captured["user_turn"] = next(
+                item["content"] for item in reversed(messages) if item.get("role") == "user"
+            )
             return "It is sunny and about 70 degrees in Denver."
 
         async def fake_filter_output(text, *_args, **_kwargs):
             return PipelineResult(allowed=True, content=text)
 
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.generate_response", fake_generate)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
 
@@ -902,8 +969,17 @@ class TestProcessChatLookupGating:
             live_lookups=True,
         )
         assert result.allowed
-        assert "Open-Meteo" in captured["user_turn"]
-        assert "70" in captured["user_turn"]
+        assert "LOOKUP DATA" not in captured["user_turn"]
+        assert "ACTIVE CONTEXT" not in captured["user_turn"]
+        assert "What's the weather in Denver?" in captured["user_turn"]
+        tool_blob = " ".join(
+            item.get("content") or ""
+            for item in captured["messages"]
+            if item.get("role") == "tool"
+        )
+        assert "Open-Meteo" in tool_blob
+        assert "70" in tool_blob
+        assert "LIVE LOOKUP" not in captured["user_turn"]
 
     @pytest.mark.asyncio
     async def test_stream_yields_lookup_card_when_enabled(self, monkeypatch):
@@ -923,7 +999,7 @@ class TestProcessChatLookupGating:
             return PipelineResult(allowed=True, content=text)
 
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
-        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.stream_response", fake_stream)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
 
@@ -943,3 +1019,175 @@ class TestProcessChatLookupGating:
         assert tool_events
         assert tool_events[0].tools[0]["type"] == "lookup"
         assert tool_events[0].tools[0]["source_label"] == "Open-Meteo weather"
+
+    @pytest.mark.asyncio
+    async def test_process_chat_news_stories_use_wikipedia_not_web(self, monkeypatch):
+        captured: dict[str, object] = {}
+
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="what are some news stories from today")
+
+        async def fake_fetch(intent):
+            captured["kind"] = intent.kind
+            return format_news_notes(["Gloria Steinem dies at the age of 92"])
+
+        async def fake_generate(messages, *_args, **_kwargs):
+            captured["messages"] = messages
+            return "Here are a few headlines from Wikipedia."
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.generate_response", fake_generate)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+
+        result = await process_chat(
+            "what are some news stories from today",
+            [],
+            YOUNG,
+            3,
+            "Emma",
+            7,
+            live_lookups=True,
+            open_web_search=True,
+        )
+        assert result.allowed
+        assert captured["kind"] == "news"
+        tool_blob = " ".join(
+            item.get("content") or ""
+            for item in captured["messages"]
+            if item.get("role") == "tool"
+        )
+        assert "Gloria Steinem" in tool_blob
+        assert "Wikipedia Current Events" in tool_blob
+        assert "SearxNG" not in tool_blob
+        user_turn = next(
+            item["content"]
+            for item in reversed(captured["messages"])
+            if item.get("role") == "user"
+        )
+        assert "LOOKUP DATA" not in user_turn
+        assert any(card.get("source_label") == "Wikipedia Current Events" for card in (result.tools or []))
+
+    @pytest.mark.asyncio
+    async def test_tell_me_more_after_new_topic_does_not_refetch_news(self, monkeypatch):
+        fetched: list[str] = []
+
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="tell me more")
+
+        async def fake_fetch(intent):
+            fetched.append(intent.kind)
+            return format_news_notes(["Gloria Steinem dies at the age of 92"])
+
+        captured: dict[str, object] = {}
+
+        async def fake_generate(messages, *_args, **_kwargs):
+            captured["messages"] = messages
+            return "Black holes warp spacetime so strongly that light cannot escape."
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.generate_response", fake_generate)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+
+        stale = SessionState(
+            topic="what's in the news today",
+            subject="current events",
+            last_lookup_kind="news",
+            last_fact_summary="Gloria Steinem dies at 92",
+        )
+        after_topic = stale.with_topic("tell me about black holes")
+        history = [
+            {"role": "user", "content": "what's in the news today"},
+            {"role": "assistant", "content": "Gloria Steinem died at 92."},
+            {"role": "user", "content": "tell me about black holes"},
+            {"role": "assistant", "content": "Black holes have gravity so strong light cannot escape."},
+        ]
+        result = await process_chat(
+            "tell me more",
+            history,
+            YOUNG,
+            3,
+            "Emma",
+            7,
+            live_lookups=True,
+            open_web_search=True,
+            session_state=after_topic,
+        )
+        assert result.allowed
+        assert fetched == []
+        user_turn = next(
+            item["content"]
+            for item in reversed(captured["messages"])
+            if item.get("role") == "user"
+        )
+        assert "black holes" in user_turn.lower()
+        assert "gloria" not in user_turn.lower()
+        assert "current events" not in user_turn.lower()
+        assert not any(item.get("role") == "tool" for item in captured["messages"])
+
+    @pytest.mark.asyncio
+    async def test_native_model_answers_from_tool_turn(self, monkeypatch):
+        lookup = format_weather_notes("Denver", WEATHER_GEO, WEATHER_FORECAST)
+        turns = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": {"place": "Denver", "when": "today"},
+                        }
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "It is sunny and about 70 degrees in Denver.",
+            },
+        ]
+
+        async def fake_fetch(intent):
+            assert intent.kind == "weather"
+            return lookup
+
+        async def fake_complete(messages, *, tools=None, model=None, temperature=0.2):
+            assert tools
+            return turns.pop(0)
+
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="What's the weather in Denver?")
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        async def unexpected_generate(*_args, **_kwargs):
+            raise AssertionError("native loop should not call generate_response")
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.models.router.complete_chat_turn", fake_complete)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.generate_response", unexpected_generate)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+
+        result = await process_chat(
+            "What's the weather in Denver?",
+            [],
+            YOUNG,
+            3,
+            "Emma",
+            7,
+            live_lookups=True,
+            chat_model="qwen2.5:14b",
+        )
+        assert result.allowed
+        assert "70" in (result.content or "")
+        assert any(card.get("source") == "open-meteo" for card in (result.tools or []))
+        assert turns == []

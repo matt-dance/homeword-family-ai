@@ -8,7 +8,7 @@ import litellm
 
 from homeward_gateway.config import settings
 from homeward_gateway.models.litellm_target import resolve_litellm_target
-from homeward_gateway.models.ollama_chat import chat_completion, stream_chat_completion
+from homeward_gateway.models.ollama_chat import chat_completion, chat_message, stream_chat_completion
 from homeward_gateway.models.prompts import build_system_prompt
 from homeward_gateway.models.response_limits import GENERATION_MAX_TOKENS
 from homeward_gateway.pipeline.policy import PolicyPreset
@@ -60,6 +60,64 @@ def _build_messages(
         memory_items=memory_items,
     )
     return [{"role": "system", "content": system}] + messages
+
+
+def _litellm_message_dict(message: object) -> dict:
+    content = getattr(message, "content", None) or ""
+    serialized: list[dict] = []
+    for call in getattr(message, "tool_calls", None) or []:
+        fn = getattr(call, "function", call)
+        serialized.append(
+            {
+                "id": getattr(call, "id", "") or "",
+                "type": "function",
+                "function": {
+                    "name": getattr(fn, "name", "") or "",
+                    "arguments": getattr(fn, "arguments", {}) or {},
+                },
+            }
+        )
+    payload: dict = {"role": "assistant", "content": content}
+    if serialized:
+        payload["tool_calls"] = serialized
+    return payload
+
+
+async def complete_chat_turn(
+    messages: list[dict],
+    *,
+    tools: list[dict] | None = None,
+    model: str | None = None,
+    temperature: float = 0.2,
+) -> dict:
+    """One non-streaming chat turn, optionally with tools. Returns the assistant message dict."""
+    resolved_model = model or settings.ollama_model
+    try:
+        if _use_cloud():
+            llm_model, api_key, api_base, llm_extra = resolve_litellm_target(model)
+            kwargs: dict = {
+                "model": llm_model,
+                "messages": messages,
+                "api_key": api_key,
+                "api_base": api_base,
+                "timeout": settings.llm_timeout,
+                "max_tokens": GENERATION_MAX_TOKENS,
+                "temperature": temperature,
+                **llm_extra,
+            }
+            if tools:
+                kwargs["tools"] = tools
+            response = await litellm.acompletion(**kwargs)
+            return _litellm_message_dict(response.choices[0].message)
+        return await chat_message(
+            resolved_model,
+            messages,
+            tools=tools,
+            temperature=temperature,
+        )
+    except Exception as e:
+        logger.error("LLM tool-turn error: %s", e)
+        raise
 
 
 async def generate_response(

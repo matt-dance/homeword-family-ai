@@ -83,7 +83,7 @@ class TestTurnResolver:
         assert resolved.is_follow_up
         assert "Eugene, OR" in resolved.expanded_message
 
-    def test_format_user_turn_includes_active_context(self):
+    def test_format_user_turn_does_not_stuff_lookup_notes(self):
         state = SessionState(place="Eugene, OR", topic="game weather")
         resolved = ResolvedTurn(
             original_message="What will the weather be like at the game?",
@@ -98,8 +98,9 @@ class TestTurnResolver:
             filtered_content="What will the weather be like at the game?",
             lookup_notes=f"LIVE LOOKUP RESULTS\n{weather.notes}",
         )
-        assert "ACTIVE CONTEXT" in turn
-        assert "LOOKUP DATA" in turn
+        assert "ACTIVE CONTEXT" not in turn
+        assert "LOOKUP DATA" not in turn
+        assert "LIVE LOOKUP" not in turn
         assert "Eugene, OR" in turn
 
     def test_format_user_turn_skips_stale_topic_on_new_card_request(self):
@@ -128,3 +129,48 @@ class TestTurnResolver:
         turn = format_user_turn(resolved, filtered_content="How do I make pancakes?")
         assert "curious fox" not in turn
         assert "How do I make pancakes?" in turn
+
+
+class TestRelatedFollowUpContext:
+    NEWS = SessionState(
+        topic="what's in the news today",
+        subject="current events",
+        last_lookup_kind="news",
+        last_fact_summary="Gloria Steinem dies at 92",
+    )
+
+    def test_tell_me_more_keeps_news_when_still_on_news(self):
+        resolved = resolve_turn("tell me more", None, self.NEWS)
+        turn = format_user_turn(resolved, filtered_content="tell me more")
+        assert resolved.is_follow_up
+        assert "current events" in turn.lower()
+        assert "gloria" not in turn.lower()
+        assert "ACTIVE CONTEXT" not in turn
+        assert "LOOKUP DATA" not in turn
+
+    def test_tell_me_more_follows_latest_topic_not_prior_news(self):
+        after_black_holes = self.NEWS.with_topic("tell me about black holes")
+        resolved = resolve_turn("tell me more", None, after_black_holes)
+        turn = format_user_turn(resolved, filtered_content="tell me more")
+        assert "black holes" in turn.lower()
+        assert "gloria" not in turn.lower()
+        assert "current events" not in turn.lower()
+
+    def test_what_about_unrelated_topic_does_not_keep_news(self):
+        resolved = resolve_turn("what about black holes", None, self.NEWS)
+        turn = format_user_turn(resolved, filtered_content="what about black holes")
+        assert not resolved.is_follow_up
+        assert "gloria" not in turn.lower()
+        assert "current events" not in turn.lower()
+
+    def test_related_weather_question_keeps_place(self):
+        weather = SessionState(
+            topic="weather in Denver",
+            place="Denver",
+            last_lookup_kind="weather",
+            last_fact_summary="60°F and cloudy",
+        )
+        next_state = weather.with_topic("What's the weather tomorrow?")
+        assert next_state.place == "Denver"
+        resolved = resolve_turn("What's the weather tomorrow?", None, next_state)
+        assert "Denver" in (resolved.expanded_message + resolved.context_hint)
