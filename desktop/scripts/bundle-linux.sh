@@ -97,7 +97,7 @@ bootstrap_container() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y --no-install-recommends \
-    ca-certificates curl tar xz-utils git \
+    ca-certificates curl tar xz-utils zstd git \
     gcc pkg-config \
     libgtk-3-dev libayatana-appindicator3-dev \
     espeak-ng \
@@ -306,17 +306,15 @@ install_python_gateway() {
 
 install_ollama() {
   # Official engine tarball only — never model weights / blobs / GGUF.
+  # Linux amd64 ships as .tar.zst (v0.33.3+); .tgz / .tar.gz 404.
   local version="${HOMEWARD_OLLAMA_VERSION:-v0.33.3}"
   local tmp dest
   tmp="$(mktemp -d)"
   dest="$RUNTIME/ollama"
-  local url="https://github.com/ollama/ollama/releases/download/${version}/ollama-linux-amd64.tgz"
+  local url="https://github.com/ollama/ollama/releases/download/${version}/ollama-linux-amd64.tar.zst"
   echo "downloading official Ollama ${version} (engine only, no model weights)"
-  if ! curl -fsSL -o "$tmp/ollama.tgz" "$url"; then
-    curl -fsSL -o "$tmp/ollama.tgz" \
-      "https://github.com/ollama/ollama/releases/download/${version}/ollama-linux-amd64.tar.gz"
-  fi
-  tar -xzf "$tmp/ollama.tgz" -C "$dest"
+  curl -fsSL -o "$tmp/ollama.tar.zst" "$url"
+  tar --zstd -xf "$tmp/ollama.tar.zst" -C "$dest"
   if [[ -f "$dest/bin/ollama" && ! -f "$dest/ollama" ]]; then
     mv "$dest/bin/ollama" "$dest/ollama"
   elif [[ ! -f "$dest/ollama" ]]; then

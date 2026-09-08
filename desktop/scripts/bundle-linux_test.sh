@@ -9,6 +9,14 @@ TARBALL="$ROOT/dist/linux/amd64/Homeward-linux-amd64.tar.gz"
 
 test -x "$SCRIPT"
 
+# Official Linux engine is .tar.zst (v0.33.3+); .tgz / .tar.gz 404.
+if grep -qE 'ollama-linux-amd64\.(tgz|tar\.gz)' "$SCRIPT"; then
+  echo "install_ollama still hardcodes .tgz/.tar.gz (404 on current Ollama)" >&2
+  exit 1
+fi
+grep -q 'ollama-linux-amd64.tar.zst' "$SCRIPT"
+grep -q 'tar --zstd' "$SCRIPT"
+
 # arm64 is not a v1 family target.
 if HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1 "$SCRIPT" arm64 >/dev/null 2>&1; then
   echo "bundle-linux.sh arm64 should fail (amd64 only)" >&2
