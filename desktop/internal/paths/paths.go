@@ -3,10 +3,18 @@ package paths
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
 func AppSupportDirFromHome(home string) string {
+	return appSupportDirFromHome(home, runtime.GOOS)
+}
+
+func appSupportDirFromHome(home, goos string) string {
+	if goos == "linux" {
+		return home + "/.local/share/homeward"
+	}
 	return home + "/Library/Application Support/Homeward"
 }
 
@@ -19,6 +27,9 @@ func AppSupportDir() (string, error) {
 }
 
 func ResourceRoot(exePath string) string {
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = resolved
+	}
 	if strings.HasSuffix(exePath, "Contents/MacOS/Homeward") {
 		return strings.TrimSuffix(exePath, "MacOS/Homeward") + "Resources"
 	}

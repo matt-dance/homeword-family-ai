@@ -47,3 +47,60 @@ Creates the Contents tree and copies `policies/`. Skips Node / uv / Ollama / Hom
 ## Troubleshooting
 
 **Gatekeeper blocks an unsigned local build.** Expected for contributor `.app` / DMG builds without `--sign`. macOS may refuse to open or quarantine the bundle. For family machines, build with `./desktop/scripts/dmg-macos.sh <arch> --sign` after setting `HOMEWARD_CODESIGN_IDENTITY` and `HOMEWARD_NOTARY_PROFILE`.
+
+## Linux tarball (amd64)
+
+Family Linux v1 is a tarball plus `install.sh` for a logged-in desktop (amd64 only). Chat and speech model weights are not part of the tarball; the packer ships the official Ollama *engine* and LICENSE only.
+
+A family tarball should be produced with Docker (Ubuntu). The supervisor uses CGO/GTK (`energye/systray` + AppIndicator), and the embedded CPython 3.12 + gateway must be Linux binaries. Building those on a Mac without a container cannot produce a family tree.
+
+`HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1` is a layout helper for CI. It cannot produce a family tarball.
+
+### Skip-downloads (layout / CI)
+
+From the repo root:
+
+```bash
+HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1 ./desktop/scripts/bundle-linux.sh amd64
+```
+
+Creates `dist/linux/amd64/Homeward-linux-amd64/` and `dist/linux/amd64/Homeward-linux-amd64.tar.gz` with `install.sh`, `uninstall.sh`, `policies/`, and empty `resources/runtime/{python,node,ollama,ffmpeg,espeak}` dirs. Skips Node / uv / Ollama / ffmpeg / espeak downloads. Does not fail if the linux `homeward` supervisor is not at `desktop/homeward` yet (copy it when a linux amd64 ELF is present).
+
+### Family tarball (Docker)
+
+On a Mac with Docker Desktop, the packer re-executes itself in Ubuntu:
+
+```bash
+./desktop/scripts/bundle-linux.sh amd64
+```
+
+Equivalent explicit container:
+
+```bash
+docker run --rm --platform linux/amd64 \
+  -v "$PWD:/src" -w /src \
+  -e HOMEWARD_BUNDLE_IN_CONTAINER=1 \
+  ubuntu:24.04 \
+  bash /src/desktop/scripts/bundle-linux.sh amd64
+```
+
+On Linux amd64, the same script runs natively (needs Go 1.22+, GTK/AppIndicator headers, uv, curl). Output: `dist/linux/amd64/Homeward-linux-amd64.tar.gz`.
+
+The family machine should be a logged-in Ubuntu/GNOME-style desktop. The tray needs GTK 3 and Ayatana AppIndicator at runtime; ffmpeg and espeak-ng are bundled.
+
+### Install and uninstall (no root)
+
+```bash
+tar -xzf Homeward-linux-amd64.tar.gz
+cd Homeward-linux-amd64
+./install.sh
+```
+
+`install.sh` copies the supervisor and `resources/` to `~/.local/share/homeward/app`, writes a `~/.local/bin/homeward` shim, writes `~/.config/autostart/homeward.desktop` (`Exec=` the real supervisor), and starts `homeward --open`. It does not copy family data. Data lives at `~/.local/share/homeward`.
+
+```bash
+./uninstall.sh              # keeps ~/.local/share/homeward data
+./uninstall.sh --wipe-data
+```
+
+Uninstall stops Homeward (`homeward --uninstall` when the binary exists), then removes the autostart file, shim, and `~/.local/share/homeward/app`.
