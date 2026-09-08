@@ -8,7 +8,7 @@ export const fetchCache = "force-no-store";
 export const maxDuration = 120;
 
 /** Give the gateway time to return SSE headers; do not wait the full 120s empty. */
-export const GATEWAY_HEADER_TIMEOUT_MS = 20_000;
+const GATEWAY_HEADER_TIMEOUT_MS = 20_000;
 
 const GATEWAY_URL = process.env.GATEWAY_URL || "http://localhost:8000";
 

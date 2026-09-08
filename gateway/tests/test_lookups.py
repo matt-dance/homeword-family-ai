@@ -16,6 +16,7 @@ from homeward_gateway.chat.lookups import (
     lookup_context_hint,
     lookup_prompt_notes,
     parse_featured_headlines,
+    parse_in_the_news_template,
     parse_scoreboard_events,
     resolve_lookup_intent,
     resolve_weather_place,
@@ -494,14 +495,53 @@ class TestParsers:
 
     def test_parse_featured_headlines(self):
         payload = {
-            "news": {
-                "mostread": [{"titles": {"normalized": "Solar eclipse"}}],
+            "news": [
+                {
+                    "story": "<p>A rover finds a new rock on Mars.</p>",
+                    "links": [{"titles": {"normalized": "Mars rover"}}],
+                }
+            ],
+            "onthisday": [
+                {
+                    "year": 2011,
+                    "text": "Yak-Service Flight 9633 crashes near Yaroslavl, Russia.",
+                }
+            ],
+            "mostread": {
+                "articles": [{"titles": {"normalized": "Barack Obama"}}],
             },
-            "onthisday": [{"text": "On this day a telescope launched."}],
         }
         headlines = parse_featured_headlines(payload)
-        assert "Solar eclipse" in headlines
-        assert any("telescope" in item for item in headlines)
+        assert any("Mars" in item for item in headlines)
+        assert not any("Yak-Service" in item for item in headlines)
+        assert not any("Obama" in item for item in headlines)
+
+    def test_parse_featured_headlines_ignores_onthisday_when_news_is_empty(self):
+        payload = {
+            "news": [],
+            "onthisday": [
+                {
+                    "year": 2011,
+                    "text": "Yak-Service Flight 9633 crashes near Yaroslavl, Russia.",
+                }
+            ],
+        }
+        assert parse_featured_headlines(payload) == []
+
+    def test_parse_in_the_news_template_uses_featured_bullets_only(self):
+        wikitext = """
+{{Main page image/ITN|image=Example.jpg}}
+*<!--Sep 02--> American journalist '''[[Gloria Steinem]]''' ''(pictured)'' dies at the {{nowrap|age of 92}}.
+*<!--Aug 31--> Icelanders reject [[European Union]] membership negotiations.
+{{In the news/footer
+|currentevents =
+* [[Russo-Ukrainian war (2022–present)|Russo-Ukrainian war]]
+}}
+"""
+        headlines = parse_in_the_news_template(wikitext)
+        assert any("Gloria Steinem" in item and "92" in item for item in headlines)
+        assert any("Icelanders" in item for item in headlines)
+        assert not any("Russo-Ukrainian" in item for item in headlines)
 
 
 class TestResolveLiveLookup:

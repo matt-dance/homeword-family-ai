@@ -1015,25 +1015,18 @@ async def _search_espn_team(query: str) -> dict[str, str] | None:
 
 
 def parse_featured_headlines(payload: dict[str, Any]) -> list[str]:
+    """Take Wikipedia In the News only — never On this day or most-read."""
     headlines: list[str] = []
-    news = payload.get("news") or {}
-    for item in news.get("mostread") or []:
-        title = ((item.get("titles") or {}).get("normalized")) or item.get("title")
+    news = payload.get("news")
+    for story in news if isinstance(news, list) else []:
+        if not isinstance(story, dict):
+            continue
+        links = story.get("links") or []
+        if not links or not isinstance(links[0], dict):
+            continue
+        title = (links[0].get("titles") or {}).get("normalized") or links[0].get("title")
         if title:
             headlines.append(str(title))
-    for story in (payload.get("onthisday") or [])[:3]:
-        text = story.get("text")
-        if text:
-            headlines.append(str(text))
-    # Featured feed also has a "news" list of story objects
-    for story in news if isinstance(news, list) else []:
-        if isinstance(story, dict):
-            links = story.get("links") or []
-            if links:
-                title = (links[0].get("titles") or {}).get("normalized") or links[0].get("title")
-                if title:
-                    headlines.append(str(title))
-    # Deduplicate while keeping order
     seen: set[str] = set()
     unique: list[str] = []
     for item in headlines:
@@ -1041,6 +1034,37 @@ def parse_featured_headlines(payload: dict[str, Any]) -> list[str]:
             seen.add(item)
             unique.append(item)
     return unique
+
+
+def _plain_wikitext(text: str) -> str:
+    text = re.sub(r"<!--.*?-->", "", text)
+    previous = None
+    while previous != text:
+        previous = text
+        text = re.sub(r"\{\{[^{}|]*\|([^{}]*)\}\}", r"\1", text)
+        text = re.sub(r"\{\{[^{}]*\}\}", "", text)
+    text = re.sub(r"\[\[([^|\]]+)\|([^\]]+)\]\]", r"\2", text)
+    text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", text)
+    text = re.sub(r"\[https?://\S+\s+([^\]]+)\]", r"\1", text)
+    text = re.sub(r"\[https?://[^\]]+\]", "", text)
+    text = re.sub(r"'{2,}", "", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"\(\s*pictured\s*\)", "", text, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", text).strip(" \t*.")
+
+
+def parse_in_the_news_template(wikitext: str) -> list[str]:
+    """Featured In the news bullets only — not the ongoing-events footer."""
+    featured = wikitext.split("{{In the news/footer")[0]
+    headlines: list[str] = []
+    for raw in featured.splitlines():
+        line = raw.strip()
+        if not line.startswith("*"):
+            continue
+        cleaned = _plain_wikitext(line.lstrip("*"))
+        if cleaned:
+            headlines.append(cleaned)
+    return headlines
 
 
 async def fetch_lookup(intent: LookupIntent) -> LookupResult | None:
@@ -1141,7 +1165,25 @@ async def _fetch_news() -> LookupResult | None:
                 f"{today:%Y}/{today:%m}/{today:%d}"
             )
             resp.raise_for_status()
-            return format_news_notes(parse_featured_headlines(resp.json()))
+            headlines = parse_featured_headlines(resp.json())
+            if not headlines:
+                template = await client.get(
+                    "https://en.wikipedia.org/w/api.php",
+                    params={
+                        "action": "parse",
+                        "page": "Template:In_the_news",
+                        "prop": "wikitext",
+                        "format": "json",
+                    },
+                )
+                template.raise_for_status()
+                wikitext = (
+                    (template.json().get("parse") or {})
+                    .get("wikitext", {})
+                    .get("*", "")
+                )
+                headlines = parse_in_the_news_template(wikitext)
+            return format_news_notes(headlines)
     except Exception as exc:
         logger.info("News lookup failed: %s", exc)
         return None
