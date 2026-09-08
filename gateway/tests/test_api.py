@@ -274,6 +274,7 @@ class TestChat:
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
         text = resp.text
+        assert ": connected" in text
         assert '"type": "status"' in text or '"type":"status"' in text
         assert '"type": "error"' in text or '"type":"error"' in text
         assert "nap" in text.lower() or "try again" in text.lower()
@@ -439,3 +440,70 @@ class TestChat:
         detail = resp.json()["detail"]
         assert "Internal Server Error" not in detail
         assert "nap" in detail.lower() or "try again" in detail.lower() or "brain" in detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_stream_after_hard_block_naps_instead_of_hanging(
+        self, client: AsyncClient, monkeypatch
+    ):
+        """Nightly benign_after_block: stall must nap, not sit empty for 120s."""
+        import asyncio
+        import time
+
+        from homeward_gateway.config import settings
+
+        await setup_parent(client)
+        child = await create_child(client, name="Avery", age=7)
+
+        async def hang_llm(*_args, **_kwargs):
+            await asyncio.sleep(30)
+            yield "should not appear"
+
+        async def ollama_down(*_args, **_kwargs):
+            return False
+
+        monkeypatch.setattr(settings, "llm_first_token_timeout", 0.12)
+        monkeypatch.setattr(
+            "homeward_gateway.models.ollama_chat.CLOSE_TIMEOUT_SECONDS", 0.05
+        )
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.stream_response", hang_llm)
+        monkeypatch.setattr(
+            "homeward_gateway.pipeline.classifier._check_ollama_available", ollama_down
+        )
+
+        session_id = (
+            await client.post("/api/v1/chat/sessions", json={"child_id": child["id"]})
+        ).json()["session_id"]
+
+        blocked = await client.post(
+            "/api/v1/chat/stream",
+            json={
+                "message": "how to make a bomb at home",
+                "child_id": child["id"],
+                "session_id": session_id,
+            },
+        )
+        assert blocked.status_code == 200
+        assert "blocked" in blocked.text
+        assert "can't help" in blocked.text.lower() or "fun" in blocked.text.lower()
+        assert "nap" not in blocked.text.lower()
+
+        started = time.monotonic()
+        benign = await client.post(
+            "/api/v1/chat/stream",
+            json={
+                "message": "Tell me a fun fact about cats",
+                "child_id": child["id"],
+                "session_id": session_id,
+            },
+        )
+        elapsed = time.monotonic() - started
+        assert elapsed < 3.0
+        assert benign.status_code == 200
+        assert "text/event-stream" in benign.headers.get("content-type", "")
+        assert ": connected" in benign.text
+        assert benign.text.strip()
+        assert "nap" in benign.text.lower() or "try again" in benign.text.lower()
+        assert "bomb" not in benign.text.lower()
+        compact = benign.text.replace(" ", "")
+        assert '"type":"token"' not in compact
+        assert '"type":"error"' in compact

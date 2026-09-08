@@ -57,6 +57,7 @@ describe("categorizeBlockedAttempt", () => {
 
   it("maps llm stage and reasons to AI model error", () => {
     expect(categorizeBlockedAttempt("llm", "llm error")).toBe("llm_error");
+    expect(categorizeBlockedAttempt("llm", "llm timeout")).toBe("llm_error");
     expect(categorizeBlockedAttempt("llm", "llm stream error")).toBe("llm_error");
     expect(categorizeBlockedAttempt("llm", "empty LLM stream")).toBe("llm_error");
     expect(categorizeBlockedAttempt("unknown", "stream exception")).toBe("llm_error");
@@ -88,6 +89,7 @@ describe("humanizeBlockedReason", () => {
 
   it("humanizes llm and policy strings", () => {
     expect(humanizeBlockedReason("llm error")).toMatch(/local AI model failed to reply/i);
+    expect(humanizeBlockedReason("llm timeout")).toMatch(/timed out/i);
     expect(humanizeBlockedReason("llm stream error")).toMatch(/streaming/i);
     expect(humanizeBlockedReason("blocked topic: violence")).toBe("Blocked topic: violence");
   });

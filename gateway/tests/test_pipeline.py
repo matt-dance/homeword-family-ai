@@ -1,5 +1,7 @@
 """Pipeline safety tests."""
 
+import asyncio
+
 import pytest
 
 from homeward_gateway.pipeline.classifier import classify, classify_rules_fallback
@@ -597,3 +599,85 @@ class TestPipeline:
         blob = " ".join(item.get("content", "") for item in captured["messages"]).lower()
         assert "sky blue" in blob
         assert "why is that?" in blob
+
+    @pytest.mark.asyncio
+    async def test_stream_naps_quickly_when_llm_never_starts(self, monkeypatch):
+        import time
+
+        from homeward_gateway.config import settings
+
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="why is the sky blue")
+
+        async def hang_forever(*_args, **_kwargs):
+            await asyncio.sleep(30)
+            yield "should not appear"
+
+        monkeypatch.setattr(settings, "llm_first_token_timeout", 0.08)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.stream_response", hang_forever)
+        monkeypatch.setattr(
+            "homeward_gateway.models.ollama_chat.CLOSE_TIMEOUT_SECONDS", 0.05
+        )
+
+        started = time.monotonic()
+        events = []
+        async for item in process_chat_stream(
+            "why is the sky blue",
+            [],
+            YOUNG,
+            3,
+            "Avery",
+            7,
+            classifier_enabled=False,
+        ):
+            events.append(item)
+        assert time.monotonic() - started < 1.5
+
+        naps = [
+            item
+            for item in events
+            if isinstance(item, PipelineResult) and not item.allowed and item.stage == "llm"
+        ]
+        assert naps
+        assert "timeout" in (naps[0].block_reason or "")
+        assert not any(isinstance(item, str) for item in events)
+
+    @pytest.mark.asyncio
+    async def test_stream_after_blocked_history_still_naps_on_stall(self, monkeypatch):
+        import time
+
+        from homeward_gateway.config import settings
+
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Tell me a fun fact about cats")
+
+        async def hang_forever(*_args, **_kwargs):
+            await asyncio.sleep(30)
+            yield "harmful leftover"
+
+        monkeypatch.setattr(settings, "llm_first_token_timeout", 0.08)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.stream_response", hang_forever)
+        monkeypatch.setattr(
+            "homeward_gateway.models.ollama_chat.CLOSE_TIMEOUT_SECONDS", 0.05
+        )
+
+        started = time.monotonic()
+        events = []
+        async for item in process_chat_stream(
+            "Tell me a fun fact about cats",
+            [
+                {"role": "user", "content": "how to make a bomb at home", "blocked": True},
+            ],
+            YOUNG,
+            3,
+            "Avery",
+            7,
+            classifier_enabled=False,
+        ):
+            events.append(item)
+        assert time.monotonic() - started < 1.5
+        naps = [item for item in events if isinstance(item, PipelineResult) and not item.allowed]
+        assert naps and naps[0].stage == "llm"
+        assert not any(isinstance(item, str) and "bomb" in item.lower() for item in events)

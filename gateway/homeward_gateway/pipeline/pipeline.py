@@ -1,5 +1,6 @@
 """Safety pipeline orchestration — fail-closed on every stage."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import AsyncIterator
 
@@ -39,6 +40,7 @@ from homeward_gateway.chat.tools import (
     run_local_tools,
     tool_prompt_hint,
 )
+from homeward_gateway.models.ollama_chat import aclose_quietly, anext_bounded, first_token_timeout_seconds
 from homeward_gateway.models.router import generate_response, stream_response
 from homeward_gateway.home.location import HomeContext
 
@@ -564,27 +566,43 @@ async def process_chat_stream(
     )
     collected = []
     yield StatusEvent(message="Writing a reply…", phase="generating")
+    stream = stream_response(
+        messages_for_llm(history, user_message, user_turn),
+        child_name,
+        age,
+        preset,
+        model=chat_model,
+        homework_mode=homework_mode,
+        tool_hint=hint,
+        home_label=home.label if home else None,
+        ai_tone=ai_tone,
+        ai_verbosity=ai_verbosity,
+        quick_chat=quick_chat,
+        memory_items=memory_items,
+        continue_conversation=bool(history),
+    )
+    first_timeout = first_token_timeout_seconds()
+    deadline = asyncio.get_running_loop().time() + first_timeout
     try:
-        async for token in stream_response(
-            messages_for_llm(history, user_message, user_turn),
-            child_name,
-            age,
-            preset,
-            model=chat_model,
-            homework_mode=homework_mode,
-            tool_hint=hint,
-            home_label=home.label if home else None,
-            ai_tone=ai_tone,
-            ai_verbosity=ai_verbosity,
-            quick_chat=quick_chat,
-            memory_items=memory_items,
-            continue_conversation=bool(history),
-        ):
+        while True:
+            try:
+                if not collected:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        raise TimeoutError("LLM stream produced no tokens before timeout")
+                    token = await anext_bounded(stream, remaining)
+                else:
+                    token = await anext(stream)
+            except StopAsyncIteration:
+                break
             collected.append(token)
             yield token
-    except Exception:
-        yield PipelineResult(allowed=False, block_reason="llm stream error", stage="llm")
+    except Exception as exc:
+        reason = "llm timeout" if _is_llm_timeout(exc) else "llm stream error"
+        yield PipelineResult(allowed=False, block_reason=reason, stage="llm")
         return
+    finally:
+        await aclose_quietly(stream)
 
     if not collected:
         yield PipelineResult(allowed=False, block_reason="empty LLM stream", stage="llm")

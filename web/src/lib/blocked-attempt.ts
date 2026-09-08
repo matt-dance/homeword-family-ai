@@ -11,7 +11,7 @@ export interface BlockedAttemptView {
 }
 
 const LLM_REASON_RE =
-  /\b(llm error|llm stream error|empty llm stream|stream exception)\b/i;
+  /\b(llm error|llm timeout|llm stream error|empty llm stream|stream exception)\b/i;
 
 const CLASSIFIER_INFRA_RE = /timeout|error|ambiguous/i;
 
@@ -92,6 +92,7 @@ function humanizeReasonPart(part: string): string {
   }
 
   if (/^llm error$/i.test(part)) return "The local AI model failed to reply.";
+  if (/^llm timeout$/i.test(part)) return "The local AI model timed out before it started a reply.";
   if (/^(llm stream error|stream exception)$/i.test(part)) {
     return "The local AI model failed while streaming a reply.";
   }
