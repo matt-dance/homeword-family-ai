@@ -842,8 +842,13 @@ async def child_conversation_starters(
 async def resume_child_session(
     child_id: int,
     request: Request,
+    response: Response,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
+    # Continue last chat must not reuse a cached GET of an older transcript.
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+
     result = await session.execute(select(ChildProfile).where(ChildProfile.id == child_id))
     child = result.scalar_one_or_none()
     if not child:
@@ -852,35 +857,15 @@ async def resume_child_session(
     if not child.allow_resume:
         raise HTTPException(status_code=404, detail="No resumable session")
 
-    # Named-profile resume must not offer guest Quick Chat as "continue last chat".
-    sessions_result = await session.execute(
-        select(ChatSession)
-        .where(
-            ChatSession.child_id == child_id,
-            ChatSession.quick_chat.is_(False),
-        )
-        .order_by(ChatSession.started_at.desc())
-        .limit(20)
-    )
-    chat_sessions = list(sessions_result.scalars().all())
-    if not chat_sessions:
+    loaded = await _load_resumable_session(session, child_id, quick_chat=False)
+    if not loaded:
         raise HTTPException(status_code=404, detail="No resumable session")
-
-    for chat_session in chat_sessions:
-        logs_result = await session.execute(
-            select(ConversationLog)
-            .where(ConversationLog.session_id == chat_session.id)
-            .order_by(ConversationLog.created_at.asc())
-        )
-        messages = _resume_messages(list(logs_result.scalars().all()))
-        if messages:
-            return {
-                "session_id": chat_session.id,
-                "messages": messages,
-                "preview": chat_session.preview,
-            }
-
-    raise HTTPException(status_code=404, detail="No resumable session")
+    chat_session, messages = loaded
+    return {
+        "session_id": chat_session.id,
+        "messages": messages,
+        "preview": chat_session.preview,
+    }
 
 
 @router.post("/children/{child_id}/verify-pin")
@@ -1298,6 +1283,49 @@ def _resume_messages(logs: list[ConversationLog]) -> list[dict]:
     return messages
 
 
+async def _load_resumable_session(
+    session: AsyncSession,
+    child_id: int,
+    *,
+    quick_chat: bool = False,
+) -> tuple[ChatSession, list[dict]] | None:
+    """Canonical last chat: the session that most recently received a turn.
+
+    Empty Start-fresh rows are skipped so Continue can still open the prior
+    conversation. After the fresh chat has messages, that session wins — not
+    an older transcript ordered only by started_at.
+    """
+    last_log = (
+        select(
+            ConversationLog.session_id.label("session_id"),
+            func.max(ConversationLog.id).label("last_log_id"),
+        )
+        .where(ConversationLog.session_id.is_not(None))
+        .group_by(ConversationLog.session_id)
+        .subquery()
+    )
+    sessions_result = await session.execute(
+        select(ChatSession)
+        .join(last_log, ChatSession.id == last_log.c.session_id)
+        .where(
+            ChatSession.child_id == child_id,
+            ChatSession.quick_chat.is_(bool(quick_chat)),
+        )
+        .order_by(last_log.c.last_log_id.desc(), ChatSession.id.desc())
+        .limit(20)
+    )
+    for chat_session in sessions_result.scalars().all():
+        logs_result = await session.execute(
+            select(ConversationLog)
+            .where(ConversationLog.session_id == chat_session.id)
+            .order_by(ConversationLog.created_at.asc(), ConversationLog.id.asc())
+        )
+        messages = _resume_messages(list(logs_result.scalars().all()))
+        if messages:
+            return chat_session, messages
+    return None
+
+
 def _latest_recovery_turn(messages: list[dict]) -> list[dict]:
     """SSE recovery only needs the in-flight user/assistant pair."""
     if not messages:
@@ -1337,24 +1365,10 @@ async def _session_is_kid_recoverable(
         return True
     if not child.allow_resume:
         return False
-    sessions_result = await session.execute(
-        select(ChatSession)
-        .where(
-            ChatSession.child_id == child.id,
-            ChatSession.quick_chat.is_(bool(chat_session.quick_chat)),
-        )
-        .order_by(ChatSession.started_at.desc(), ChatSession.id.desc())
-        .limit(20)
+    loaded = await _load_resumable_session(
+        session, child.id, quick_chat=bool(chat_session.quick_chat)
     )
-    for candidate in sessions_result.scalars().all():
-        logs_result = await session.execute(
-            select(ConversationLog)
-            .where(ConversationLog.session_id == candidate.id)
-            .order_by(ConversationLog.created_at.asc(), ConversationLog.id.asc())
-        )
-        if _resume_messages(list(logs_result.scalars().all())):
-            return candidate.id == chat_session.id
-    return False
+    return loaded is not None and loaded[0].id == chat_session.id
 
 
 def _ensure_chat_available(child: ChildProfile) -> None:
