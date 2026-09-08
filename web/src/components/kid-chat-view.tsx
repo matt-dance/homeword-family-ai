@@ -599,7 +599,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       <div className={`min-h-screen flex items-center justify-center p-4 ${ageConfig.ambientGradient}`}>
         <main className="w-full max-w-md animate-pop-in">
           <div className="text-center mb-6">
-            <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-tr from-primary to-indigo-500 text-3xl shadow-lg shadow-primary/25">
+            <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl accent-gradient text-3xl shadow-lg shadow-primary/25">
               {ageConfig.avatarEmoji}
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
@@ -720,7 +720,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     return (
       <div className={`min-h-screen flex flex-col items-center justify-center p-6 text-center ${ageConfig.ambientGradient}`}>
         <div className="w-full max-w-md space-y-5 animate-pop-in">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-500 shadow-sm">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-orange-50 text-orange-500 shadow-sm dark:bg-orange-950/40">
             <Moon className="h-8 w-8 animate-pulse" />
           </div>
           <div>
@@ -756,7 +756,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
   return (
     <div className={`flex min-h-screen flex-col transition-colors duration-300 ${ageConfig.ambientGradient}`}>
       {/* Top Header */}
-      <header className="sticky top-0 z-20 border-b border-border/60 bg-card/85 backdrop-blur-md px-4 py-3 shadow-xs">
+      <header className="sticky top-0 z-20 border-b border-slate-100 bg-white/90 backdrop-blur-md px-4 py-3 dark:border-border dark:bg-card/90">
         <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div
@@ -845,7 +845,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           {messages.length === 0 && (
             <div className="text-center py-6 sm:py-10 space-y-6 animate-fade-in">
               <div className="space-y-2">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-primary to-indigo-500 text-2xl shadow-md shadow-primary/20 animate-bounce-gentle">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl accent-gradient text-2xl shadow-md shadow-primary/20 animate-bounce-gentle">
                   {ageConfig.avatarEmoji}
                 </div>
                 <h2
@@ -917,7 +917,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
               >
                 {/* Assistant avatar badge */}
                 {isAssistant && (
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-primary to-indigo-500 text-primary-foreground text-xs font-bold shadow-xs mt-1">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl accent-gradient text-primary-foreground text-xs font-bold shadow-xs mt-1">
                     <Sparkles className="h-4 w-4" />
                   </div>
                 )}
@@ -929,7 +929,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                         ageConfig.bubbleRadius
                       } ${simpleMode ? ageConfig.fontSizeSimple : ageConfig.fontSize} ${
                         msg.role === "user"
-                          ? "bg-gradient-to-r from-primary to-indigo-600 text-primary-foreground font-medium shadow-primary/20 shadow-sm"
+                          ? "accent-gradient text-white font-medium shadow-orange-200/60 shadow-sm"
                           : msg.blocked
                             ? "border border-amber-500/40 bg-amber-50/90 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"
                             : "border border-border/70 bg-card/95 text-foreground backdrop-blur-sm"
@@ -1024,7 +1024,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           {/* Thinking shimmer indicator */}
           {streaming && messages[messages.length - 1]?.role !== "assistant" && (
             <div className="flex gap-2.5 justify-start animate-slide-up">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-primary to-indigo-500 text-primary-foreground text-xs font-bold shadow-xs mt-1 animate-pulse">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl accent-gradient text-primary-foreground text-xs font-bold shadow-xs mt-1 animate-pulse">
                 <Sparkles className="h-4 w-4" />
               </div>
               <div

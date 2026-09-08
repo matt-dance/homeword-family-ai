@@ -17,7 +17,7 @@ export function CardShell({
 }) {
   return (
     <div
-      className={`rounded-2xl border border-primary/25 bg-gradient-to-br from-card to-primary/5 p-4 sm:p-5 shadow-sm space-y-3.5 transition-all ${className}`}
+      className={`rounded-4xl border border-slate-50 bg-white p-4 sm:p-5 card-shadow space-y-3.5 transition-all dark:border-border dark:bg-card ${className}`}
     >
       <div className="flex items-center justify-between border-b border-border/50 pb-2.5">
         <div className="flex items-center gap-2.5 font-semibold text-foreground text-sm sm:text-base">

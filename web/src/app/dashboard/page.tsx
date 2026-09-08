@@ -21,18 +21,14 @@ import {
   ShieldAlert,
   ArrowLeft,
   MessageCircle,
-  Users,
   Sparkles,
   AlertTriangle,
   Filter,
-  CheckCircle2,
   Clock,
-  BookOpen,
-  Globe,
-  ArrowRight,
   ShieldCheck,
   Zap,
   Trash2,
+  PlusCircle,
 } from "lucide-react";
 
 function DashboardContent() {
@@ -82,7 +78,6 @@ function DashboardContent() {
         setLoading(false);
       }
     };
-    setLoading(true);
     load();
   }, [router, filterChildId]);
 
@@ -178,7 +173,7 @@ function DashboardContent() {
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-5xl p-8 flex items-center justify-center min-h-[50vh]">
+      <main className="mx-auto flex min-h-[50vh] max-w-6xl items-center justify-center p-8">
         <div className="flex flex-col items-center gap-3">
           <Sparkles className="h-8 w-8 animate-pulse text-primary" />
           <p className="text-sm font-medium text-muted-foreground">Loading dashboard…</p>
@@ -188,60 +183,45 @@ function DashboardContent() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl p-4 sm:p-8 space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/60 pb-5">
+    <main className="mx-auto max-w-6xl animate-fade-in space-y-8 p-4 sm:p-8">
+      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
-            Parent Dashboard
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Review chat conversations, active presets, and safety filter events.
-            {filteredChild && (
-              <span className="block mt-0.5 font-medium text-primary">
-                Filtered for {filteredChild.name}
-              </span>
-            )}
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-foreground">Welcome back</h1>
+          <p className="mt-1 text-slate-500">
+            Here&apos;s what your family has been exploring with AI.
           </p>
         </div>
-
         <KidChatLink>
-          <Button className="rounded-xl shadow-sm shadow-primary/20 font-medium">
+          <Button className="rounded-2xl font-bold">
             <Sparkles className="mr-2 h-4 w-4" />
             Open Quick Chat
           </Button>
         </KidChatLink>
-      </div>
+      </header>
 
-      {/* Child Filter Chips */}
-      {children.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5 mr-1">
+      {children.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
             <Filter className="h-3.5 w-3.5" />
-            Filter:
+            Filter
           </span>
           <Button
             size="sm"
             variant={filterChildId == null ? "default" : "outline"}
             onClick={() => setChildFilter(null)}
-            className="rounded-full text-xs font-medium h-8 px-3.5"
+            className="h-8 rounded-full px-3.5 text-xs"
           >
             All children
           </Button>
           {children.map((child) => {
-            const themeKey = getAgeTheme(child);
-            const theme = AGE_THEME_CONFIGS[themeKey];
-            const isSelected = filterChildId === child.id;
-
+            const theme = AGE_THEME_CONFIGS[getAgeTheme(child)];
             return (
               <Button
                 key={child.id}
                 size="sm"
-                variant={isSelected ? "default" : "outline"}
+                variant={filterChildId === child.id ? "default" : "outline"}
                 onClick={() => setChildFilter(child.id)}
-                className={`rounded-full text-xs font-medium h-8 px-3.5 gap-1.5 transition-all ${
-                  isSelected ? "shadow-sm shadow-primary/20" : "hover:border-primary/50"
-                }`}
+                className="h-8 gap-1.5 rounded-full px-3.5 text-xs"
               >
                 <span>{theme.avatarEmoji}</span>
                 <span>{child.name}</span>
@@ -249,293 +229,105 @@ function DashboardContent() {
             );
           })}
         </div>
-      )}
+      ) : null}
 
-      {/* Metric Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="relative overflow-hidden border-border/80 shadow-xs hover:shadow-md transition-all">
-          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-500" />
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-3xl font-extrabold tracking-tight text-foreground">
-                  {children.length}
-                </p>
-                <p className="text-xs font-medium text-muted-foreground mt-1">
-                  Child Profile{children.length !== 1 ? "s" : ""}
-                </p>
-              </div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-500">
-                <Users className="h-5 w-5" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="relative overflow-hidden border-border/80 shadow-xs hover:shadow-md transition-all">
-          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-500" />
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-3xl font-extrabold tracking-tight text-foreground">
-                  {sessions.length}
-                </p>
-                <p className="text-xs font-medium text-muted-foreground mt-1">
-                  Chat Session{sessions.length !== 1 ? "s" : ""}
-                </p>
-              </div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-500">
-                <MessageSquare className="h-5 w-5" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card
-          className={`relative overflow-hidden border-border/80 shadow-xs hover:shadow-md transition-all ${
-            blockedToday > 0 ? "border-amber-500/40 bg-amber-500/5" : ""
-          }`}
-        >
-          <div
-            className={`absolute top-0 left-0 right-0 h-1 ${
-              blockedToday > 0
-                ? "bg-amber-500"
-                : "bg-gradient-to-r from-emerald-500 to-teal-500"
-            }`}
-          />
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-3xl font-extrabold tracking-tight text-foreground">
-                  {blockedToday}
-                </p>
-                <p className="text-xs font-medium text-muted-foreground mt-1">
-                  Blocked today · {blockedTotal} all time
-                </p>
-              </div>
-              <div
-                className={`flex h-11 w-11 items-center justify-center rounded-2xl ${
-                  blockedToday > 0
-                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                    : "bg-emerald-500/10 text-emerald-500"
-                }`}
-              >
-                {blockedToday > 0 ? (
-                  <ShieldAlert className="h-5 w-5" />
-                ) : (
-                  <ShieldCheck className="h-5 w-5" />
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="relative overflow-hidden border-border/80 shadow-xs hover:shadow-md transition-all">
-          <div
-            className={`absolute top-0 left-0 right-0 h-1 ${
-              aiReady ? "bg-emerald-500" : "bg-amber-500"
-            }`}
-          />
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xl font-bold tracking-tight text-foreground flex items-center gap-1.5">
-                  {aiReady ? "Online" : "Needs Setup"}
-                  {aiReady && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
-                </p>
-                <p className="text-xs font-medium text-muted-foreground mt-1">
-                  {aiReady ? (
-                    "Local AI model"
-                  ) : (
-                    <Link href="/dashboard/settings" className="text-primary underline-offset-4 hover:underline">
-                      Fix in Settings →
-                    </Link>
-                  )}
-                </p>
-              </div>
-              <div
-                className={`flex h-11 w-11 items-center justify-center rounded-2xl ${
-                  aiReady
-                    ? "bg-emerald-500/10 text-emerald-500"
-                    : "bg-amber-500/10 text-amber-500"
-                }`}
-              >
-                <Zap className="h-5 w-5" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Safety Alert Banner */}
-      {blockedToday > 0 && (
-        <div className="flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm animate-slide-down">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
-          <div className="flex-1">
-            <p className="font-semibold text-amber-950 dark:text-amber-100">
-              {blockedToday} message{blockedToday !== 1 ? "s" : ""} prevented today
-            </p>
-            <p className="text-amber-900/90 dark:text-amber-200/90 text-xs sm:text-sm mt-0.5">
-              Homeward stopped these before they reached the model. Switch to the Blocked tab below to inspect details.
-            </p>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setTab("blocked")}
-            className="rounded-xl border-amber-500/30 bg-card/80 text-xs font-medium shrink-0"
-          >
-            View blocked
-          </Button>
-        </div>
-      )}
-
-      {/* Children Overview Grid */}
-      {children.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-              Child Profiles
-            </h2>
+      <div className="grid grid-cols-1 gap-8 xl:grid-cols-12">
+        <div className="space-y-8 xl:col-span-8">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {children.map((child) => {
+              const theme = AGE_THEME_CONFIGS[getAgeTheme(child)];
+              const childSessions = sessions.filter((session) => session.child_id === child.id).length;
+              return (
+                <div
+                  key={child.id}
+                  className="group relative overflow-hidden rounded-4xl border border-slate-50 bg-white p-6 card-shadow dark:border-border dark:bg-card"
+                >
+                  <div
+                    className={`absolute -right-4 -top-4 h-24 w-24 rounded-bl-[4rem] transition-all group-hover:scale-110 ${theme.cardBlob}`}
+                  />
+                  <Link
+                    href={`/dashboard/profiles?child=${child.id}`}
+                    className="relative z-10 block w-full text-left"
+                  >
+                    <div
+                      className={`mb-4 flex h-16 w-16 items-center justify-center rounded-3xl text-2xl ${theme.cardAvatar} ${theme.avatarBg}`}
+                    >
+                      {theme.avatarEmoji}
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-800 dark:text-foreground">{child.name}</h3>
+                    <p className="mb-4 text-sm text-slate-500">
+                      {child.age ? `${child.age} years old` : theme.ageRange} · Safety {child.strictness ?? 3}/5
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="status-badge-safe rounded-full px-3 py-1 text-xs font-bold">
+                        {childSessions} Chat{childSessions === 1 ? "" : "s"}
+                      </span>
+                      {child.homework_mode ? (
+                        <span className="status-badge-review rounded-full px-3 py-1 text-xs font-bold">Homework</span>
+                      ) : (
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-500 dark:bg-muted">
+                          {theme.title}
+                        </span>
+                      )}
+                    </div>
+                  </Link>
+                  <Link href={chatPathForChild(child)} className="relative z-10 mt-4 block">
+                    <Button variant="outline" size="sm" className="w-full rounded-xl text-xs">
+                      Open chat
+                    </Button>
+                  </Link>
+                </div>
+              );
+            })}
             <Link
               href="/dashboard/profiles"
-              className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
+              className="flex flex-col items-center justify-center gap-2 rounded-4xl border-2 border-dashed border-slate-200 bg-slate-50 p-6 text-slate-400 transition-all hover:bg-slate-100 hover:text-slate-600 dark:border-border dark:bg-muted/40"
             >
-              <span>Manage profiles</span>
-              <ArrowRight className="h-3 w-3" />
+              <PlusCircle className="h-8 w-8" />
+              <span className="font-bold">Add Child</span>
             </Link>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {children.map((child) => {
-              const themeKey = getAgeTheme(child);
-              const theme = AGE_THEME_CONFIGS[themeKey];
-              const isSelected = filterChildId === child.id;
-
-              return (
-                <Card
-                  key={child.id}
-                  className={`relative overflow-hidden transition-all hover:border-primary/50 shadow-xs ${
-                    isSelected ? "ring-2 ring-primary border-primary/40 shadow-sm" : ""
+          <Card className="overflow-hidden">
+            <CardHeader className="flex flex-row items-center justify-between border-b border-slate-50 p-6 dark:border-border">
+              <div>
+                <CardTitle className="text-xl font-bold text-slate-800 dark:text-foreground">
+                  {tab === "logs" ? "Recent Activity" : "Blocked Attempts"}
+                </CardTitle>
+                <CardDescription>
+                  {tab === "logs"
+                    ? "Select a conversation to review the full kid and assistant dialogue."
+                    : "Policy blocks and model errors are labeled separately."}
+                </CardDescription>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTab("logs")}
+                  className={`rounded-xl px-3 py-2 text-sm font-bold ${
+                    tab === "logs" ? "bg-blue-50 text-blue-600 dark:bg-primary/15 dark:text-primary" : "text-slate-400"
                   }`}
                 >
-                  <CardContent className="flex items-center justify-between gap-3 p-4">
-                    <button
-                      type="button"
-                      className="flex items-center gap-3 min-w-0 text-left"
-                      onClick={() => setChildFilter(child.id)}
-                    >
-                      <div
-                        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-lg ${theme.avatarBg}`}
-                      >
-                        {theme.avatarEmoji}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-bold text-foreground text-base truncate">
-                          {child.name}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {theme.ageRange} · Safety {child.strictness ?? 3}/5
-                        </p>
-                        {child.homework_mode && (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5">
-                            <BookOpen className="h-3 w-3" /> Homework mode
-                          </span>
-                        )}
-                        {child.live_lookups && (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-600 dark:text-sky-400 mt-0.5">
-                            <Globe className="h-3 w-3" /> Live lookups
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                    <Link href={chatPathForChild(child)}>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="rounded-xl h-8 px-3 text-xs font-medium border-primary/30 text-primary hover:bg-primary/5"
-                      >
-                        Chat
-                      </Button>
-                    </Link>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Activity Navigation Tabs */}
-      <div className="space-y-4 pt-2">
-        <div className="flex gap-2 border-b border-border/70">
-          {[
-            { id: "logs" as const, label: "Conversations", icon: MessageSquare, count: sessions.length },
-            {
-              id: "blocked" as const,
-              label: "Blocked Attempts",
-              icon: ShieldAlert,
-              count: blockedToday,
-              badgeVariant: blockedToday > 0 ? "amber" : "neutral",
-            },
-          ].map(({ id, label, icon: Icon, count, badgeVariant }) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              className={`flex items-center gap-2 pb-3 px-3 text-sm font-semibold border-b-2 transition-all ${
-                tab === id
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Icon className="h-4 w-4" />
-              <span>{label}</span>
-              {typeof count === "number" && (
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs font-bold ${
-                    badgeVariant === "amber" && count > 0
-                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                      : "bg-muted text-muted-foreground"
+                  Chats
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("blocked")}
+                  className={`rounded-xl px-3 py-2 text-sm font-bold ${
+                    tab === "blocked" ? "bg-blue-50 text-blue-600 dark:bg-primary/15 dark:text-primary" : "text-slate-400"
                   }`}
                 >
-                  {count}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Conversation Logs Tab */}
-        {tab === "logs" && (
-          <Card className="border-border/80 shadow-xs">
-            <CardHeader className="pb-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <CardTitle className="text-lg font-bold">Recent Chat Sessions</CardTitle>
-                  <CardDescription>
-                    Select any conversation session to inspect the full kid & assistant dialogue.
-                  </CardDescription>
-                </div>
-                {filteredChild && sessions.length > 0 && !selectedSession && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={deleteAllSessionsForChild}
-                    disabled={deletingAll}
-                    className="rounded-xl text-xs font-medium text-destructive border-destructive/30 hover:bg-destructive/5"
-                  >
-                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                    {deletingAll ? "Deleting…" : `Delete all for ${filteredChild.name}`}
-                  </Button>
-                )}
+                  Blocked
+                </button>
               </div>
             </CardHeader>
-            <CardContent>
-              {sessionActionError && (
-                <p className="mb-3 text-xs font-semibold text-destructive">{sessionActionError}</p>
-              )}
-              {selectedSession ? (
-                <div className="space-y-4 animate-fade-in">
+            <CardContent className="p-0">
+              {sessionActionError ? (
+                <p className="px-6 pt-4 text-xs font-semibold text-destructive">{sessionActionError}</p>
+              ) : null}
+
+              {tab === "logs" && selectedSession ? (
+                <div className="space-y-4 p-6 animate-fade-in">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <Button
                       variant="ghost"
@@ -544,7 +336,7 @@ function DashboardContent() {
                         setSelectedSession(null);
                         setSessionMessages([]);
                       }}
-                      className="rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground"
+                      className="rounded-xl text-xs"
                     >
                       <ArrowLeft className="mr-1.5 h-4 w-4" />
                       Back to all sessions
@@ -554,39 +346,37 @@ function DashboardContent() {
                       variant="outline"
                       onClick={() => deleteSession(selectedSession)}
                       disabled={deletingSessionId === selectedSession.id}
-                      className="rounded-xl text-xs font-medium text-destructive border-destructive/30 hover:bg-destructive/5"
+                      className="rounded-xl text-xs text-destructive"
                     >
                       <Trash2 className="mr-1.5 h-3.5 w-3.5" />
                       {deletingSessionId === selectedSession.id ? "Deleting…" : "Delete session"}
                     </Button>
                   </div>
-
-                  <div className="rounded-2xl border border-border/80 bg-muted/30 p-4 space-y-2">
+                  <div className="space-y-2 rounded-2xl border border-slate-50 bg-slate-50/80 p-4 dark:border-border dark:bg-muted/30">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-foreground text-base">
+                        <span className="font-bold text-slate-800 dark:text-foreground">
                           {childName(selectedSession.child_id)}
                         </span>
-                        <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+                        <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-600 dark:bg-primary/15 dark:text-primary">
                           {selectedSession.message_count} messages
                         </span>
                       </div>
-                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <span className="flex items-center gap-1 text-xs text-slate-400">
                         <Clock className="h-3 w-3" />
                         {formatSessionWhen(selectedSession.started_at, selectedSession.last_at)}
                       </span>
                     </div>
-                    {selectedSession.summary && (
-                      <p className="text-xs sm:text-sm text-foreground/90 pt-1 border-t border-border/50">
+                    {selectedSession.summary ? (
+                      <p className="border-t border-slate-100 pt-1 text-sm text-slate-600 dark:border-border dark:text-muted-foreground">
                         <strong className="font-semibold text-primary">Summary: </strong>
                         {selectedSession.summary}
                       </p>
-                    )}
+                    ) : null}
                   </div>
-
                   {sessionLoading ? (
                     <div className="py-12 text-center text-sm text-muted-foreground">
-                      <Sparkles className="h-6 w-6 animate-pulse text-primary mx-auto mb-2" />
+                      <Sparkles className="mx-auto mb-2 h-6 w-6 animate-pulse text-primary" />
                       Loading messages…
                     </div>
                   ) : sessionMessages.length === 0 ? (
@@ -601,18 +391,18 @@ function DashboardContent() {
                           className={`flex ${log.direction === "input" ? "justify-end" : "justify-start"}`}
                         >
                           <div
-                            className={`max-w-[85%] rounded-2xl p-4 text-sm leading-relaxed shadow-xs ${
+                            className={`max-w-[85%] rounded-2xl p-4 text-sm leading-relaxed ${
                               log.blocked
                                 ? "border border-destructive/40 bg-destructive/10 text-destructive"
                                 : log.direction === "input"
-                                  ? "bg-primary text-primary-foreground font-medium"
-                                  : "border border-border/80 bg-card text-foreground"
+                                  ? "bg-slate-900 text-white font-medium dark:bg-white dark:text-slate-900"
+                                  : "border border-slate-50 bg-white text-slate-800 dark:border-border dark:bg-card dark:text-foreground"
                             }`}
                           >
-                            <div className="flex items-center justify-between gap-3 text-xs mb-1 opacity-80">
+                            <div className="mb-1 flex items-center justify-between gap-3 text-xs opacity-80">
                               <span className="font-semibold">
                                 {log.direction === "input" ? childName(log.child_id) : "Homeward AI"}
-                                {log.blocked && " · 🛑 Blocked"}
+                                {log.blocked ? " · Blocked" : ""}
                               </span>
                               <span>
                                 {new Date(log.created_at).toLocaleTimeString([], {
@@ -622,120 +412,225 @@ function DashboardContent() {
                               </span>
                             </div>
                             <p className="whitespace-pre-wrap">{log.content}</p>
-                            {log.block_reason && (
-                              <p className="text-xs font-semibold mt-2 pt-1.5 border-t border-destructive/30">
+                            {log.block_reason ? (
+                              <p className="mt-2 border-t border-destructive/30 pt-1.5 text-xs font-semibold">
                                 Reason: {log.block_reason}
                               </p>
-                            )}
+                            ) : null}
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
-              ) : sessions.length === 0 ? (
-                <div className="py-12 text-center space-y-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground mx-auto">
-                    <MessageCircle className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-foreground">No conversations yet</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      When your kids start chatting, their sessions will appear here.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  {sessions.map((session) => (
-                    <div
-                      key={session.id}
-                      className="flex w-full items-start gap-2 rounded-2xl border border-border/70 bg-card p-4 shadow-2xs transition-all hover:border-primary/50 hover:bg-muted/30"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => openSession(session)}
-                        className="flex min-w-0 flex-1 items-start gap-3.5 text-left"
-                      >
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary mt-0.5">
-                          <MessageCircle className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="font-bold text-foreground text-sm sm:text-base">
-                              {childName(session.child_id)}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {new Date(session.last_at).toLocaleString()}
-                            </span>
-                          </div>
-                          <p className="mt-1 truncate text-xs sm:text-sm text-muted-foreground">
-                            {session.summary || session.preview}
-                          </p>
-                          <div className="mt-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
-                            <span className="rounded-full bg-muted px-2 py-0.5">
-                              {session.message_count} message{session.message_count !== 1 ? "s" : ""}
-                            </span>
-                            {session.legacy && <span>· legacy session</span>}
-                          </div>
-                        </div>
-                      </button>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        title="Delete this conversation"
-                        onClick={() => deleteSession(session)}
-                        disabled={deletingSessionId === session.id}
-                        className="mt-0.5 h-9 w-9 shrink-0 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
+              ) : null}
 
-        {/* Blocked Attempts Tab */}
-        {tab === "blocked" && (
-          <Card className="border-border/80 shadow-xs">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-lg font-bold">Blocked Attempts</CardTitle>
-              <CardDescription>
-                Policy blocks, classifier timeouts, and AI model errors are labeled separately so
-                a safety-check outage is not mistaken for a policy violation.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {blocked.length === 0 ? (
-                <div className="py-12 text-center space-y-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500 mx-auto">
-                    <ShieldCheck className="h-6 w-6" />
+              {tab === "logs" && !selectedSession ? (
+                sessions.length === 0 ? (
+                  <div className="space-y-3 py-12 text-center">
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-muted">
+                      <MessageCircle className="h-6 w-6" />
+                    </div>
+                    <p className="font-semibold text-slate-800 dark:text-foreground">No conversations yet</p>
+                    <p className="text-xs text-slate-500">When your kids start chatting, their sessions will appear here.</p>
                   </div>
-                  <div>
-                    <p className="font-semibold text-foreground">No blocked messages</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      All conversations have stayed within safety policy guidelines.
-                    </p>
+                ) : (
+                  <div className="divide-y divide-slate-50 dark:divide-border">
+                    {filteredChild && sessions.length > 0 ? (
+                      <div className="flex justify-end px-6 pt-4">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={deleteAllSessionsForChild}
+                          disabled={deletingAll}
+                          className="rounded-xl text-xs text-destructive"
+                        >
+                          <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                          {deletingAll ? "Deleting…" : `Delete all for ${filteredChild.name}`}
+                        </Button>
+                      </div>
+                    ) : null}
+                    {sessions.map((session) => {
+                      const child = children.find((entry) => entry.id === session.child_id);
+                      const theme = AGE_THEME_CONFIGS[getAgeTheme(child)];
+                      return (
+                        <div key={session.id} className="flex items-start gap-4 p-6 transition-colors hover:bg-slate-50 dark:hover:bg-muted/40">
+                          <button
+                            type="button"
+                            onClick={() => openSession(session)}
+                            className="flex min-w-0 flex-1 items-start gap-4 text-left"
+                          >
+                            <div
+                              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm ${theme.cardAvatar}`}
+                            >
+                              {theme.avatarEmoji}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start justify-between gap-3">
+                                <h4 className="font-bold text-slate-800 dark:text-foreground">
+                                  {childName(session.child_id)}{" "}
+                                  <span className="font-normal text-slate-400">chatted</span>
+                                </h4>
+                                <span className="shrink-0 text-xs text-slate-400">
+                                  {new Date(session.last_at).toLocaleString()}
+                                </span>
+                              </div>
+                              <p className="mt-2 line-clamp-1 text-sm italic text-slate-600 dark:text-muted-foreground">
+                                “{session.summary || session.preview}”
+                              </p>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <span className="status-badge-safe flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase">
+                                  <ShieldCheck className="h-3 w-3" />
+                                  {session.message_count} messages
+                                </span>
+                                {session.legacy ? (
+                                  <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-bold uppercase text-blue-600 dark:bg-primary/15 dark:text-primary">
+                                    Legacy
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                          </button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-1 rounded-xl text-sm"
+                            onClick={() => openSession(session)}
+                          >
+                            Review
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            title="Delete this conversation"
+                            onClick={() => deleteSession(session)}
+                            disabled={deletingSessionId === session.id}
+                            className="mt-1 h-9 w-9 rounded-xl text-slate-400 hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      );
+                    })}
                   </div>
+                )
+              ) : null}
+
+              {tab === "blocked" ? (
+                <div className="space-y-3 p-6">
+                  {blocked.length === 0 ? (
+                    <div className="space-y-3 py-12 text-center">
+                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-500">
+                        <ShieldCheck className="h-6 w-6" />
+                      </div>
+                      <p className="font-semibold text-slate-800 dark:text-foreground">No blocked messages</p>
+                      <p className="text-xs text-slate-500">All conversations have stayed within safety guidelines.</p>
+                    </div>
+                  ) : (
+                    blocked.map((attempt) => (
+                      <BlockedAttemptCard
+                        key={attempt.id}
+                        attempt={attempt}
+                        childName={childName(attempt.child_id)}
+                      />
+                    ))
+                  )}
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {blocked.map((attempt) => (
-                    <BlockedAttemptCard
-                      key={attempt.id}
-                      attempt={attempt}
-                      childName={childName(attempt.child_id)}
-                    />
-                  ))}
-                </div>
-              )}
+              ) : null}
             </CardContent>
           </Card>
-        )}
+        </div>
+
+        <div className="space-y-8 xl:col-span-4">
+          <Card className="p-6">
+            <h2 className="mb-6 text-xl font-bold text-slate-800 dark:text-foreground">Gateway Status</h2>
+            <div className="space-y-5">
+              <div className="flex items-center gap-4">
+                <div
+                  className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
+                    blockedToday > 0 ? "bg-amber-50 text-amber-500" : "bg-emerald-50 text-emerald-500"
+                  }`}
+                >
+                  {blockedToday > 0 ? <ShieldAlert className="h-6 w-6" /> : <ShieldCheck className="h-6 w-6" />}
+                </div>
+                <div>
+                  <p className="font-bold text-slate-800 dark:text-foreground">
+                    {blockedToday > 0 ? `${blockedToday} blocked today` : "Active Filter"}
+                  </p>
+                  <p className="text-xs text-slate-500">{blockedTotal} blocked all time</p>
+                </div>
+                <div className="ml-auto">
+                  <div
+                    className={`h-2 w-2 rounded-full ${blockedToday > 0 ? "bg-amber-500" : "bg-emerald-500 animate-pulse"}`}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-500">
+                  <MessageSquare className="h-6 w-6" />
+                </div>
+                <div>
+                  <p className="font-bold text-slate-800 dark:text-foreground">{sessions.length} sessions</p>
+                  <p className="text-xs text-slate-500">
+                    {children.length} child profile{children.length === 1 ? "" : "s"}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <div
+                  className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
+                    aiReady ? "bg-emerald-50 text-emerald-500" : "bg-amber-50 text-amber-500"
+                  }`}
+                >
+                  <Zap className="h-6 w-6" />
+                </div>
+                <div>
+                  <p className="font-bold text-slate-800 dark:text-foreground">
+                    {aiReady ? "Local model online" : "Needs setup"}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {aiReady ? "Running on this computer" : "Finish Ollama setup in Settings"}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <Link href="/dashboard/profiles">
+              <Button className="mt-8 w-full rounded-2xl py-4 font-bold">Adjust Filters</Button>
+            </Link>
+          </Card>
+
+          {blockedToday > 0 ? (
+            <div className="flex items-start gap-3 rounded-4xl border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900/40 dark:bg-amber-950/30">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <div className="flex-1">
+                <p className="font-semibold text-amber-950 dark:text-amber-100">
+                  {blockedToday} message{blockedToday === 1 ? "" : "s"} prevented today
+                </p>
+                <p className="mt-0.5 text-xs text-amber-900/90 dark:text-amber-200/90">
+                  Homeward stopped these before they reached the model.
+                </p>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setTab("blocked")} className="rounded-xl text-xs">
+                View
+              </Button>
+            </div>
+          ) : null}
+
+          <div className="accent-gradient relative overflow-hidden rounded-4xl p-6 text-white card-shadow">
+            <Sparkles className="absolute -bottom-4 -right-4 h-24 w-24 text-white/10" />
+            <h3 className="mb-2 text-lg font-bold">Privacy First AI</h3>
+            <p className="mb-6 text-sm leading-relaxed text-white/90">
+              Homeward is running entirely on this computer. No chat logs, personal data, or voice recordings ever leave your network.
+            </p>
+            <Link
+              href="/dashboard/settings"
+              className="inline-flex items-center gap-2 rounded-full bg-white/20 px-4 py-2 text-sm font-bold transition-all hover:bg-white/30"
+            >
+              Review settings
+            </Link>
+          </div>
+        </div>
       </div>
     </main>
   );

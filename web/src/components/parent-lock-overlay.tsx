@@ -69,7 +69,7 @@ export function ParentLockOverlay({
       aria-modal="true"
       aria-labelledby="parent-lock-title"
     >
-      <Card className="w-full max-w-sm border-border/80 bg-card/95 shadow-2xl rounded-2xl animate-pop-in">
+      <Card className="w-full max-w-sm animate-pop-in">
         <CardContent className="pt-8 pb-6 space-y-4">
           <div className="text-center space-y-2">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-sm">

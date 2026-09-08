@@ -89,7 +89,7 @@ export function TimerCard({ tool }: { tool: TimerTool }) {
         <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
           <div
             className={`h-full transition-all duration-300 ${
-              isDone ? "bg-emerald-500" : "bg-gradient-to-r from-primary to-indigo-500"
+              isDone ? "bg-emerald-500" : "accent-gradient"
             }`}
             style={{ width: `${progress}%` }}
           />

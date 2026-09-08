@@ -77,7 +77,7 @@ function ChildChatContent() {
   if (notFound || loadError) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-primary/5 to-background flex flex-col">
-        <header className="border-b border-border/70 bg-card/80 p-4 flex items-center justify-between">
+        <header className="border-b border-slate-100 bg-white/90 p-4 flex items-center justify-between dark:border-border dark:bg-card/90">
           <HomewardLogo />
           <ThemeToggle />
         </header>

@@ -1,4 +1,4 @@
-import { Shield, Sparkles } from "lucide-react";
+import { Home } from "lucide-react";
 import Link from "next/link";
 
 interface HomewardLogoProps {
@@ -13,31 +13,30 @@ export function HomewardLogo({
   showTagline = false,
 }: HomewardLogoProps) {
   const iconSizes = {
-    sm: "h-7 w-7",
-    default: "h-9 w-9",
+    sm: "h-8 w-8",
+    default: "h-10 w-10",
     lg: "h-11 w-11",
   };
 
   const textSizes = {
-    sm: "text-base",
-    default: "text-lg",
+    sm: "text-lg",
+    default: "text-2xl",
     lg: "text-2xl",
   };
 
   return (
     <Link
       href="/"
-      className={`group inline-flex items-center gap-2.5 font-bold transition-opacity hover:opacity-95 ${className}`}
+      className={`group inline-flex items-center gap-3 font-bold transition-opacity hover:opacity-95 ${className}`}
     >
       <div
-        className={`relative flex items-center justify-center rounded-xl bg-gradient-to-tr from-primary to-indigo-500 text-primary-foreground shadow-sm shadow-primary/25 transition-transform group-hover:scale-105 ${iconSizes[size]}`}
+        className={`relative flex items-center justify-center rounded-xl accent-gradient text-white shadow-lg shadow-orange-200 dark:shadow-orange-950/40 transition-transform group-hover:scale-105 ${iconSizes[size]}`}
       >
-        <Shield className="h-5 w-5 fill-primary-foreground/20 stroke-[2.2]" />
-        <Sparkles className="absolute -top-1 -right-1 h-3.5 w-3.5 text-amber-300 animate-pulse" />
+        <Home className="h-5 w-5" strokeWidth={2.2} />
       </div>
       <div className="flex flex-col">
         <span
-          className={`tracking-tight bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text ${textSizes[size]}`}
+          className={`font-display tracking-tight text-slate-800 dark:text-foreground ${textSizes[size]}`}
         >
           Homeward
         </span>

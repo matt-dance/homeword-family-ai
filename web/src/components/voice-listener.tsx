@@ -20,7 +20,7 @@ export function VoiceListener({
 
   return (
     <div
-      className={`rounded-2xl border border-primary/30 bg-gradient-to-r from-primary/10 via-indigo-500/10 to-primary/10 px-5 py-4 shadow-sm shadow-primary/10 transition-all ${
+      className={`rounded-2xl border border-orange-200/70 bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 px-5 py-4 shadow-sm shadow-orange-100 transition-all dark:border-orange-900/40 dark:from-orange-950/30 dark:via-amber-950/20 dark:to-orange-950/30 ${
         simpleMode ? "space-y-3" : "space-y-2"
       }`}
     >
@@ -34,7 +34,7 @@ export function VoiceListener({
           return (
             <span
               key={i}
-              className="w-1.5 rounded-full bg-gradient-to-t from-primary to-indigo-400 transition-[height,opacity] duration-75 ease-out shadow-xs shadow-primary/30"
+              className="w-1.5 rounded-full accent-gradient transition-[height,opacity] duration-75 ease-out shadow-xs shadow-orange-200/40"
               style={{
                 height: `${height}px`,
                 opacity: 0.4 + level * 0.6 * falloff,

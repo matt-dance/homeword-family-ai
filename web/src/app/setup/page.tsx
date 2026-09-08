@@ -309,15 +309,15 @@ export default function SetupPage() {
   const currentSetupIndex = setupSteps.indexOf(step);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-background flex flex-col">
-      <header className="border-b border-border/70 bg-card/85 backdrop-blur-md px-6 py-4 flex items-center justify-between">
+    <div className="min-h-screen bg-background flex flex-col">
+      <header className="border-b border-slate-100 bg-white/90 backdrop-blur-md px-6 py-4 flex items-center justify-between dark:border-border dark:bg-card/90">
         <HomewardLogo showTagline />
         <ThemeToggle />
       </header>
 
       <main className="mx-auto flex-1 max-w-2xl w-full p-4 sm:p-8 animate-fade-in">
         <div className="mb-8 text-center space-y-2">
-          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-foreground">
             {step === "login" || step === "forgot" ? "Parent Sign In" : "Welcome to Homeward"}
           </h1>
           <p className="text-sm text-muted-foreground max-w-md mx-auto">

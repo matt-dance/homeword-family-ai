@@ -4,6 +4,10 @@ module.exports = {
   content: ["./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ["var(--font-plus-jakarta)", "system-ui", "sans-serif"],
+        display: ["var(--font-outfit)", "var(--font-plus-jakarta)", "sans-serif"],
+      },
       colors: {
         background: "rgb(var(--background) / <alpha-value>)",
         foreground: "rgb(var(--foreground) / <alpha-value>)",
@@ -24,12 +28,16 @@ module.exports = {
         accent: {
           DEFAULT: "rgb(var(--accent) / <alpha-value>)",
           foreground: "rgb(var(--accent-foreground, var(--foreground)) / <alpha-value>)",
+          end: "rgb(var(--accent-end, var(--accent)) / <alpha-value>)",
         },
         destructive: {
           DEFAULT: "rgb(var(--destructive) / <alpha-value>)",
           foreground: "rgb(var(--destructive-foreground, 255 255 255) / <alpha-value>)",
         },
         ring: "rgb(var(--ring, var(--primary)) / <alpha-value>)",
+      },
+      borderRadius: {
+        "4xl": "2rem",
       },
       keyframes: {
         "fade-in": {
@@ -73,7 +81,7 @@ module.exports = {
       boxShadow: {
         glow: "0 0 20px -5px rgb(var(--primary) / 0.3)",
         "glow-accent": "0 0 20px -5px rgb(var(--accent) / 0.3)",
-        card: "0 2px 10px -2px rgba(0, 0, 0, 0.05), 0 1px 3px -1px rgba(0, 0, 0, 0.03)",
+        card: "0 4px 20px -2px rgba(0, 0, 0, 0.05)",
         "card-hover": "0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04)",
       },
     },
