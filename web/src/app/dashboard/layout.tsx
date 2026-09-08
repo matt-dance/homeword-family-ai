@@ -82,7 +82,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="min-h-screen bg-background">
       <ParentNav onLogout={handleLogout} />
-      {children}
+      <div className="lg:pl-64">{children}</div>
       {locked && <ParentLockOverlay onUnlock={refreshActivity} />}
     </div>
   );

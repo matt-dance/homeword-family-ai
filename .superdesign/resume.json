@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "/dashboard": {
+      "targetKind": "existing-ui",
+      "projectId": "8d7120c9-ba52-4872-a0c0-7b262950554e",
+      "baselineDraftId": "7a74c597-b3bc-496b-8e15-3fdddbaa26b9",
+      "activeDraftId": "7a74c597-b3bc-496b-8e15-3fdddbaa26b9",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "web/src/app/globals.css",
+        "web/tailwind.config.ts",
+        "web/src/app/layout.tsx",
+        "web/src/components/ui/button.tsx",
+        "web/src/components/ui/card.tsx",
+        "web/src/components/homeward-logo.tsx",
+        "web/src/components/parent-nav.tsx",
+        "web/src/app/dashboard/layout.tsx",
+        "web/src/app/dashboard/page.tsx",
+        "web/src/lib/age-theme.ts"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "45cd17af66edc285e6b5a08a12eba93ec83537d8b16b3b044d5e7c83c96d4b67",
+        "web/src/app/globals.css": "0e9050be65925dc09fb366e0f436f35bb24520880c5b26f83e2e8b3e302ddc67",
+        "web/tailwind.config.ts": "72bf9314414d2f229115391019188c5237c88ac2b3465afcc78298cfe85bd2b9",
+        "web/src/app/layout.tsx": "35f2406362d62b3746ec129c2610a855314ac5db7aab1ae6cbb393b2ce74fc71",
+        "web/src/components/ui/button.tsx": "c34742ce027c494aa9abd416f49a15ded37308c5f27f2cb80d23321fd9f26c16",
+        "web/src/components/ui/card.tsx": "a227027f478777c536ef860963492bb08ce669b2078bac228d3031326d17f814",
+        "web/src/components/homeward-logo.tsx": "68963875e15c691157e4f9b911775328b12e4d8e2f549557c6d4a792858f662e",
+        "web/src/components/parent-nav.tsx": "8071c7eb2d0ad9a2bc94b1dd9e0a7dc51674094cf163d232be2e2a146b69210b",
+        "web/src/app/dashboard/layout.tsx": "a72355f998001ab99db51c14c1bee4d608d8f7617329d07d46094f6296283e49",
+        "web/src/app/dashboard/page.tsx": "ffea0cb73b9b57e8c1554698b0dbc0f78172938ae98a16d19ab9c928187e4832",
+        "web/src/lib/age-theme.ts": "717484cee840a1773cdb1e544cd0c97667c9c9dfd06ae386e4ba9b210830d37b"
+      },
+      "components": [
+        {
+          "name": "ParentNav",
+          "sourcePath": "web/src/components/parent-nav.tsx"
+        },
+        {
+          "name": "HomewardLogo",
+          "sourcePath": "web/src/components/homeward-logo.tsx"
+        }
+      ],
+      "drafts": {
+        "7a74c597-b3bc-496b-8e15-3fdddbaa26b9": {
+          "title": "Homeward Parental AI Dashboard",
+          "visualDirection": "warm family sidebar, coral brand, blue selection, Outfit + Plus Jakarta",
+          "parentDraftId": null,
+          "currentVersion": 1
+        }
+      },
+      "updatedAt": "2026-09-08T05:21:00.486740+00:00"
+    }
+  }
+}

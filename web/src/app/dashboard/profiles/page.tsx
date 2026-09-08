@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { api, type Child, type ChildMemoryItem } from "@/lib/api";
 import { chatPathForChild } from "@/lib/slug";
 import { getAgeTheme, AGE_THEME_CONFIGS } from "@/lib/age-theme";
@@ -34,7 +35,10 @@ const MEMORY_SUGGESTIONS = [
 ];
 const MEMORY_MAX_ITEMS = 20;
 
-export default function ProfilesPage() {
+function ProfilesContent() {
+  const searchParams = useSearchParams();
+  const focusChildParam = searchParams.get("child");
+  const openedFocusRef = useRef(false);
   const [children, setChildren] = useState<Child[]>([]);
   const [editingChildId, setEditingChildId] = useState<number | null>(null);
   const [childDraft, setChildDraft] = useState<
@@ -92,6 +96,22 @@ export default function ProfilesPage() {
     setChildDraft({ ...child, pin: "", clear_pin: false });
     setChildSaveError("");
   };
+
+  useEffect(() => {
+    if (openedFocusRef.current || loading || children.length === 0) return;
+    const focusId = focusChildParam ? parseInt(focusChildParam, 10) : NaN;
+    if (Number.isNaN(focusId)) return;
+    const child = children.find((entry) => entry.id === focusId);
+    if (!child) return;
+    startEditChild(child);
+    openedFocusRef.current = true;
+    window.requestAnimationFrame(() => {
+      document.getElementById(`child-profile-${child.id}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, [children, focusChildParam, loading]);
 
   const saveChildSettings = async () => {
     if (!editingChildId) return;
@@ -307,9 +327,9 @@ export default function ProfilesPage() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl p-4 sm:p-8 space-y-6 animate-fade-in">
-      <div className="border-b border-border/60 pb-5">
-        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+    <main className="mx-auto max-w-6xl p-4 sm:p-8 space-y-6 animate-fade-in">
+      <div className="pb-2">
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-foreground">
           Child Profiles & Safety Levels
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
@@ -501,6 +521,7 @@ export default function ProfilesPage() {
 
               return (
                 <div
+                  id={`child-profile-${child.id}`}
                   key={child.id}
                   className={`rounded-2xl border transition-all p-5 space-y-4 ${
                     isEditing
@@ -945,7 +966,7 @@ export default function ProfilesPage() {
                             className="accent-primary rounded h-4 w-4"
                           />
                           <span className="flex items-center gap-1.5">
-                            <Moon className="h-4 w-4 text-indigo-500" />
+                            <Moon className="h-4 w-4 text-slate-500" />
                             Enable Quiet Hours
                           </span>
                         </label>
@@ -1021,5 +1042,22 @@ export default function ProfilesPage() {
         </CardContent>
       </Card>
     </main>
+  );
+}
+
+export default function ProfilesPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto flex min-h-[50vh] max-w-6xl items-center justify-center p-8">
+          <div className="flex flex-col items-center gap-3">
+            <Sparkles className="h-8 w-8 animate-pulse text-primary" />
+            <p className="text-sm font-medium text-muted-foreground">Loading profiles…</p>
+          </div>
+        </main>
+      }
+    >
+      <ProfilesContent />
+    </Suspense>
   );
 }
