@@ -186,6 +186,51 @@ class TestChatFeaturesAPI:
         assert data["messages"][0]["content"] == "Hello stars"
 
     @pytest.mark.asyncio
+    async def test_resume_after_start_fresh_returns_new_session(self, authenticated_client: AsyncClient, monkeypatch):
+        """Start fresh + a distinctive turn becomes Continue last chat, not the prior session."""
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+        replies = iter(["A short joke.", "The purple dragon is noted."])
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content=next(replies))
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+
+        first = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        old_id = first.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={"message": "Tell me a very short joke.", "child_id": child["id"], "session_id": old_id},
+        )
+
+        fresh = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        fresh_id = fresh.json()["session_id"]
+        assert fresh_id != old_id
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={
+                "message": "remember the purple dragon",
+                "child_id": child["id"],
+                "session_id": fresh_id,
+            },
+        )
+
+        resume = await authenticated_client.get(f"/api/v1/children/{child['id']}/sessions/resume")
+        assert resume.status_code == 200
+        assert "no-store" in resume.headers.get("cache-control", "").lower()
+        data = resume.json()
+        assert data["session_id"] == fresh_id
+        contents = " ".join(m["content"] for m in data["messages"])
+        assert "purple dragon" in contents
+        assert "Tell me a very short joke." not in contents
+
+    @pytest.mark.asyncio
     async def test_resume_disabled_when_parent_turns_it_off(self, authenticated_client: AsyncClient):
         child = authenticated_client.test_child  # type: ignore[attr-defined]
         await authenticated_client.patch(f"/api/v1/children/{child['id']}", json={"allow_resume": False})

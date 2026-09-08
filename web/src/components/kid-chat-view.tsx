@@ -23,8 +23,12 @@ import { shouldShowReplyChips } from "@/lib/reply-chips";
 import {
   actionAfterPinUnlock,
   isResumableSession,
+  preferCanonicalLastChat,
+  readRememberedLastChat,
   resumeTranscript,
   shouldOfferResume,
+  snapshotLastChat,
+  writeRememberedLastChat,
   type ResumeChoice,
   type ResumeSessionLike,
 } from "@/lib/resume-session";
@@ -221,8 +225,18 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     setSessionReady(true);
     setPinError("");
     pendingChoiceRef.current = null;
+    offeredSessionRef.current = session;
+    if (!quickChat) writeRememberedLastChat(selectedChild.id, session);
     return true;
-  }, []);
+  }, [quickChat, selectedChild.id]);
+
+  const canonicalLastChat = useCallback(
+    (fetched: ResumeSessionLike | null | undefined) => {
+      if (quickChat) return isResumableSession(fetched) ? fetched : null;
+      return preferCanonicalLastChat(fetched, readRememberedLastChat(selectedChild.id));
+    },
+    [quickChat, selectedChild.id],
+  );
 
   const initSession = useCallback(
     async (resume: boolean) => {
@@ -230,14 +244,14 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       setPinError("");
 
       if (resume && selectedChild.allow_resume !== false) {
-        const cached = offeredSessionRef.current;
+        const cached = canonicalLastChat(offeredSessionRef.current);
         if (cached && applyResumedSession(cached)) {
           return;
         }
         try {
           const resumed = await api.resumeSession(selectedChild.id);
-          offeredSessionRef.current = resumed;
-          if (applyResumedSession(resumed)) {
+          const canonical = canonicalLastChat(resumed);
+          if (canonical && applyResumedSession(canonical)) {
             return;
           }
         } catch (error) {
@@ -269,7 +283,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
         setPinError(SESSION_ERROR_MESSAGE);
       }
     },
-    [applyResumedSession, selectedChild, quickChat],
+    [applyResumedSession, canonicalLastChat, selectedChild, quickChat],
   );
 
   useEffect(() => {
@@ -298,13 +312,6 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       return;
     }
 
-    const cached = offeredSessionRef.current;
-    if (shouldOfferResume({ allowResume: selectedChild.allow_resume, quickChat, session: cached })) {
-      setResumeOffered(true);
-      setResumeChecking(false);
-      return;
-    }
-
     setResumeChecking(true);
     setResumeOffered(false);
 
@@ -312,8 +319,9 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       .resumeSession(selectedChild.id)
       .then((resumed) => {
         if (cancelled) return;
-        if (shouldOfferResume({ allowResume: selectedChild.allow_resume, quickChat, session: resumed })) {
-          offeredSessionRef.current = resumed;
+        const canonical = canonicalLastChat(resumed);
+        if (shouldOfferResume({ allowResume: selectedChild.allow_resume, quickChat, session: canonical })) {
+          offeredSessionRef.current = canonical;
           setResumeOffered(true);
           setResumeChecking(false);
           return;
@@ -336,7 +344,22 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     return () => {
       cancelled = true;
     };
-  }, [selectedChild, pinVerified, chatSessionId, initSession, quickChat]);
+  }, [selectedChild, pinVerified, chatSessionId, initSession, quickChat, canonicalLastChat]);
+
+  useEffect(() => {
+    if (quickChat || !sessionReady) return;
+    const snapshot = snapshotLastChat(
+      chatSessionId,
+      messages.map((message) => ({
+        role: message.role,
+        content: message.content,
+        blocked: message.blocked,
+      })),
+    );
+    if (!snapshot) return;
+    offeredSessionRef.current = snapshot;
+    writeRememberedLastChat(selectedChild.id, snapshot);
+  }, [quickChat, sessionReady, chatSessionId, messages, selectedChild.id]);
 
   const handleNewChat = async () => {
     if (streaming) return;
@@ -378,6 +401,11 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       setSessionReady(false);
       setResumeOffered(false);
       setResumeChecking(false);
+      // Keep the Continue transcript across a PIN re-ask (#38). Otherwise drop
+      // the in-memory cache so Welcome back refetches the canonical last chat.
+      if (pendingChoiceRef.current !== "continue") {
+        offeredSessionRef.current = null;
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : "";
       // The server explains lockouts ("Too many attempts…"); everything else is a mismatch.
@@ -681,7 +709,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
               className="h-12 text-base font-semibold rounded-xl shadow-sm shadow-primary/25"
               onClick={() => {
                 pendingChoiceRef.current = "continue";
-                const offered = offeredSessionRef.current;
+                const offered = canonicalLastChat(offeredSessionRef.current);
                 if (isResumableSession(offered) && applyResumedSession(offered)) {
                   return;
                 }
