@@ -112,6 +112,7 @@ function ChildChatContent() {
 
   return (
     <KidChatView
+      key={selectedChild.id}
       selectedChild={selectedChild}
       displayName={displayName}
       quickChat={slug.toLowerCase() === QUICK_CHAT_SLUG}
