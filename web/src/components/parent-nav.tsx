@@ -1,17 +1,22 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { api } from "@/lib/api";
 import { HomewardLogo } from "@/components/homeward-logo";
 import { KidChatLink } from "@/components/kid-chat-link";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import {
+  Cpu,
   ExternalLink,
   LayoutDashboard,
   LogOut,
+  Menu,
   Settings,
   Users,
+  X,
 } from "lucide-react";
 
 interface ParentNavProps {
@@ -20,84 +25,146 @@ interface ParentNavProps {
 
 export function ParentNav({ onLogout }: ParentNavProps) {
   const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+  const [modelName, setModelName] = useState<string | null>(null);
+  const [modelReady, setModelReady] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .ollamaStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setModelName(status.chat_model || null);
+        setModelReady(status.ready);
+      })
+      .catch(() => {
+        if (!cancelled) setModelReady(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
   const onDashboard = pathname === "/dashboard";
   const onProfiles = pathname.startsWith("/dashboard/profiles");
   const onSettings = pathname.startsWith("/dashboard/settings");
 
-  return (
-    <header className="sticky top-0 z-30 border-b border-border/70 bg-card/85 backdrop-blur-md shadow-xs transition-colors">
-      <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-        <HomewardLogo showTagline />
+  const navClass = (active: boolean) =>
+    `flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 font-medium ${
+      active
+        ? "sidebar-item-active"
+        : "text-slate-500 hover:bg-slate-50 dark:hover:bg-muted"
+    }`;
 
-        <nav className="flex items-center gap-1 rounded-xl bg-muted/70 p-1 border border-border/50">
-          <Link href="/dashboard">
-            <Button
-              variant={onDashboard ? "default" : "ghost"}
-              size="sm"
-              className={`rounded-lg transition-all ${
-                onDashboard
-                  ? "shadow-sm shadow-primary/20 font-medium"
-                  : "text-muted-foreground hover:text-foreground hover:bg-background/60"
-              }`}
-            >
-              <LayoutDashboard className="mr-1.5 h-4 w-4" />
-              <span>Dashboard</span>
-            </Button>
+  const sidebar = (
+    <>
+      <div className="p-6">
+        <div className="mb-10 flex items-center justify-between gap-3">
+          <HomewardLogo />
+          <button
+            type="button"
+            className="rounded-xl p-2 text-slate-400 hover:bg-slate-50 lg:hidden"
+            onClick={() => setOpen(false)}
+            aria-label="Close navigation"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <nav className="space-y-1">
+          <Link href="/dashboard" className={navClass(onDashboard)}>
+            <LayoutDashboard className="h-5 w-5" />
+            <span>Dashboard</span>
           </Link>
-          <Link href="/dashboard/profiles">
-            <Button
-              variant={onProfiles ? "default" : "ghost"}
-              size="sm"
-              className={`rounded-lg transition-all ${
-                onProfiles
-                  ? "shadow-sm shadow-primary/20 font-medium"
-                  : "text-muted-foreground hover:text-foreground hover:bg-background/60"
-              }`}
-            >
-              <Users className="mr-1.5 h-4 w-4" />
-              <span>Profiles</span>
-            </Button>
+          <Link href="/dashboard/profiles" className={navClass(onProfiles)}>
+            <Users className="h-5 w-5" />
+            <span>Children</span>
           </Link>
-          <Link href="/dashboard/settings">
-            <Button
-              variant={onSettings ? "default" : "ghost"}
-              size="sm"
-              className={`rounded-lg transition-all ${
-                onSettings
-                  ? "shadow-sm shadow-primary/20 font-medium"
-                  : "text-muted-foreground hover:text-foreground hover:bg-background/60"
-              }`}
-            >
-              <Settings className="mr-1.5 h-4 w-4" />
-              <span>Settings</span>
-            </Button>
+          <Link href="/dashboard/settings" className={navClass(onSettings)}>
+            <Settings className="h-5 w-5" />
+            <span>Settings</span>
           </Link>
         </nav>
+      </div>
 
-        <div className="flex items-center gap-2">
+      <div className="mt-auto space-y-4 p-6">
+        <div className="rounded-2xl bg-blue-50 p-4 dark:bg-blue-950/40">
+          <div className="mb-1 flex items-center gap-2 text-blue-700 dark:text-blue-300">
+            <Cpu className="h-4 w-4" />
+            <span className="text-xs font-bold uppercase tracking-wider">Local Model</span>
+          </div>
+          <p className="text-sm font-semibold text-slate-800 dark:text-foreground">
+            {modelName || "Ollama"}
+          </p>
+          <div className="mt-3 h-1.5 w-full rounded-full bg-blue-100 dark:bg-blue-900/60">
+            <div
+              className={`h-1.5 rounded-full ${modelReady ? "bg-blue-500 w-full" : "bg-amber-400 w-2/5"}`}
+            />
+          </div>
+          <p className="mt-2 text-[10px] text-blue-600 dark:text-blue-300">
+            {modelReady
+              ? "Running locally via Ollama"
+              : "Still setting up — chat waits until it is ready"}
+          </p>
+        </div>
+
+        <KidChatLink className={navClass(false)}>
+          <ExternalLink className="h-5 w-5" />
+          <span>Quick Chat</span>
+        </KidChatLink>
+
+        <div className="flex items-center justify-between gap-2 px-1">
           <ThemeToggle />
-          <KidChatLink>
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-primary/30 text-primary hover:bg-primary/5 font-medium shadow-xs"
-            >
-              <ExternalLink className="mr-1.5 h-4 w-4" />
-              <span className="hidden sm:inline">Quick Chat</span>
-            </Button>
-          </KidChatLink>
           <Button
             variant="ghost"
             size="icon"
             onClick={onLogout}
             title="Sign out of Parent Dashboard"
             aria-label="Sign out"
-            className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+            className="text-slate-400 hover:bg-destructive/10 hover:text-destructive"
           >
             <LogOut className="h-4 w-4" />
           </Button>
         </div>
       </div>
-    </header>
+    </>
+  );
+
+  return (
+    <>
+      <header className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-100 bg-white/90 px-4 py-3 backdrop-blur-md dark:border-border dark:bg-card/90 lg:hidden">
+        <HomewardLogo size="sm" />
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="rounded-2xl border border-slate-200 p-2.5 text-slate-400 hover:text-slate-600 dark:border-border"
+          aria-label="Open navigation"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+      </header>
+
+      {open && (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-slate-900/30 backdrop-blur-sm lg:hidden"
+          aria-label="Close navigation overlay"
+          onClick={() => setOpen(false)}
+        />
+      )}
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex h-full w-64 flex-col border-r border-slate-100 bg-white dark:border-border dark:bg-card ${
+          open ? "translate-x-0" : "-translate-x-full"
+        } transition-transform duration-200 lg:translate-x-0`}
+      >
+        {sidebar}
+      </aside>
+    </>
   );
 }

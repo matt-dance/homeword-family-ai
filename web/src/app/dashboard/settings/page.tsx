@@ -139,9 +139,9 @@ export default function SettingsPage() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl p-4 sm:p-8 space-y-6 animate-fade-in">
-      <div className="border-b border-border/60 pb-5">
-        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+    <main className="mx-auto max-w-6xl p-4 sm:p-8 space-y-6 animate-fade-in">
+      <div className="pb-2">
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-foreground">
           System & AI Settings
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
