@@ -177,11 +177,6 @@ class SpeakRequest(BaseModel):
     voice_gender: Literal["female", "male"] | None = None
 
 
-class CloudSettingsRequest(BaseModel):
-    cloud_enabled: bool = False
-    openai_api_key: str | None = None
-
-
 class OllamaPullRequest(BaseModel):
     model: str = Field(min_length=1, max_length=100)
 
@@ -318,10 +313,9 @@ async def health(session: Annotated[AsyncSession, Depends(get_session)]):
     ollama = await ollama_service.get_status(chat_model, classifier_model)
     public_ollama = {key: value for key, value in ollama.items() if key != "ollama_url"}
     return {
-        "status": "ok" if ollama["ready"] or settings.cloud_enabled else "degraded",
+        "status": "ok" if ollama["ready"] else "degraded",
         "service": "homeward-gateway",
         "version": "0.1.0",
-        "cloud_enabled": settings.cloud_enabled,
         "ollama": public_ollama,
     }
 
@@ -499,7 +493,6 @@ async def auth_me(
     return {
         "parent_id": parent.id,
         "setup_complete": parent.setup_complete,
-        "cloud_enabled": parent.cloud_enabled,
         "ollama_model": parent.ollama_model,
         "classifier_model": parent.classifier_model,
         "has_recovery_code": parent.recovery_code_hash is not None,
@@ -2059,25 +2052,6 @@ async def update_ollama_settings(
     await session.commit()
     status = await ollama_service.get_status(parent.ollama_model, parent.classifier_model)
     return {"ok": True, "ollama": status}
-
-
-# --- Cloud settings ---
-
-
-@router.post("/settings/cloud")
-async def update_cloud_settings(
-    body: CloudSettingsRequest,
-    parent: Annotated[ParentAccount, Depends(require_parent)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-):
-    parent.cloud_enabled = body.cloud_enabled
-    await session.commit()
-    if body.cloud_enabled and body.openai_api_key:
-        settings.cloud_enabled = True
-        settings.openai_api_key = body.openai_api_key
-    else:
-        settings.cloud_enabled = body.cloud_enabled
-    return {"ok": True, "cloud_enabled": parent.cloud_enabled}
 
 
 @router.get("/settings/home-location")

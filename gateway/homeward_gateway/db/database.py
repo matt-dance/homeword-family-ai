@@ -57,6 +57,8 @@ class ParentAccount(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     setup_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Unused since the cloud/OpenAI path was removed; kept because existing
+    # SQLite databases have it as NOT NULL and migrations here are add-only.
     cloud_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     ollama_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     classifier_model: Mapped[str | None] = mapped_column(String(100), nullable=True)

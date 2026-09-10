@@ -14,8 +14,6 @@ export function homewardBaseUrl(
   return `http://${hostname}:${port}`;
 }
 
-export const DEFAULT_HOMEWARD_URL = homewardBaseUrl();
-
 export function advertisedWebPort(locationPort?: string): number {
   const raw =
     locationPort ?? (typeof window === "undefined" ? "" : window.location.port);

@@ -75,7 +75,7 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 	marker := dataDir + "/.browser_opened"
 
 	if uninstallFlag {
-		return runUninstall(home, dataDir, wipeFlag, nil)
+		return runUninstall(home, dataDir, wipeFlag)
 	}
 
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
@@ -98,7 +98,7 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 		return err
 	}
 
-	specs, err := children.Specs(resourceRoot, dataDir, childEnv)
+	specs, err := children.Specs(resourceRoot, childEnv)
 	if err != nil {
 		return err
 	}
@@ -173,15 +173,12 @@ func maybeOpenBrowser(openFlag, firstRun, webOK, holder bool, marker string) {
 	}
 }
 
-// runUninstall stops children, then removes the login item.
-// A second-process `--uninstall` has no local Manager. On Darwin, launchd.Kill
-// SIGTERMs the login-item supervisor; on Linux, other `homeward` processes
-// are signaled. The handler Stop()s gateway/web (and bundled ollama only).
-// Adopted system Ollama is not signaled.
-func runUninstall(home, dataDir string, wipe bool, manager *proc.Manager) error {
-	if manager != nil {
-		_ = manager.Stop()
-	}
+// runUninstall removes the login item. `--uninstall` always runs as a second
+// process with no local Manager: on Darwin, launchd.Kill SIGTERMs the
+// login-item supervisor; on Linux, other `homeward` processes are signaled.
+// The supervisor's signal handler Stop()s gateway/web (and bundled ollama
+// only). Adopted system Ollama is not signaled.
+func runUninstall(home, dataDir string, wipe bool) error {
 	removeLoginItem(home)
 	if wipe {
 		return os.RemoveAll(dataDir)
