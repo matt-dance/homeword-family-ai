@@ -7,6 +7,7 @@ import { api, type Child } from "@/lib/api";
 import { slugifyName } from "@/lib/slug";
 import { QUICK_CHAT_LABEL, QUICK_CHAT_SLUG } from "@/lib/default-profile";
 import { KidChatView } from "@/components/kid-chat-view";
+import { KidChatErrorBoundary } from "@/components/kid-chat-error-boundary";
 import { setDeviceProfileId } from "@/lib/device-profile";
 import { HomewardLogo } from "@/components/homeward-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -111,13 +112,15 @@ function ChildChatContent() {
   }
 
   return (
-    <KidChatView
-      key={selectedChild.id}
-      selectedChild={selectedChild}
-      displayName={displayName}
-      quickChat={slug.toLowerCase() === QUICK_CHAT_SLUG}
-      onSwitchProfile={() => router.push("/chat?pick=1")}
-    />
+    <KidChatErrorBoundary>
+      <KidChatView
+        key={selectedChild.id}
+        selectedChild={selectedChild}
+        displayName={displayName}
+        quickChat={slug.toLowerCase() === QUICK_CHAT_SLUG}
+        onSwitchProfile={() => router.push("/chat?pick=1")}
+      />
+    </KidChatErrorBoundary>
   );
 }
 

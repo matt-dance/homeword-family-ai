@@ -77,9 +77,10 @@ function CodeBlock({ code }: { code: string }) {
 }
 
 export function ChatMarkdown({ text, simpleMode }: { text: string; simpleMode?: boolean }) {
-  const blocks = parseChatMarkdown(text);
+  const source = typeof text === "string" ? text : "";
+  const blocks = parseChatMarkdown(source);
   if (!blocks.length) {
-    return <span className="whitespace-pre-wrap">{text}</span>;
+    return <span className="whitespace-pre-wrap">{source}</span>;
   }
 
   return (

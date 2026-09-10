@@ -19,6 +19,11 @@ import {
   type ChatTool,
   type StoryTool,
 } from "@/lib/chat-tools";
+import { KidChatErrorBoundary } from "@/components/kid-chat-error-boundary";
+import {
+  kidSafeUnhandledStreamMessage,
+  reportKidChatStreamFailure,
+} from "@/lib/kid-chat-stream-error";
 import { shouldShowReplyChips } from "@/lib/reply-chips";
 import {
   actionAfterPinUnlock,
@@ -77,8 +82,24 @@ function simpleModeKey(childId: number) {
   return `homeward-simple-mode-${childId}`;
 }
 
+function safeAssistantParse(msg: Message) {
+  try {
+    return extractChatTools(
+      typeof msg.content === "string" ? msg.content : "",
+      msg.tools,
+      msg.cardRoute,
+    );
+  } catch (error) {
+    reportKidChatStreamFailure(error, "extract-chat-tools");
+    return {
+      text: typeof msg.content === "string" ? msg.content : "",
+      tools: msg.tools ?? [],
+    };
+  }
+}
+
 function spokenTextForMessage(msg: Message) {
-  const parsed = extractChatTools(msg.content, msg.tools, msg.cardRoute);
+  const parsed = safeAssistantParse(msg);
   const story = parsed.tools.find((tool): tool is StoryTool => tool.type === "story");
   return story?.pages?.[0]?.text || parsed.text;
 }
@@ -571,25 +592,22 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           },
         );
       } catch (e) {
-        if (controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) {
-          setStreaming(false);
-          setStreamStatus(null);
+        if (controller.signal.aborted) {
           return;
         }
-        console.error("Chat stream failed", e);
-        const text =
-          e instanceof Error && e.message ? e.message : CHAT_ERROR_MESSAGE;
+        reportKidChatStreamFailure(e, "kid-chat-handleSend");
+        const text = kidSafeUnhandledStreamMessage(e);
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           const base = last?.role === "assistant" && !last.content ? prev.slice(0, -1) : prev;
           return [...base, { role: "assistant", content: text, blocked: true }];
         });
-        setStreaming(false);
-        setStreamStatus(null);
         if (conversationActiveRef.current) {
           notifyAssistantDone("");
         }
       } finally {
+        setStreaming(false);
+        setStreamStatus(null);
         if (abortRef.current === controller) {
           abortRef.current = null;
         }
@@ -874,6 +892,15 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
 
       {/* Message Stream */}
       <div className="flex-1 overflow-y-auto px-4 py-6">
+        <KidChatErrorBoundary
+          onReset={() => {
+            abortRef.current?.abort();
+            abortRef.current = null;
+            setStreaming(false);
+            setStreamStatus(null);
+            setMessages((prev) => prev.filter((m) => typeof m.content === "string"));
+          }}
+        >
         <div className={`mx-auto space-y-4 ${simpleMode ? "max-w-xl space-y-6" : "max-w-2xl"}`}>
           {/* Empty State / Conversation Starters */}
           {messages.length === 0 && (
@@ -932,8 +959,8 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             const isAssistant = msg.role === "assistant";
             const isReading = isSpeakingMessage(messageKey);
             const parsed =
-              isAssistant && !msg.blocked ? extractChatTools(msg.content, msg.tools, msg.cardRoute) : null;
-            const displayText = parsed?.text ?? msg.content;
+              isAssistant && !msg.blocked ? safeAssistantParse(msg) : null;
+            const displayText = parsed?.text ?? (typeof msg.content === "string" ? msg.content : "");
             const tools = parsed?.tools ?? msg.tools ?? [];
             const listenText = storyPageText[i] || displayText;
             const showChips = shouldShowReplyChips({
@@ -1087,6 +1114,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
 
           <div ref={bottomRef} />
         </div>
+        </KidChatErrorBoundary>
       </div>
 
       {/* Input Dock */}
