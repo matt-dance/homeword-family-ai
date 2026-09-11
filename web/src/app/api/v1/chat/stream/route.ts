@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { clientIpFromRequest, normalizeHostname } from "@/lib/local-host";
 import { LLM_UNAVAILABLE_MESSAGE } from "@/lib/nonstream-chat-error";
+import { pumpSseWithKeepalives, safeEnqueue, safeClose } from "@/lib/sse-proxy";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -73,7 +74,17 @@ function sseNapResponse(): Response {
 export async function POST(request: NextRequest) {
   const body = await request.text();
   const headerAbort = new AbortController();
-  const headerTimer = setTimeout(() => headerAbort.abort("header-timeout"), GATEWAY_HEADER_TIMEOUT_MS);
+  const headerTimer = setTimeout(() => {
+    try {
+      if (typeof DOMException === "function") {
+        headerAbort.abort(new DOMException("header-timeout", "AbortError"));
+      } else {
+        headerAbort.abort();
+      }
+    } catch {
+      headerAbort.abort();
+    }
+  }, GATEWAY_HEADER_TIMEOUT_MS);
 
   let upstream: Response;
   try {
@@ -117,19 +128,17 @@ export async function POST(request: NextRequest) {
       request.signal.addEventListener("abort", abort, { once: true });
       try {
         // Immediate comment so the browser sees first bytes before llama tokens.
-        controller.enqueue(encoder.encode(": connected\n\n"));
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) controller.enqueue(value);
+        if (!safeEnqueue(controller, encoder.encode(": connected\n\n"))) {
+          safeClose(controller);
+          return;
         }
-        controller.close();
+        await pumpSseWithKeepalives(reader, controller, { signal: request.signal });
       } catch {
-        try {
-          controller.close();
-        } catch {
-          // already closed
-        }
+        safeEnqueue(
+          controller,
+          encoder.encode(`data: ${JSON.stringify({ type: "error", message: LLM_UNAVAILABLE_MESSAGE })}\n\n`),
+        );
+        safeClose(controller);
       } finally {
         request.signal.removeEventListener("abort", abort);
       }

@@ -3,6 +3,15 @@ import type { CardRoute, ChatTool } from "@/lib/chat-tools";
 import { markParentUnlocked } from "@/lib/parent-lock";
 import { clearParentSignedOut } from "@/lib/parent-session";
 import {
+  invokeSafely,
+  isAbortLikeError,
+  kidSafeUnhandledStreamMessage,
+  kidText,
+  kidVisibleText,
+  reportKidChatStreamFailure,
+  STREAM_STALL_MESSAGE,
+} from "@/lib/kid-chat-stream-error";
+import {
   CHAT_UNAVAILABLE_MESSAGE,
   latestAssistantAfterUser,
   parseStreamHttpError,
@@ -450,14 +459,36 @@ export const api = {
 };
 
 /**
- * Idle is "no bytes at all" — SSE comments/status from the gateway reset this.
- * Do not treat a slow first llama3.2:3b token as a hang if keepalives are flowing.
+ * After the first token, idle is "no bytes at all".
+ * SSE comments/status reset this so a slow llama3.2:3b token is not a hang.
  */
 export const CHAT_STREAM_IDLE_MS = 25_000;
+/**
+ * Before the first token, do not idle-abort at 25s.
+ * Cold Ollama / llama3.2:3b first token is 45s on Family Linux; keepalives can miss.
+ */
+export const CHAT_STREAM_FIRST_TOKEN_MS = 60_000;
 /** Classifier + first token + full reply on llama3.2:3b, with a little slack. */
 export const CHAT_STREAM_TOTAL_MS = 120_000;
 const RECOVERY_ATTEMPTS = 3;
 const RECOVERY_WAIT_MS = 700;
+
+function abortQuietly(controller: AbortController): void {
+  if (controller.signal.aborted) return;
+  try {
+    if (typeof DOMException === "function") {
+      controller.abort(new DOMException("The operation was aborted.", "AbortError"));
+    } else {
+      controller.abort();
+    }
+  } catch {
+    try {
+      controller.abort();
+    } catch {
+      // already aborted
+    }
+  }
+}
 
 async function recoverCompletedReply(
   sessionId: number,
@@ -512,165 +543,205 @@ export async function streamChat(
   onStatus?: (message: string) => void,
   onCardRoute?: (route: CardRoute) => void,
 ): Promise<void> {
-  const timeoutAbort = new AbortController();
-  const totalTimer = setTimeout(() => timeoutAbort.abort("total-timeout"), CHAT_STREAM_TOTAL_MS);
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  const resetIdle = () => {
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => timeoutAbort.abort("idle-timeout"), CHAT_STREAM_IDLE_MS);
-  };
-  resetIdle();
-
-  const combined = combineAbortSignals([signal, timeoutAbort.signal]);
-
-  let res: Response;
-  try {
-    res = await fetch(`${API_BASE}/chat/stream`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        child_id: childId,
-        session_id: sessionId,
-        quick_chat: quickChat ?? false,
-      }),
-      signal: combined,
-    });
-  } catch (error) {
-    clearTimeout(totalTimer);
-    if (idleTimer) clearTimeout(idleTimer);
-    if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
-      if (timeoutAbort.signal.aborted && !signal?.aborted) {
-        if (sessionId) {
-          const recovered = await recoverCompletedReply(sessionId, message);
-          if (recovered) {
-            onToken(recovered);
-            onDone();
-            return;
-          }
-        }
-        throw new Error("Homeward took too long to reply. Please try again.");
-      }
-      throw error;
-    }
-    throw error;
-  }
-
-  if (!res.ok) {
-    clearTimeout(totalTimer);
-    if (idleTimer) clearTimeout(idleTimer);
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(parseStreamHttpError(err, res.statusText || CHAT_UNAVAILABLE_MESSAGE));
-  }
-
-  const reader = res.body?.getReader();
-  if (!reader) {
-    clearTimeout(totalTimer);
-    if (idleTimer) clearTimeout(idleTimer);
-    throw new Error("No reader");
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let finished = false;
+  const fetchAbort = new AbortController();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let timedOut = false;
   let sawReply = false;
-  const finish = () => {
-    if (finished) return;
-    finished = true;
-    onDone();
-  };
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
-  try {
-    while (true) {
-      if (combined.aborted) break;
-      const { done, value } = await reader.read();
-      if (done) break;
-      resetIdle();
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === "token") {
-              sawReply = true;
-              onToken(data.content);
-            } else if (data.type === "blocked" || data.type === "error") {
-              sawReply = true;
-              onBlocked(data.message, data.tools);
-              if (data.type === "error") finish();
-            } else if (data.type === "status") {
-              const statusText =
-                typeof data.message === "string"
-                  ? data.message
-                  : typeof data.phase === "string"
-                    ? data.phase
-                    : "";
-              if (statusText) onStatus?.(statusText);
-            } else if (data.type === "card_route") {
-              const allow = Array.isArray(data.allow)
-                ? data.allow.filter((item: unknown): item is string => typeof item === "string")
-                : null;
-              const storyPages =
-                typeof data.story_pages === "number" && data.story_pages > 0
-                  ? data.story_pages
-                  : null;
-              onCardRoute?.({ allow, storyPages });
-            } else if (data.type === "tools" && Array.isArray(data.tools)) {
-              sawReply = true;
-              onTools?.(data.tools);
-            } else if (data.type === "done") {
-              finish();
-            }
-          } catch {
-            // skip malformed
-          }
-        }
-      }
-    }
-    if (sawReply) {
-      finish();
+  const stall = () => {
+    timedOut = true;
+    if (!reader) {
+      abortQuietly(fetchAbort);
       return;
     }
-    if (finished) return;
+    void reader.cancel().catch(() => undefined);
+  };
 
-    const timedOut = timeoutAbort.signal.aborted && !signal?.aborted;
-    if (sessionId && (timedOut || !sawReply)) {
-      const recovered = await recoverCompletedReply(sessionId, message);
-      if (recovered) {
-        onToken(recovered);
-        finish();
-        return;
-      }
-    }
-    if (timedOut || !sawReply) {
-      throw new Error("Homeward took too long to reply. Please try again.");
-    }
-    finish();
-  } catch (error) {
-    if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
-      if (timeoutAbort.signal.aborted && !signal?.aborted) {
-        if (!sawReply && sessionId) {
-          const recovered = await recoverCompletedReply(sessionId, message);
-          if (recovered) {
-            onToken(recovered);
-            finish();
-            return;
-          }
-        }
-        if (sawReply) {
+  const armStallTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    const wait = sawReply ? CHAT_STREAM_IDLE_MS : CHAT_STREAM_FIRST_TOKEN_MS;
+    idleTimer = setTimeout(stall, wait);
+  };
+
+  const totalTimer = setTimeout(stall, CHAT_STREAM_TOTAL_MS);
+  armStallTimer();
+
+  try {
+    const combined = combineAbortSignals([signal, fetchAbort.signal]);
+
+    const deliverToken = (token: string) => {
+      invokeSafely("stream-onToken", () => onToken(token));
+    };
+    const deliverBlocked = (text: string, tools?: ChatTool[]) => {
+      invokeSafely("stream-onBlocked", () => onBlocked(text, tools));
+    };
+    const finish = (() => {
+      let finished = false;
+      return () => {
+        if (finished) return;
+        finished = true;
+        invokeSafely("stream-onDone", onDone);
+      };
+    })();
+
+    const napOrRecover = async (): Promise<void> => {
+      if (sessionId) {
+        const recovered = await recoverCompletedReply(sessionId, message);
+        if (recovered) {
+          sawReply = true;
+          deliverToken(recovered);
           finish();
           return;
         }
-        throw new Error("Homeward took too long to reply. Please try again.");
       }
+      reportKidChatStreamFailure(new Error("stream stall"), "streamChat-nap");
+      deliverBlocked(STREAM_STALL_MESSAGE);
+      finish();
+    };
+
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/chat/stream`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          child_id: childId,
+          session_id: sessionId,
+          quick_chat: quickChat ?? false,
+        }),
+        signal: combined,
+      });
+    } catch (error) {
+      if (signal?.aborted) {
+        finish();
+        return;
+      }
+      if (timedOut || isAbortLikeError(error)) {
+        await napOrRecover();
+        return;
+      }
+      reportKidChatStreamFailure(error, "streamChat-fetch");
+      deliverBlocked(kidSafeUnhandledStreamMessage(error));
       finish();
       return;
     }
-    throw error;
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      // HTTP errors still fail closed; PIN / rate-limit copy is preserved.
+      throw new Error(parseStreamHttpError(err, res.statusText || CHAT_UNAVAILABLE_MESSAGE));
+    }
+
+    reader = res.body?.getReader();
+    if (!reader) {
+      await napOrRecover();
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        if (signal?.aborted) break;
+        if (timedOut) break;
+        let chunk: ReadableStreamReadResult<Uint8Array>;
+        try {
+          chunk = await reader.read();
+        } catch (error) {
+          if (signal?.aborted) break;
+          if (timedOut || isAbortLikeError(error)) {
+            timedOut = true;
+            break;
+          }
+          reportKidChatStreamFailure(error, "streamChat-read");
+          if (!sawReply) {
+            await napOrRecover();
+            return;
+          }
+          finish();
+          return;
+        }
+        if (chunk.done) break;
+        if (sawReply) armStallTimer();
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === "token") {
+                sawReply = true;
+                armStallTimer();
+                deliverToken(kidText(data.content, ""));
+              } else if (data.type === "blocked" || data.type === "error") {
+                sawReply = true;
+                deliverBlocked(kidVisibleText(data.message, STREAM_STALL_MESSAGE), data.tools);
+                if (data.type === "error") finish();
+              } else if (data.type === "status") {
+                const statusText =
+                  typeof data.message === "string"
+                    ? data.message
+                    : typeof data.phase === "string"
+                      ? data.phase
+                      : "";
+                if (statusText) {
+                  invokeSafely("stream-onStatus", () => onStatus?.(statusText));
+                }
+              } else if (data.type === "card_route") {
+                const allow = Array.isArray(data.allow)
+                  ? data.allow.filter((item: unknown): item is string => typeof item === "string")
+                  : null;
+                const storyPages =
+                  typeof data.story_pages === "number" && data.story_pages > 0
+                    ? data.story_pages
+                    : null;
+                invokeSafely("stream-onCardRoute", () => onCardRoute?.({ allow, storyPages }));
+              } else if (data.type === "tools" && Array.isArray(data.tools)) {
+                sawReply = true;
+                armStallTimer();
+                invokeSafely("stream-onTools", () => onTools?.(data.tools));
+              } else if (data.type === "done") {
+                finish();
+              }
+            } catch (error) {
+              // Malformed JSON is skipped; callback throws are logged and must not crash the page.
+              if (error instanceof SyntaxError) continue;
+              reportKidChatStreamFailure(error, "streamChat-event");
+            }
+          }
+        }
+      }
+      if (signal?.aborted) {
+        finish();
+        return;
+      }
+      if (sawReply) {
+        finish();
+        return;
+      }
+      if (timedOut || !sawReply) {
+        await napOrRecover();
+        return;
+      }
+      finish();
+    } catch (error) {
+      if (signal?.aborted) {
+        finish();
+        return;
+      }
+      reportKidChatStreamFailure(error, "streamChat");
+      if (sawReply) {
+        finish();
+        return;
+      }
+      await napOrRecover();
+    }
   } finally {
     clearTimeout(totalTimer);
     if (idleTimer) clearTimeout(idleTimer);
