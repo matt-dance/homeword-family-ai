@@ -26,6 +26,7 @@ from homeward_gateway.chat.lookup_tools import (
     regex_lookup_decision,
 )
 from homeward_gateway.chat.lookups import coerce_open_web_search
+from homeward_gateway.models.prompts import _BASE_SAFETY
 
 logger = logging.getLogger(__name__)
 
@@ -367,6 +368,20 @@ def _from_outcomes(
     )
 
 
+def _native_messages(
+    message: str,
+    history: list[dict] | None,
+    system_prompt: str | None,
+) -> list[dict]:
+    """Kid-facing native turns always carry age, preset, and _BASE_SAFETY."""
+    safety = (system_prompt or "").strip() or _BASE_SAFETY
+    return [
+        {"role": "system", "content": safety},
+        *(history or []),
+        {"role": "user", "content": message},
+    ]
+
+
 def _assistant_tool_call_message(turn: ModelTurn) -> dict:
     payload: dict[str, Any] = {
         "role": "assistant",
@@ -396,9 +411,10 @@ async def _native_loop(
     context: Any,
     chat_turn: ChatTurnFn,
     max_native_steps: int,
+    system_prompt: str | None = None,
 ) -> LookupToolLoopResult:
     tools = openai_lookup_tools(open_web_search=open_web_search)
-    messages = [*(history or []), {"role": "user", "content": message}]
+    messages = _native_messages(message, history, system_prompt)
     outcomes: list[LookupToolOutcome] = []
     for _ in range(max(1, max_native_steps)):
         turn = await chat_turn(messages, tools=tools)
@@ -440,6 +456,7 @@ async def run_lookup_tool_loop(
     router: DecideFn | None = None,
     chat_turn: ChatTurnFn | None = None,
     max_native_steps: int = 3,
+    system_prompt: str | None = None,
 ) -> LookupToolLoopResult:
     open_web_search = coerce_open_web_search(live_lookups, open_web_search)
     if not live_lookups:
@@ -496,6 +513,7 @@ async def run_lookup_tool_loop(
             context=context,
             chat_turn=turn_fn,
             max_native_steps=max_native_steps,
+            system_prompt=system_prompt,
         )
         native.needs_grounding = bool(native.outcomes or native.extra_messages)
         return native

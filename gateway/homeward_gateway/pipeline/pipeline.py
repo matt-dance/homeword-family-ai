@@ -31,6 +31,7 @@ from homeward_gateway.chat.tools import (
     tool_prompt_hint,
 )
 from homeward_gateway.models.ollama_chat import aclose_quietly, anext_bounded, first_token_timeout_seconds
+from homeward_gateway.models.prompts import build_system_prompt
 from homeward_gateway.models.router import generate_response, stream_response
 from homeward_gateway.home.location import HomeContext
 
@@ -275,6 +276,36 @@ async def resolve_live_lookup(
     return notes, loop.cards, loop.intent, loop.result
 
 
+def _kid_system_prompt(
+    child_name: str,
+    age: int,
+    preset: PolicyPreset,
+    *,
+    homework_mode: bool = False,
+    tool_hint: str = "",
+    home: HomeContext | None = None,
+    ai_tone: str = "balanced",
+    ai_verbosity: int = 3,
+    quick_chat: bool = False,
+    memory_items: list[dict] | None = None,
+    continue_conversation: bool = False,
+) -> str:
+    """Same safety prompt generate_response uses — required for native tool turns."""
+    return build_system_prompt(
+        child_name,
+        age,
+        preset,
+        homework_mode=homework_mode,
+        tool_hint=tool_hint,
+        continue_conversation=continue_conversation,
+        home_label=home.label if home else None,
+        ai_tone=ai_tone,
+        ai_verbosity=ai_verbosity,
+        quick_chat=quick_chat,
+        memory_items=memory_items,
+    )
+
+
 def _combined_tool_hint(
     user_message: str,
     home: HomeContext | None = None,
@@ -390,6 +421,11 @@ async def process_chat(
             ),
         )
 
+    hint = _combined_tool_hint(
+        user_message,
+        home,
+        local_types={card.type for card in local_cards},
+    )
     lookup_loop = await run_lookup_tool_loop(
         user_message,
         history,
@@ -406,16 +442,24 @@ async def process_chat(
         home_location=home.location if home else None,
         context=resolved.state.to_context() if resolved.state else None,
         classifier_model=classifier_model,
+        system_prompt=_kid_system_prompt(
+            child_name,
+            age,
+            preset,
+            homework_mode=homework_mode,
+            tool_hint=hint,
+            home=home,
+            ai_tone=ai_tone,
+            ai_verbosity=ai_verbosity,
+            quick_chat=quick_chat,
+            memory_items=memory_items,
+            continue_conversation=bool(history),
+        ),
     )
     lookup_tools = lookup_loop.cards
     if lookup_loop.intent and lookup_loop.result:
         updated_state = updated_state.merge_lookup(lookup_loop.intent, lookup_loop.result)
 
-    hint = _combined_tool_hint(
-        user_message,
-        home,
-        local_types={card.type for card in local_cards},
-    )
     fact_hint = lookup_tool_fact_hint(
         bool(lookup_loop.extra_messages),
         needs_grounding=lookup_loop.needs_grounding,
@@ -545,6 +589,11 @@ async def process_chat_stream(
 
     if live_lookups:
         yield StatusEvent(message="Looking that up…", phase="lookup")
+    hint = _combined_tool_hint(
+        user_message,
+        home,
+        local_types={card.type for card in local_cards},
+    )
     lookup_loop = await run_lookup_tool_loop(
         user_message,
         history,
@@ -561,6 +610,19 @@ async def process_chat_stream(
         home_location=home.location if home else None,
         context=resolved.state.to_context() if resolved.state else None,
         classifier_model=classifier_model,
+        system_prompt=_kid_system_prompt(
+            child_name,
+            age,
+            preset,
+            homework_mode=homework_mode,
+            tool_hint=hint,
+            home=home,
+            ai_tone=ai_tone,
+            ai_verbosity=ai_verbosity,
+            quick_chat=quick_chat,
+            memory_items=memory_items,
+            continue_conversation=bool(history),
+        ),
     )
     lookup_tools = lookup_loop.cards
     updated_state = resolved.state.with_topic(user_message)
@@ -570,11 +632,6 @@ async def process_chat_stream(
     if lookup_tools:
         yield ToolEvent(lookup_tools)
 
-    hint = _combined_tool_hint(
-        user_message,
-        home,
-        local_types={card.type for card in local_cards},
-    )
     fact_hint = lookup_tool_fact_hint(
         bool(lookup_loop.extra_messages),
         needs_grounding=lookup_loop.needs_grounding,
@@ -598,10 +655,11 @@ async def process_chat_stream(
         ),
         phase="generating",
     )
-    if lookup_loop.native and lookup_loop.final_content:
-        collected.append(lookup_loop.final_content)
-        yield lookup_loop.final_content
-        full_response = lookup_loop.final_content
+    native_final = bool(lookup_loop.native and lookup_loop.final_content)
+    if native_final:
+        # Complete text is already in hand — filter before the kid UI sees it.
+        full_response = lookup_loop.final_content or ""
+        collected.append(full_response)
     else:
         stream = stream_response(
             model_messages,
@@ -648,7 +706,7 @@ async def process_chat_stream(
         full_response = "".join(collected)
     visible, model_cards = extract_model_tools(full_response)
     extra = [card.to_dict() for card in apply_card_routing(user_message, model_cards)]
-    if extra:
+    if extra and not native_final:
         yield ToolEvent(extra)
     output_result = await filter_output(
         full_response, preset, strictness, classifier_model,
@@ -658,6 +716,11 @@ async def process_chat_stream(
     if not output_result.allowed:
         yield _blocked_result(output_result)
         return
+
+    if native_final:
+        yield output_result.content or full_response
+        if extra:
+            yield ToolEvent(extra)
 
     # Only after output is allowed: turn a prose recipe into a howto card.
     if (

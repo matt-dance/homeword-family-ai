@@ -1160,6 +1160,12 @@ class TestProcessChatLookupGating:
 
         async def fake_complete(messages, *, tools=None, model=None, temperature=0.2):
             assert tools
+            assert messages[0]["role"] == "system"
+            blob = messages[0]["content"]
+            assert "Emma" in blob
+            assert "7 years old" in blob
+            assert "Young Explorer" in blob
+            assert "Never discuss violence" in blob
             return turns.pop(0)
 
         async def fake_filter_input(*_args, **_kwargs):
