@@ -24,7 +24,6 @@ from homeward_gateway.chat.lookups import (
     parse_in_the_news_template,
     parse_scoreboard_events,
     resolve_lookup_intent,
-    resolve_weather_place,
     weather_missing_place_notes,
     _parse_wikipedia_incumbent,
 )
@@ -62,45 +61,45 @@ WEATHER_FORECAST = {
 
 class TestDetectLookupIntent:
     def test_weather_with_place(self):
-        intent = detect_lookup_intent("What's the weather in Denver?")
+        intent = resolve_lookup_intent("What's the weather in Denver?")[0]
         assert intent is not None
         assert intent.kind == "weather"
         assert intent.query == "Denver"
 
     def test_weather_lowercase_place(self):
-        intent = detect_lookup_intent("weather in seattle")
+        intent = resolve_lookup_intent("weather in seattle")[0]
         assert intent is not None
         assert intent.kind == "weather"
         assert intent.query.lower() == "seattle"
 
     def test_weather_prefix(self):
-        intent = detect_lookup_intent("Denver weather today")
+        intent = resolve_lookup_intent("Denver weather today")[0]
         assert intent is not None
         assert intent.query == "Denver"
 
     def test_weather_without_place_still_detected(self):
-        intent = detect_lookup_intent("Do I need a jacket?")
+        intent = resolve_lookup_intent("Do I need a jacket?")[0]
         assert intent is not None
         assert intent.kind == "weather"
         assert intent.query == ""
 
     def test_weather_tomorrow_detected(self):
-        intent = detect_lookup_intent("What's the weather tomorrow?")
+        intent = resolve_lookup_intent("What's the weather tomorrow?")[0]
         assert intent is not None
         assert intent.kind == "weather"
 
     def test_resolve_weather_place_from_history(self):
-        place = resolve_weather_place(
+        place = resolve_lookup_intent(
             "What's the weather tomorrow?",
             [{"role": "user", "content": "We live in Denver"}],
-        )
+        )[0].query
         assert place == "Denver"
 
     def test_resolve_weather_place_uses_home_fallback(self):
-        place = resolve_weather_place(
+        place = resolve_lookup_intent(
             "What's the weather tomorrow?",
             home_location="Boulder, CO",
-        )
+        )[0].query
         assert place == "Boulder, CO"
 
     def test_resolve_weather_place_from_assistant_game_context(self):
@@ -114,10 +113,10 @@ class TestDetectLookupIntent:
                 ),
             },
         ]
-        place = resolve_weather_place(
+        place = resolve_lookup_intent(
             "What will the weather be like at that game?",
             history,
-        )
+        )[0].query
         assert place == "Eugene, OR"
 
     def test_resolve_weather_place_from_sports_lookup_line(self):
@@ -131,10 +130,10 @@ class TestDetectLookupIntent:
                 ),
             },
         ]
-        place = resolve_weather_place(
+        place = resolve_lookup_intent(
             "What will the weather be like at the game?",
             history,
-        )
+        )[0].query
         assert place == "Eugene, OR"
 
     def test_resolve_weather_place_does_not_use_stale_game_for_general_question(self):
@@ -145,18 +144,18 @@ class TestDetectLookupIntent:
                 "content": "Boise State is playing at Autzen Stadium in Eugene, OR.",
             },
         ]
-        place = resolve_weather_place(
+        place = resolve_lookup_intent(
             "What's the weather tomorrow?",
             history,
             home_location="Denver, CO",
-        )
+        )[0].query
         assert place == "Denver, CO"
 
     def test_weather_missing_place_notes(self):
         assert "city or town" in weather_missing_place_notes().lower()
 
     def test_news(self):
-        intent = detect_lookup_intent("What's in the news today?")
+        intent = resolve_lookup_intent("What's in the news today?")[0]
         assert intent is not None
         assert intent.kind == "news"
 
@@ -194,13 +193,13 @@ class TestDetectLookupIntent:
         assert resolved.kind == "current_facts"
 
     def test_sports_team(self):
-        intent = detect_lookup_intent("Did the Broncos win last night?")
+        intent = resolve_lookup_intent("Did the Broncos win last night?")[0]
         assert intent is not None
         assert intent.kind == "sports"
         assert intent.query == "broncos"
 
     def test_sports_college_schedule(self):
-        intent = detect_lookup_intent("What's Boise State's schedule this weekend?")
+        intent = resolve_lookup_intent("What's Boise State's schedule this weekend?")[0]
         assert intent is not None
         assert intent.kind == "sports"
         assert intent.query == "boise state"
@@ -208,19 +207,19 @@ class TestDetectLookupIntent:
         assert intent.date_range is not None
 
     def test_sports_extracts_unknown_team(self):
-        intent = detect_lookup_intent("When does Oregon play this week?")
+        intent = resolve_lookup_intent("When does Oregon play this week?")[0]
         assert intent is not None
         assert intent.kind == "sports"
         assert "oregon" in intent.query
 
     def test_sports_without_team_is_ignored(self):
-        assert detect_lookup_intent("Who won last night?") is None
+        assert resolve_lookup_intent("Who won last night?")[0] is None
 
     def test_unrelated_question(self):
-        assert detect_lookup_intent("Why is the sky blue?") is None
+        assert resolve_lookup_intent("Why is the sky blue?")[0] is None
 
     def test_empty(self):
-        assert detect_lookup_intent("") is None
+        assert resolve_lookup_intent("")[0] is None
 
 
 class TestSessionContext:

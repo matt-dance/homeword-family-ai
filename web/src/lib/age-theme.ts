@@ -1,7 +1,6 @@
 export type AgeTheme = "young" | "curious" | "teen";
 
 export interface AgeThemeConfig {
-  id: AgeTheme;
   title: string;
   ageRange: string;
   avatarEmoji: string;
@@ -10,8 +9,6 @@ export interface AgeThemeConfig {
   bubbleRadius: string;
   fontSize: string;
   fontSizeSimple: string;
-  accentBorder: string;
-  heroGreeting: string;
   heroSub: string;
   cardBlob: string;
   cardAvatar: string;
@@ -35,7 +32,6 @@ export function getAgeTheme(child?: { age?: number; preset_id?: string }): AgeTh
 
 export const AGE_THEME_CONFIGS: Record<AgeTheme, AgeThemeConfig> = {
   young: {
-    id: "young",
     title: "Young Explorer",
     ageRange: "Ages 5–8",
     avatarEmoji: "🦁",
@@ -45,14 +41,11 @@ export const AGE_THEME_CONFIGS: Record<AgeTheme, AgeThemeConfig> = {
     bubbleRadius: "rounded-3xl",
     fontSize: "text-base",
     fontSizeSimple: "text-lg sm:text-xl",
-    accentBorder: "border-amber-200/60 dark:border-amber-900/40",
-    heroGreeting: "Let's explore together! 🌟",
     heroSub: "Pick a fun idea below, or tap the big mic button to speak!",
     cardBlob: "bg-orange-50 dark:bg-orange-950/30",
     cardAvatar: "bg-orange-100 dark:bg-orange-900/40",
   },
   curious: {
-    id: "curious",
     title: "Curious Explorer",
     ageRange: "Ages 9–12",
     avatarEmoji: "🧭",
@@ -62,14 +55,11 @@ export const AGE_THEME_CONFIGS: Record<AgeTheme, AgeThemeConfig> = {
     bubbleRadius: "rounded-2xl",
     fontSize: "text-sm sm:text-base",
     fontSizeSimple: "text-base sm:text-lg",
-    accentBorder: "border-teal-200/60 dark:border-teal-900/40",
-    heroGreeting: "Ready for your next question? 🚀",
     heroSub: "Ask for homework help, a quiz, definitions, or fun facts!",
     cardBlob: "bg-blue-50 dark:bg-blue-950/30",
     cardAvatar: "bg-blue-100 dark:bg-blue-900/40",
   },
   teen: {
-    id: "teen",
     title: "Teen Guided",
     ageRange: "Ages 13–17",
     avatarEmoji: "⚡",
@@ -79,8 +69,6 @@ export const AGE_THEME_CONFIGS: Record<AgeTheme, AgeThemeConfig> = {
     bubbleRadius: "rounded-2xl",
     fontSize: "text-sm",
     fontSizeSimple: "text-base",
-    accentBorder: "border-indigo-200/60 dark:border-indigo-900/40",
-    heroGreeting: "What are we working on today?",
     heroSub: "Type a question, practice concepts, or set timers for study sessions.",
     cardBlob: "bg-violet-50 dark:bg-violet-950/30",
     cardAvatar: "bg-violet-100 dark:bg-violet-900/40",

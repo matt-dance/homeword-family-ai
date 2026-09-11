@@ -560,11 +560,7 @@ svg_to_png() {
 install_icons() {
   local svg="$REPO/desktop/pack/icon.svg"
   local tray="$RES/trayIcon.png"
-  if svg_to_png "$svg" "$tray" 22; then
-    :
-  elif [[ "$SKIP" == "1" ]]; then
-    write_placeholder_png "$tray" 22
-  else
+  if ! svg_to_png "$svg" "$tray" 22; then
     write_placeholder_png "$tray" 22
   fi
 

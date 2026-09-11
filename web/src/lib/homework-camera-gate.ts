@@ -32,16 +32,10 @@ export function isHomeworkCameraUnlockExpired(now = Date.now()): boolean {
 }
 
 /**
- * Only a successful camera password challenge unlocks the panel.
- * A dashboard idle unlock or child PIN must never count.
- */
-export function homeworkCameraIsUnlocked(cameraUnlocked: boolean): boolean {
-  return cameraUnlocked;
-}
-
-/**
  * Camera-button click: closing never needs a challenge; opening does unless
  * this browser already completed the camera parent challenge (idle window).
+ * Only a successful camera password challenge unlocks the panel; a dashboard
+ * idle unlock or child PIN must never count.
  */
 export function homeworkCameraClickAction(
   currentlyOpen: boolean,
@@ -49,11 +43,6 @@ export function homeworkCameraClickAction(
 ): HomeworkCameraClickAction {
   if (currentlyOpen) return "close";
   return gateUnlocked ? "open" : "challenge";
-}
-
-/** Snap / upload / hint submit stay gated even if the panel is already visible. */
-export function homeworkCameraCaptureAllowed(gateUnlocked: boolean): boolean {
-  return gateUnlocked;
 }
 
 /** Friendlier copy when parent verify is refused off the Homeward computer. */

@@ -22,7 +22,6 @@ class PolicyPreset:
     blocked_keywords: list[str] = field(default_factory=list)
     jailbreak_patterns: list[str] = field(default_factory=list)
     allowed_topics: list[str] = field(default_factory=list)
-    max_response_length: int = 800
 
 
 def _load_preset(path: Path) -> PolicyPreset:
@@ -41,7 +40,6 @@ def _load_preset(path: Path) -> PolicyPreset:
         blocked_keywords=data["rules"].get("blocked_keywords", []),
         jailbreak_patterns=data["rules"].get("jailbreak_patterns", []),
         allowed_topics=data["rules"].get("allowed_topics", []),
-        max_response_length=data["rules"].get("max_response_length", 800),
     )
 
 

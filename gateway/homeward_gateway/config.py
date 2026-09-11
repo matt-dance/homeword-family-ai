@@ -50,8 +50,6 @@ class Settings(BaseSettings):
     # Host-only open-web engine (SearxNG). Empty disables the household check.
     searxng_url: str = "http://127.0.0.1:8888"
     searxng_timeout: float = 6.0
-    cloud_enabled: bool = False
-    openai_api_key: str = ""
 
     # Household clock: maps directly from HOMEWARD_TIMEZONE via the HOMEWARD_
     # prefix when the parent home location has no IANA timezone. Empty means
@@ -72,7 +70,6 @@ class Settings(BaseSettings):
     # Local voice (Whisper + Kokoro TTS, Piper fallback)
     whisper_model: str = "tiny.en"
     whisper_max_bytes: int = 5_000_000
-    piper_voice: str = "en_US-lessac-medium"
     speak_max_chars: int = 4_000
 
     # Local homework camera (Ollama vision). Ask parents to: ollama pull llava:7b

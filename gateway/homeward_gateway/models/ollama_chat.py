@@ -74,7 +74,14 @@ def llm_timeout_for_model(model: str | None) -> float:
     return settings.llm_timeout
 
 
-def _chat_payload(model: str, messages: list[dict], *, stream: bool, temperature: float) -> dict:
+def _chat_payload(
+    model: str,
+    messages: list[dict],
+    *,
+    stream: bool,
+    temperature: float,
+    max_tokens: int = GENERATION_MAX_TOKENS,
+) -> dict:
     return {
         "model": model,
         "messages": messages,
@@ -83,7 +90,7 @@ def _chat_payload(model: str, messages: list[dict], *, stream: bool, temperature
         "keep_alive": "30m",
         "options": {
             "temperature": temperature,
-            "num_predict": GENERATION_MAX_TOKENS,
+            "num_predict": max_tokens,
         },
     }
 
@@ -122,6 +129,7 @@ async def chat_completion(
     messages: list[dict],
     *,
     temperature: float = 0.7,
+    max_tokens: int = GENERATION_MAX_TOKENS,
 ) -> str:
     """Collect a full reply, failing closed if the model stays silent.
 
@@ -131,7 +139,7 @@ async def chat_completion(
     first-token miss matches stream-path timeout semantics.
     """
     collected: list[str] = []
-    stream = stream_chat_completion(model, messages, temperature=temperature)
+    stream = stream_chat_completion(model, messages, temperature=temperature, max_tokens=max_tokens)
     try:
         async for token in stream:
             collected.append(token)
@@ -145,6 +153,7 @@ async def stream_chat_completion(
     messages: list[dict],
     *,
     temperature: float = 0.7,
+    max_tokens: int = GENERATION_MAX_TOKENS,
 ) -> AsyncIterator[str]:
     first_token_timeout = first_token_timeout_seconds()
     url = f"{settings.ollama_base_url.rstrip('/')}/api/chat"
@@ -154,7 +163,9 @@ async def stream_chat_completion(
             async with client.stream(
                 "POST",
                 url,
-                json=_chat_payload(model, messages, stream=True, temperature=temperature),
+                json=_chat_payload(
+                    model, messages, stream=True, temperature=temperature, max_tokens=max_tokens
+                ),
             ) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():

@@ -3,14 +3,10 @@
 import { Volume2 } from "lucide-react";
 
 interface SpeakingIndicatorProps {
-  label?: string;
   simpleMode?: boolean;
 }
 
-export function SpeakingIndicator({
-  label = "Reading aloud…",
-  simpleMode,
-}: SpeakingIndicatorProps) {
+export function SpeakingIndicator({ simpleMode }: SpeakingIndicatorProps) {
   return (
     <div
       className={`inline-flex items-center gap-2.5 rounded-full border border-primary/30 bg-primary/10 px-3.5 py-1.5 text-primary shadow-sm shadow-primary/10 transition-all ${
@@ -20,7 +16,7 @@ export function SpeakingIndicator({
     >
       <Volume2 className="h-3.5 w-3.5 text-primary animate-pulse" />
       <EqualizerBars />
-      <span>{label}</span>
+      <span>Reading aloud…</span>
     </div>
   );
 }

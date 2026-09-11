@@ -15,6 +15,7 @@ import httpx
 
 from homeward_gateway.config import settings
 from homeward_gateway.ollama import service as ollama_service
+from homeward_gateway.ollama.service import list_installed_models
 
 logger = logging.getLogger(__name__)
 
@@ -121,12 +122,6 @@ def validate_image(data: bytes, content_type: str | None, filename: str | None) 
         if ctype in ALLOWED_CONTENT_TYPES or suffix in IMAGE_SUFFIXES:
             return
         raise ValueError("That file does not look like a photo.")
-
-
-async def list_installed_models() -> list[str]:
-    if not await ollama_service.is_ollama_reachable():
-        return []
-    return await ollama_service.list_installed_models()
 
 
 async def get_vision_status() -> dict[str, Any]:

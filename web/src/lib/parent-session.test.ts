@@ -3,7 +3,6 @@ import { PARENT_UNLOCK_KEY } from "./parent-lock";
 import {
   PARENT_SIGNED_OUT_KEY,
   applyAuthMeResult,
-  canRestoreParentSession,
   clearParentSignedOut,
   isParentSignedOut,
   markParentSignedOut,
@@ -31,7 +30,6 @@ describe("parent-session", () => {
 
   it("starts allowed to restore until sign-out", () => {
     expect(isParentSignedOut()).toBe(false);
-    expect(canRestoreParentSession()).toBe(true);
   });
 
   it("clears idle-unlock storage on sign-out", () => {
@@ -43,7 +41,7 @@ describe("parent-session", () => {
 
   it("blocks dashboard restore after sign-out even if auth/me would succeed", () => {
     markParentSignedOut();
-    expect(canRestoreParentSession()).toBe(false);
+    expect(isParentSignedOut()).toBe(true);
     expect(
       applyAuthMeResult({ signedOut: isParentSignedOut(), meOk: true }),
     ).toBe("unauthed");
@@ -62,7 +60,6 @@ describe("parent-session", () => {
     markParentSignedOut();
     vi.advanceTimersByTime(5_000);
     expect(isParentSignedOut()).toBe(true);
-    expect(canRestoreParentSession()).toBe(false);
     expect(parentDashboardShouldRender("unauthed")).toBe(false);
     expect(
       parentRouteAfterSessionCheck({
@@ -126,7 +123,7 @@ describe("parent-session", () => {
     });
     expect(signedOutDuringLogout).toBe(true);
     expect(navigated).toBe(true);
-    expect(canRestoreParentSession()).toBe(false);
+    expect(isParentSignedOut()).toBe(true);
   });
 
   it("still leaves the dashboard when API logout fails", async () => {
@@ -145,9 +142,9 @@ describe("parent-session", () => {
 
   it("allows restore only after sign-out is cleared by a real login", () => {
     markParentSignedOut();
-    expect(canRestoreParentSession()).toBe(false);
+    expect(isParentSignedOut()).toBe(true);
     clearParentSignedOut();
-    expect(canRestoreParentSession()).toBe(true);
+    expect(isParentSignedOut()).toBe(false);
     expect(
       parentRouteAfterSessionCheck({
         setupComplete: true,

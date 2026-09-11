@@ -3,7 +3,7 @@ import Link from "next/link";
 
 interface HomewardLogoProps {
   className?: string;
-  size?: "default" | "sm" | "lg";
+  size?: "default" | "sm";
   showTagline?: boolean;
 }
 
@@ -15,13 +15,11 @@ export function HomewardLogo({
   const iconSizes = {
     sm: "h-8 w-8",
     default: "h-10 w-10",
-    lg: "h-11 w-11",
   };
 
   const textSizes = {
     sm: "text-lg",
     default: "text-2xl",
-    lg: "text-2xl",
   };
 
   return (

@@ -52,4 +52,3 @@ rules:
     - school
     - hobbies
     - stories
-  max_response_length: 800

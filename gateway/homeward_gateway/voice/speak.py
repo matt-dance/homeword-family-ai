@@ -97,15 +97,6 @@ def tts_available() -> bool:
     return kokoro_available() or piper_available()
 
 
-def alignment_available() -> bool:
-    try:
-        import onnx  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
 def _piper_model_path(voice_name: str) -> Path:
     return PIPER_DIR / f"{voice_name}.onnx"
 
@@ -118,7 +109,6 @@ def get_speak_status() -> dict:
             "ready": False,
             "engine": preferred.engine,
             "voice": preferred.name,
-            "synced_highlighting": False,
             "message": "Local read-aloud is not installed on this Homeward server.",
         }
     if _load_error:
@@ -127,7 +117,6 @@ def get_speak_status() -> dict:
             "ready": False,
             "engine": preferred.engine,
             "voice": preferred.name,
-            "synced_highlighting": alignment_available(),
             "message": _load_error,
         }
     if preferred.engine == "kokoro":
@@ -139,7 +128,6 @@ def get_speak_status() -> dict:
         "ready": ready,
         "engine": preferred.engine,
         "voice": preferred.name,
-        "synced_highlighting": preferred.engine == "piper" and alignment_available(),
         "message": None if ready else "Read-aloud voice will download on first use.",
     }
 
@@ -189,7 +177,7 @@ def _load_piper_voice(voice_name: str):
     if not path.is_file():
         raise RuntimeError(f"Piper voice not found at {path}")
     logger.info("Loading Piper voice %s", voice_name)
-    return PiperVoice.load(str(path), include_alignments=alignment_available())
+    return PiperVoice.load(str(path))
 
 
 def _load_kokoro_model():
@@ -244,43 +232,6 @@ def sanitize_for_speech(text: str) -> str:
     return cleaned
 
 
-def build_word_timings(text: str, chunks) -> list[dict[str, Any]]:
-    """Map Piper phoneme alignments to per-word start/end times in seconds."""
-    words = text.split()
-    if not words:
-        return []
-
-    timeline: list[tuple[str, float, float]] = []
-    elapsed = 0.0
-    for chunk in chunks:
-        if not chunk.phoneme_alignments:
-            continue
-        sample_rate = chunk.sample_rate
-        for alignment in chunk.phoneme_alignments:
-            duration = alignment.num_samples / sample_rate
-            timeline.append((alignment.phoneme, elapsed, elapsed + duration))
-            elapsed += duration
-
-    if not timeline:
-        return []
-
-    timings: list[dict[str, Any]] = []
-    word_idx = 0
-    word_start = 0.0
-
-    for phoneme, start, end in timeline:
-        if phoneme == " " and word_idx < len(words):
-            timings.append({"word": words[word_idx], "start": word_start, "end": start})
-            word_idx += 1
-            word_start = end
-
-    while word_idx < len(words):
-        timings.append({"word": words[word_idx], "start": word_start, "end": elapsed})
-        word_idx += 1
-
-    return timings
-
-
 def _wav_bytes(audio: np.ndarray, sample_rate: int) -> bytes:
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as wav_file:
@@ -294,25 +245,10 @@ def _wav_bytes(audio: np.ndarray, sample_rate: int) -> bytes:
     return wav_bytes
 
 
-def _estimate_word_timings(text: str, duration: float) -> list[dict[str, Any]]:
-    words = text.split()
-    if not words or duration <= 0:
-        return []
-    each = duration / len(words)
-    return [
-        {"word": word, "start": round(index * each, 3), "end": round((index + 1) * each, 3)}
-        for index, word in enumerate(words)
-    ]
-
-
 def _synthesize_piper(text: str, voice_name: str) -> dict[str, Any]:
     ensure_voice(voice_name, "piper")
     model = _piper_models[voice_name]
-    try:
-        chunks = list(model.synthesize(text, include_alignments=True))
-    except Exception:
-        logger.exception("Piper alignments failed; retrying without them")
-        chunks = list(model.synthesize(text, include_alignments=False))
+    chunks = list(model.synthesize(text))
     if not chunks:
         raise RuntimeError("Read-aloud produced no audio")
     arrays = [
@@ -324,12 +260,9 @@ def _synthesize_piper(text: str, voice_name: str) -> dict[str, Any]:
         raise RuntimeError("Read-aloud produced no audio")
     audio = np.concatenate(arrays)
     sample_rate = chunks[0].sample_rate
-    words = build_word_timings(text, chunks)
-    duration = len(audio) / sample_rate
     return {
         "audio_wav": _wav_bytes(audio, sample_rate),
-        "words": words,
-        "duration": duration,
+        "duration": len(audio) / sample_rate,
     }
 
 
@@ -343,11 +276,9 @@ def _synthesize_kokoro(text: str, voice_name: str) -> dict[str, Any]:
         audio = (audio * 32767).astype(np.int16)
     if audio.size == 0:
         raise RuntimeError("Read-aloud produced no audio")
-    duration = len(audio) / float(sample_rate)
     return {
         "audio_wav": _wav_bytes(audio, int(sample_rate)),
-        "words": _estimate_word_timings(text, duration),
-        "duration": duration,
+        "duration": len(audio) / float(sample_rate),
     }
 
 
@@ -374,7 +305,6 @@ def synthesize_speech_payload(text: str, voice_gender: str | None = None) -> dic
     result = synthesize_speech(text, voice_gender=voice_gender)
     return {
         "audio_base64": base64.b64encode(result["audio_wav"]).decode("ascii"),
-        "words": result["words"],
         "duration": result["duration"],
     }
 
@@ -397,21 +327,12 @@ def run_speak_self_test() -> dict:
             "message": f"Audio too small ({len(audio)} bytes)",
         }
 
-    words = result["words"]
-    if not words:
-        return {
-            "ok": False,
-            "stage": "alignments",
-            "message": "Word timings missing — install onnx for synced highlighting",
-        }
-
     voice = resolve_voice(DEFAULT_VOICE_GENDER)
     return {
         "ok": True,
         "engine": voice.engine,
         "voice": voice.name,
         "bytes": len(audio),
-        "word_count": len(words),
-        "synced_highlighting": bool(words),
+        "duration": result["duration"],
         "message": "Read-aloud pipeline is working.",
     }
