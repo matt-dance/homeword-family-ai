@@ -348,33 +348,6 @@ def build_session_context(history: list[dict] | None, *, limit: int = 10) -> Ses
     )
 
 
-def detect_lookup_intent(message: str) -> LookupIntent | None:
-    """Return at most one named lookup for this turn."""
-    text = (message or "").strip()
-    if not text:
-        return None
-
-    if WEATHER_RE.search(text):
-        place = _extract_place(text)
-        return LookupIntent("weather", place)
-
-    if NEWS_RE.search(text):
-        return LookupIntent("news", "current events")
-
-    team_key = _matching_team_key(text) or _extract_sports_team(text)
-    if SPORTS_ASK_RE.search(text) or team_key:
-        if team_key:
-            date_range = _sports_date_range(text)
-            schedule = bool(
-                date_range
-                or re.search(r"\b(schedule|playing|games?|matchup|next game)\b", text, re.IGNORECASE)
-            )
-            return LookupIntent("sports", team_key, date_range=date_range, schedule=schedule)
-        return None
-
-    return None
-
-
 def coerce_open_web_search(live_lookups: bool, open_web_search: bool) -> bool:
     """Open web search cannot stay on unless live lookups are on."""
     return bool(live_lookups and open_web_search)
@@ -604,23 +577,6 @@ def lookup_context_hint(
     if context.event_time and intent.kind == "weather":
         hints.append(f"The event time discussed earlier was {context.event_time}.")
     return " ".join(hints)
-
-
-def resolve_weather_place(
-    message: str,
-    history: list[dict] | None = None,
-    *,
-    home_location: str | None = None,
-) -> str:
-    """Find a city in this turn, recent chat context, or the household home."""
-    context = build_session_context(history)
-    return _resolve_weather_place(
-        message,
-        context,
-        history,
-        home_location=home_location,
-        referential=is_referential(message),
-    )
 
 
 def format_geo_label(geo: dict[str, Any]) -> str:

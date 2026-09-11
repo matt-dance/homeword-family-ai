@@ -7,10 +7,9 @@ import { Moon, Sun } from "lucide-react";
 interface ThemeToggleProps {
   className?: string;
   size?: "default" | "sm" | "icon";
-  showLabel?: boolean;
 }
 
-export function ThemeToggle({ className, size = "icon", showLabel = false }: ThemeToggleProps) {
+export function ThemeToggle({ className, size = "icon" }: ThemeToggleProps) {
   const { resolvedTheme, toggleTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
 
@@ -27,11 +26,6 @@ export function ThemeToggle({ className, size = "icon", showLabel = false }: The
         <Sun className="h-4 w-4 text-amber-400 transition-transform duration-200 rotate-0 hover:rotate-45" />
       ) : (
         <Moon className="h-4 w-4 text-slate-700 dark:text-slate-200 transition-transform duration-200 hover:-rotate-12" />
-      )}
-      {showLabel && (
-        <span className="ml-2 text-xs font-medium">
-          {isDark ? "Light" : "Dark"}
-        </span>
       )}
     </Button>
   );

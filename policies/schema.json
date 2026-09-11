@@ -55,10 +55,6 @@
         "allowed_topics": {
           "type": "array",
           "items": { "type": "string" }
-        },
-        "max_response_length": {
-          "type": "integer",
-          "minimum": 100
         }
       }
     }

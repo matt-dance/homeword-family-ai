@@ -18,7 +18,6 @@ class TestPolicyPresets:
     def test_presets_have_required_rules(self):
         presets = load_all_presets()
         for preset in presets.values():
-            assert preset.max_response_length >= 500
             assert preset.strictness_default >= 1
             assert len(preset.blocked_keywords) > 0
             assert len(preset.jailbreak_patterns) > 0
@@ -34,4 +33,3 @@ class TestPolicyPresets:
             data = yaml.safe_load(path.read_text())
             assert "id" in data
             assert "rules" in data
-            assert "max_response_length" in data["rules"]

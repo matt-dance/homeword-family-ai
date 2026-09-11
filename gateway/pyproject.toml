@@ -2,13 +2,11 @@
 name = "homeward-gateway"
 version = "0.1.0"
 description = "Homeward family AI safety gateway"
-readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
-    "litellm>=1.55.0",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.6.0",
     "python-multipart>=0.0.12",
@@ -21,7 +19,6 @@ dependencies = [
     "faster-whisper>=1.0.0",
     "piper-tts>=1.2.0",
     "kokoro-onnx>=0.4.9",
-    "onnx>=1.16.0",
     "numpy>=1.26.0",
     "zeroconf>=0.131.0",
     "tzdata>=2024.1",

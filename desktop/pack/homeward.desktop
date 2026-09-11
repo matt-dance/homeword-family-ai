@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Homeward
-Exec=@HOMEWARD_EXEC@
-Icon=@HOMEWARD_ICON@
-Terminal=false
-X-GNOME-Autostart-enabled=true

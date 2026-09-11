@@ -13,11 +13,10 @@ type Spec struct {
 	Env  []string
 }
 
-func Specs(resourceRoot, dataDir string, childEnv []string) ([]Spec, error) {
+func Specs(resourceRoot string, childEnv []string) ([]Spec, error) {
 	if resourceRoot == "" {
 		return nil, errors.New("empty resourceRoot")
 	}
-	_ = dataDir
 
 	runtimeDir := paths.RuntimeDir(resourceRoot)
 	webDir := paths.WebDir(resourceRoot)

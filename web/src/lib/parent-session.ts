@@ -27,11 +27,6 @@ export function isParentSignedOut(): boolean {
   return signedOutMemory || storage()?.getItem(PARENT_SIGNED_OUT_KEY) === "1";
 }
 
-/** A cached or in-flight auth/me success must not reopen the dashboard. */
-export function canRestoreParentSession(): boolean {
-  return !isParentSignedOut();
-}
-
 export function parentDashboardShouldRender(auth: ParentAuthGate): boolean {
   return auth === "authed";
 }

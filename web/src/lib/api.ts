@@ -206,7 +206,6 @@ export const api = {
     request<{
       parent_id: number;
       setup_complete: boolean;
-      cloud_enabled: boolean;
       ollama_model: string | null;
       classifier_model: string | null;
       has_recovery_code: boolean;
@@ -379,11 +378,7 @@ export const api = {
       const detail = err.detail;
       throw new Error(typeof detail === "string" ? detail : "Could not read text aloud");
     }
-    const data = (await res.json()) as {
-      audio_base64: string;
-      words: Array<{ word: string; start: number; end: number }>;
-      duration: number;
-    };
+    const data = (await res.json()) as { audio_base64: string; duration: number };
     return decodeSpeechPayload(data);
   },
   blockedStats: (childId?: number) =>
@@ -394,11 +389,6 @@ export const api = {
     request<BlockedAttempt[]>(
       `/dashboard/blocked${childId != null ? `?child_id=${childId}` : ""}`,
     ),
-  cloudSettings: (cloud_enabled: boolean, openai_api_key?: string) =>
-    request<{ ok: boolean }>("/settings/cloud", {
-      method: "POST",
-      body: JSON.stringify({ cloud_enabled, openai_api_key }),
-    }),
   homeLocation: () =>
     request<{
       location: string | null;

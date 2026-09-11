@@ -2,7 +2,6 @@ import { sanitizeForSpeech } from "@/lib/speech-voice";
 
 export interface SpeechPayload {
   audio: Blob;
-  duration: number;
 }
 
 export interface ReadAloudState {
@@ -98,16 +97,9 @@ export function createReadAloudController(fetchSpeechPayload: FetchSpeechPayload
   return { speak, stop, dispose };
 }
 
-export function decodeSpeechPayload(data: {
-  audio_base64: string;
-  words?: unknown[];
-  duration: number;
-}): SpeechPayload {
+export function decodeSpeechPayload(data: { audio_base64: string }): SpeechPayload {
   const binary = atob(data.audio_base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return {
-    audio: new Blob([bytes], { type: "audio/wav" }),
-    duration: data.duration,
-  };
+  return { audio: new Blob([bytes], { type: "audio/wav" }) };
 }

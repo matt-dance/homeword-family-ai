@@ -29,7 +29,6 @@ describe("createReadAloudController", () => {
   it("fetches audio and starts playback", async () => {
     const fetchSpeechPayload = vi.fn().mockResolvedValue({
       audio: new Blob(["RIFF"], { type: "audio/wav" }),
-      duration: 1,
     });
     const controller = createReadAloudController(fetchSpeechPayload);
     const onStart = vi.fn();
