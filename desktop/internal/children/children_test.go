@@ -7,7 +7,7 @@ import (
 
 func TestSpecsOrderAndBins(t *testing.T) {
 	root := "/app/Contents/Resources"
-	specs, err := Specs(root, []string{"HOMEWARD_MANAGED=true"})
+	specs, err := Specs(root, "/data", []string{"HOMEWARD_MANAGED=true"})
 	if err != nil {
 		t.Fatal(err)
 	}
