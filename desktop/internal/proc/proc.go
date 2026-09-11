@@ -1,7 +1,9 @@
 package proc
 
 import (
+	"os"
 	"os/exec"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -45,6 +47,7 @@ func (m *Manager) startSpec(spec children.Spec) error {
 	if len(spec.Env) > 0 {
 		cmd.Env = spec.Env
 	}
+	applySysProcAttr(cmd)
 	m.mu.Lock()
 	if m.stopped {
 		m.mu.Unlock()
@@ -61,7 +64,7 @@ func (m *Manager) startSpec(spec children.Spec) error {
 	if m.stopped {
 		m.mu.Unlock()
 		if cmd.Process != nil {
-			_ = cmd.Process.Signal(syscall.SIGTERM)
+			stopProcess(cmd.Process)
 		}
 		go func() {
 			_ = cmd.Wait()
@@ -98,6 +101,9 @@ func (m *Manager) Running(name string) bool {
 	if cmd.ProcessState != nil {
 		return false
 	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
 	return cmd.Process.Signal(syscall.Signal(0)) == nil
 }
 
@@ -114,7 +120,7 @@ func (m *Manager) Restart(name string) error {
 		return nil
 	}
 	if old != nil && old.Process != nil && old.ProcessState == nil {
-		_ = old.Process.Signal(syscall.SIGTERM)
+		stopProcess(old.Process)
 	}
 	return m.startSpec(spec)
 }
@@ -134,7 +140,7 @@ func (m *Manager) Stop() error {
 
 	for _, cmd := range cmds {
 		if cmd != nil && cmd.Process != nil && cmd.ProcessState == nil {
-			_ = cmd.Process.Signal(syscall.SIGTERM)
+			stopProcess(cmd.Process)
 		}
 	}
 
@@ -159,4 +165,15 @@ func (m *Manager) Stop() error {
 		<-finished
 	}
 	return nil
+}
+
+func stopProcess(p *os.Process) {
+	if p == nil {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		_ = p.Kill()
+		return
+	}
+	_ = p.Signal(syscall.SIGTERM)
 }

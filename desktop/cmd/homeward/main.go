@@ -26,7 +26,9 @@ import (
 	"homeward/desktop/internal/launchd"
 	"homeward/desktop/internal/paths"
 	"homeward/desktop/internal/proc"
+	"homeward/desktop/internal/quitreq"
 	"homeward/desktop/internal/singleton"
+	"homeward/desktop/internal/winrun"
 )
 
 const parentURL = "http://127.0.0.1:43123"
@@ -69,7 +71,10 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 		return err
 	}
 
-	dataDir := paths.AppSupportDirFromHome(home)
+	dataDir, err := paths.AppSupportDir()
+	if err != nil {
+		dataDir = paths.AppSupportDirFromHome(home)
+	}
 	resourceRoot := paths.ResourceRoot(exe)
 	childEnv := env.ChildEnv(dataDir, paths.PoliciesDir(resourceRoot), resourceRoot)
 	marker := dataDir + "/.browser_opened"
@@ -80,6 +85,11 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return err
+	}
+	if runtime.GOOS == "windows" {
+		if f, err := os.OpenFile(filepath.Join(dataDir, "homeward.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			log.SetOutput(f)
+		}
 	}
 	lock, held, err := singleton.TryAcquire(singleton.Path(dataDir))
 	if err != nil {
@@ -119,6 +129,8 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 			status = err.Error()
 		}
 	}
+
+	go watchQuitRequest(dataDir, manager)
 
 	go func() {
 		ch := make(chan os.Signal, 1)
@@ -181,6 +193,11 @@ func maybeOpenBrowser(openFlag, firstRun, webOK, holder bool, marker string) {
 func runUninstall(home, dataDir string, wipe bool, manager *proc.Manager) error {
 	if manager != nil {
 		_ = manager.Stop()
+	} else {
+		_ = quitreq.Request(dataDir)
+		_ = quitreq.WaitCleared(dataDir, 3*time.Second)
+		signalOtherSupervisors()
+		time.Sleep(time.Second)
 	}
 	removeLoginItem(home)
 	if wipe {
@@ -190,37 +207,64 @@ func runUninstall(home, dataDir string, wipe bool, manager *proc.Manager) error 
 	return nil
 }
 
+func watchQuitRequest(dataDir string, manager *proc.Manager) {
+	ticker := time.NewTicker(400 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		if !quitreq.Pending(dataDir) {
+			continue
+		}
+		quitreq.Clear(dataDir)
+		_ = manager.Stop()
+		systray.Quit()
+		os.Exit(0)
+	}
+}
+
 func ensureLoginItem(home, exe string) error {
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		_, err := autostart.Write(home, exe)
 		return err
+	case "windows":
+		return winrun.Write(exe)
+	default:
+		plist, err := launchd.WritePlist(home, exe)
+		if err != nil {
+			return fmt.Errorf("write LaunchAgent plist: %w", err)
+		}
+		if err := launchd.Bootstrap(plist); err != nil {
+			return fmt.Errorf("launchctl bootstrap: %w", err)
+		}
+		return nil
 	}
-	plist, err := launchd.WritePlist(home, exe)
-	if err != nil {
-		return fmt.Errorf("write LaunchAgent plist: %w", err)
-	}
-	if err := launchd.Bootstrap(plist); err != nil {
-		return fmt.Errorf("launchctl bootstrap: %w", err)
-	}
-	return nil
 }
 
 func removeLoginItem(home string) {
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		_ = autostart.Remove(home)
 		signalOtherSupervisors()
 		time.Sleep(time.Second)
-		return
+	case "windows":
+		_ = winrun.Remove()
+		signalOtherSupervisors()
+		time.Sleep(time.Second)
+	default:
+		_ = launchd.Kill()
+		time.Sleep(time.Second)
+		_ = launchd.Bootout()
+		_ = os.Remove(launchd.PlistPath(home))
 	}
-	_ = launchd.Kill()
-	time.Sleep(time.Second)
-	_ = launchd.Bootout()
-	_ = os.Remove(launchd.PlistPath(home))
 }
 
 // signalOtherSupervisors SIGTERMs other `homeward` processes so a second-process
 // `--uninstall` can stop the tray supervisor and its children.
 func signalOtherSupervisors() {
+	if runtime.GOOS == "windows" {
+		signalOtherSupervisorsWindows()
+		return
+	}
 	out, err := exec.Command("pgrep", "-x", "homeward").Output()
 	if err != nil {
 		return
@@ -237,6 +281,15 @@ func signalOtherSupervisors() {
 		}
 		_ = p.Signal(syscall.SIGTERM)
 	}
+}
+
+func signalOtherSupervisorsWindows() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	name := filepath.Base(exe)
+	_ = exec.Command("taskkill", "/IM", name, "/FI", fmt.Sprintf("PID ne %d", os.Getpid())).Run()
 }
 
 func waitHealthy(waitOllama bool) error {
