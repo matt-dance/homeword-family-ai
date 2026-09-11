@@ -6,10 +6,8 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ParentLockOverlay } from "@/components/parent-lock-overlay";
 import {
-  homeworkCameraCaptureAllowed,
   homeworkCameraClickAction,
   clearHomeworkCameraUnlock,
-  homeworkCameraIsUnlocked,
   isHomeworkCameraUnlockExpired,
   mapHomeworkParentError,
   markHomeworkCameraUnlocked,
@@ -19,7 +17,7 @@ import {
 const ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
 
 function readGateUnlocked(): boolean {
-  return homeworkCameraIsUnlocked(!isHomeworkCameraUnlockExpired());
+  return !isHomeworkCameraUnlockExpired();
 }
 
 export interface HomeworkCameraProps {
@@ -131,7 +129,7 @@ export function HomeworkCamera({
   };
 
   const ensureCaptureUnlocked = () => {
-    if (homeworkCameraCaptureAllowed(readGateUnlocked())) return true;
+    if (readGateUnlocked()) return true;
     requestParentUnlock();
     return false;
   };

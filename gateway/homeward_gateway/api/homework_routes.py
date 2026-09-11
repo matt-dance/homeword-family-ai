@@ -15,22 +15,21 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from homeward_gateway.auth.local_host import client_ip_from_request, require_local_request
+from homeward_gateway.api.routes import _ensure_chat_available, _rate_key, _require_child_access
+from homeward_gateway.auth.local_host import require_local_request
 from homeward_gateway.auth.parent_auth import (
-    has_child_access,
     has_homework_unlock,
     set_homework_unlock_cookie,
     verify_password,
 )
 from homeward_gateway.auth.rate_limit import check_rate_limit, record_attempt, reset_attempts
-from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.db.database import ChildProfile, ParentAccount, get_session
+from homeward_gateway.ollama.service import list_installed_models
 from homeward_gateway.vision.homework import (
     EXPECTED_VISION_MODEL,
     VISION_UNAVAILABLE_MESSAGE,
     generate_homework_hint,
     get_vision_status,
-    list_installed_models,
     pick_vision_model,
     validate_image,
 )
@@ -45,26 +44,6 @@ HOMEWORK_UNLOCK_DETAIL = "Parent unlock required"
 
 class HomeworkUnlockRequest(BaseModel):
     password: str = Field(min_length=1)
-
-
-def _rate_key(request: Request, scope: str) -> str:
-    return f"{scope}:{client_ip_from_request(request) or 'unknown'}"
-
-
-def _require_child_access(request: Request, child: ChildProfile) -> None:
-    if not has_child_access(request, child):
-        raise HTTPException(status_code=403, detail="PIN required")
-
-
-def _ensure_chat_available(child: ChildProfile) -> None:
-    available, message = is_chat_available(
-        enabled=child.quiet_hours_enabled,
-        start=child.quiet_hours_start,
-        end=child.quiet_hours_end,
-        days=child.quiet_hours_days,
-    )
-    if not available:
-        raise HTTPException(status_code=403, detail=message or "Chat is not available right now")
 
 
 def _require_homework_mode(child: ChildProfile) -> None:

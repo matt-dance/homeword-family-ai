@@ -44,4 +44,3 @@ rules:
     - coding
     - sports
     - hobbies
-  max_response_length: 1200

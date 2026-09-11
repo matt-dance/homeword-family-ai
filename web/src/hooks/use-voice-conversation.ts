@@ -133,13 +133,6 @@ export function useVoiceConversation({ onTranscript, voiceGender }: UseVoiceConv
     applyActionsRef.current = applyActions;
   }, [applyActions]);
 
-  const startConversation = useCallback(() => {
-    dispatch({ type: "START" });
-    if (listeningRef.current) {
-      dispatch({ type: "LISTENING_STARTED" });
-    }
-  }, [dispatch]);
-
   const stopConversation = useCallback(() => {
     setBargeInWatchFailed(false);
     dispatch({ type: "STOP" });
@@ -174,7 +167,6 @@ export function useVoiceConversation({ onTranscript, voiceGender }: UseVoiceConv
     conversationActive: loop.active,
     conversationPhase: loop.phase,
     bargeInWatchFailed,
-    startConversation,
     stopConversation,
     toggleConversation,
     notifyAssistantDone,
@@ -187,8 +179,6 @@ export function useVoiceConversation({ onTranscript, voiceGender }: UseVoiceConv
     interimTranscript: voice.interimTranscript,
     heardSpeech: voice.heardSpeech,
     toggleListening: voice.toggleListening,
-    startListening: voice.startListening,
-    stopListening: voice.stopListening,
     readAloudSupported,
     readAloudError,
     readAloudState,

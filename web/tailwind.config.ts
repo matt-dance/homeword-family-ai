@@ -11,14 +11,10 @@ module.exports = {
       colors: {
         background: "rgb(var(--background) / <alpha-value>)",
         foreground: "rgb(var(--foreground) / <alpha-value>)",
-        card: {
-          DEFAULT: "rgb(var(--card) / <alpha-value>)",
-          foreground: "rgb(var(--card-foreground, var(--foreground)) / <alpha-value>)",
-        },
+        card: "rgb(var(--card) / <alpha-value>)",
         primary: {
           DEFAULT: "rgb(var(--primary) / <alpha-value>)",
           foreground: "rgb(var(--primary-foreground) / <alpha-value>)",
-          50: "rgb(var(--primary-50, var(--primary)) / <alpha-value>)",
         },
         muted: {
           DEFAULT: "rgb(var(--muted) / <alpha-value>)",
@@ -28,13 +24,11 @@ module.exports = {
         accent: {
           DEFAULT: "rgb(var(--accent) / <alpha-value>)",
           foreground: "rgb(var(--accent-foreground, var(--foreground)) / <alpha-value>)",
-          end: "rgb(var(--accent-end, var(--accent)) / <alpha-value>)",
         },
         destructive: {
           DEFAULT: "rgb(var(--destructive) / <alpha-value>)",
           foreground: "rgb(var(--destructive-foreground, 255 255 255) / <alpha-value>)",
         },
-        ring: "rgb(var(--ring, var(--primary)) / <alpha-value>)",
       },
       borderRadius: {
         "4xl": "2rem",
@@ -60,14 +54,6 @@ module.exports = {
           "0%, 100%": { transform: "translateY(0)" },
           "50%": { transform: "translateY(-4px)" },
         },
-        "pulse-glow": {
-          "0%, 100%": { opacity: "1", transform: "scale(1)" },
-          "50%": { opacity: "0.85", transform: "scale(1.03)" },
-        },
-        shimmer: {
-          "0%": { backgroundPosition: "-200% 0" },
-          "100%": { backgroundPosition: "200% 0" },
-        },
       },
       animation: {
         "fade-in": "fade-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards",
@@ -75,14 +61,6 @@ module.exports = {
         "slide-down": "slide-down 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards",
         "pop-in": "pop-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards",
         "bounce-gentle": "bounce-gentle 2s ease-in-out infinite",
-        "pulse-glow": "pulse-glow 2.5s ease-in-out infinite",
-        shimmer: "shimmer 2.5s infinite linear",
-      },
-      boxShadow: {
-        glow: "0 0 20px -5px rgb(var(--primary) / 0.3)",
-        "glow-accent": "0 0 20px -5px rgb(var(--accent) / 0.3)",
-        card: "0 4px 20px -2px rgba(0, 0, 0, 0.05)",
-        "card-hover": "0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04)",
       },
     },
   },

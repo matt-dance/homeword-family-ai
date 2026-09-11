@@ -7,7 +7,6 @@
     "dev:lan": "next dev -p 80 -H 0.0.0.0",
     "build": "next build",
     "start": "next start -p 43123",
-    "start:lan": "next start -p 80",
     "lint": "eslint .",
     "test:unit": "vitest run"
   },

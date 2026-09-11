@@ -4,9 +4,7 @@ import {
   HOMEWORK_CAMERA_UNLOCK_KEY,
   HOMEWORK_CAMERA_UNLOCK_MS,
   clearHomeworkCameraUnlock,
-  homeworkCameraCaptureAllowed,
   homeworkCameraClickAction,
-  homeworkCameraIsUnlocked,
   isHomeworkCameraUnlockExpired,
   mapHomeworkParentError,
   markHomeworkCameraUnlocked,
@@ -24,26 +22,6 @@ describe("homeworkCameraClickAction", () => {
 
   it("requires a parent challenge when opening without a camera unlock", () => {
     expect(homeworkCameraClickAction(false, false)).toBe("challenge");
-  });
-});
-
-describe("homeworkCameraCaptureAllowed", () => {
-  it("blocks capture when the camera gate is locked", () => {
-    expect(homeworkCameraCaptureAllowed(false)).toBe(false);
-  });
-
-  it("allows capture after a live camera unlock", () => {
-    expect(homeworkCameraCaptureAllowed(true)).toBe(true);
-  });
-});
-
-describe("homeworkCameraIsUnlocked", () => {
-  it("stays locked without a camera-only unlock (kid PIN / dashboard session do not count)", () => {
-    expect(homeworkCameraIsUnlocked(false)).toBe(false);
-  });
-
-  it("unlocks only after the camera parent challenge", () => {
-    expect(homeworkCameraIsUnlocked(true)).toBe(true);
   });
 });
 
@@ -74,7 +52,6 @@ describe("homework camera unlock storage", () => {
   it("does not treat a leftover dashboard unlock as a camera unlock (QA flake)", () => {
     markParentUnlocked();
     expect(isHomeworkCameraUnlockExpired()).toBe(true);
-    expect(homeworkCameraIsUnlocked(!isHomeworkCameraUnlockExpired())).toBe(false);
     expect(homeworkCameraClickAction(false, !isHomeworkCameraUnlockExpired())).toBe("challenge");
     clearParentUnlock();
   });

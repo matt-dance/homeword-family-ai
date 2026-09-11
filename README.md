@@ -175,7 +175,7 @@ pytest -v
 | **Policies** | YAML presets load correctly for all age groups |
 | **Integration** | End-to-end setup, LLM-unavailable messaging (mocked) |
 
-External services (Ollama, LiteLLM) are **mocked or bypassed** in tests so CI stays fast and deterministic.
+External services (Ollama) are **mocked or bypassed** in tests so CI stays fast and deterministic.
 
 ### Voice (mic) — automated, no microphone needed
 

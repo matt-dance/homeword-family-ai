@@ -23,7 +23,6 @@ func specsFor(goos, resourceRoot, dataDir string, childEnv []string) ([]Spec, er
 	if resourceRoot == "" {
 		return nil, errors.New("empty resourceRoot")
 	}
-	_ = dataDir
 
 	runtimeDir := paths.RuntimeDir(resourceRoot)
 	webDir := paths.WebDir(resourceRoot)

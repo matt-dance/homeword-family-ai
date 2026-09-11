@@ -1,7 +1,6 @@
 package paths
 
 import (
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -34,7 +33,6 @@ func AppSupportDir() (string, error) {
 	}
 	return AppSupportDirFromHome(home), nil
 }
-
 func ResourceRoot(exePath string) string {
 	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
 		exePath = resolved

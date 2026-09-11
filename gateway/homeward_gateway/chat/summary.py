@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import logging
 
-import litellm
-
 from homeward_gateway.config import settings
-from homeward_gateway.models.litellm_target import resolve_litellm_target
+from homeward_gateway.models.ollama_chat import chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +30,6 @@ async def summarize_session(
     if message_count == 0:
         return f"{child_name} opened chat but did not send any messages."
 
-    llm_model, api_key, api_base, llm_extra = resolve_litellm_target(chat_model)
-
     transcript_lines = []
     for user_msg, assistant_msg in exchanges[-6:]:
         transcript_lines.append(f"Child: {user_msg[:200]}")
@@ -48,17 +44,13 @@ async def summarize_session(
     )
 
     try:
-        response = await litellm.acompletion(
-            model=llm_model,
-            messages=[{"role": "user", "content": prompt}],
-            api_key=api_key,
-            api_base=api_base,
-            timeout=min(settings.llm_timeout, 30),
-            max_tokens=80,
+        content = await chat_completion(
+            chat_model or settings.ollama_model,
+            [{"role": "user", "content": prompt}],
             temperature=0.3,
-            **llm_extra,
+            max_tokens=80,
         )
-        content = (response.choices[0].message.content or "").strip()
+        content = content.strip()
         if content:
             return content[:300]
     except Exception as exc:
