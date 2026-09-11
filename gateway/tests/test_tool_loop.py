@@ -2,7 +2,13 @@
 
 import pytest
 
-from homeward_gateway.chat.lookups import format_news_notes, format_weather_notes, format_web_notes
+from homeward_gateway.chat.lookups import (
+    format_current_facts_notes,
+    format_news_notes,
+    format_sports_notes,
+    format_weather_notes,
+    format_web_notes,
+)
 from homeward_gateway.chat.lookup_tools import LookupToolCall
 from homeward_gateway.chat.tool_loop import (
     LookupToolLoopResult,
@@ -254,7 +260,7 @@ class TestNativeLoop:
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         result = await run_lookup_tool_loop(
-            "What's the weather in Denver?",
+            "Why is the sky blue?",
             None,
             live_lookups=True,
             open_web_search=False,
@@ -280,7 +286,7 @@ class TestNativeLoop:
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         result = await run_lookup_tool_loop(
-            "What's the weather in Denver?",
+            "Why is the sky blue?",
             None,
             live_lookups=True,
             open_web_search=False,
@@ -358,3 +364,64 @@ class TestNativeLoop:
         assert result.native is True
         assert captured
         assert captured[0][0] == {"role": "system", "content": _BASE_SAFETY}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "question,kind,lookup",
+        [
+            (
+                "Did the Broncos win last night?",
+                "sports",
+                format_sports_notes(
+                    "NFL",
+                    ["Broncos 24, Chiefs 17 — final"],
+                    "broncos",
+                ),
+            ),
+            (
+                "what are some news stories from today",
+                "news",
+                format_news_notes(["Gloria Steinem dies at the age of 92"]),
+            ),
+            (
+                "Who is the president of the United States right now?",
+                "current_facts",
+                format_current_facts_notes(
+                    "President of the United States",
+                    "Test Officeholder",
+                ),
+            ),
+        ],
+    )
+    async def test_judge_miss_honors_regex_call_instead_of_memory(
+        self, monkeypatch, question, kind, lookup
+    ):
+        fetched: list[str] = []
+
+        async def fake_fetch(intent):
+            fetched.append(intent.kind)
+            return lookup
+
+        async def judge(*_args, **_kwargs):
+            return None
+
+        async def chat_turn(_messages, tools=None):
+            raise AssertionError("regex lookup plan must not open a native tool picker")
+
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
+        result = await run_lookup_tool_loop(
+            question,
+            None,
+            live_lookups=True,
+            open_web_search=True,
+            chat_model="qwen2.5:14b",
+            filter_notes=_allow,
+            judge=judge,
+            chat_turn=chat_turn,
+        )
+        assert fetched == [kind]
+        assert result.native is False
+        assert result.needs_grounding is True
+        assert result.final_content is None
+        assert result.extra_messages
+        assert any(item["role"] == "tool" for item in result.extra_messages)

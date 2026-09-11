@@ -626,6 +626,66 @@ class TestJudgeIsPrimary:
         assert result.needs_grounding is True
         assert result.cards[0]["source"] == "open-meteo"
 
+    @pytest.mark.asyncio
+    async def test_judge_miss_large_model_does_not_answer_sports_from_memory(self, monkeypatch):
+        captured: dict[str, str] = {}
+
+        async def judge(*_args, **_kwargs):
+            return None
+
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Did the Broncos win last night?")
+
+        async def fake_fetch(intent):
+            assert intent.kind == "sports"
+            return format_sports_notes(
+                "NFL",
+                ["Broncos 24, Chiefs 17 — final"],
+                "broncos",
+            )
+
+        async def fake_complete(*_args, **_kwargs):
+            raise AssertionError("regex sports plan must not open a native tool picker")
+
+        async def fake_generate(messages, *_args, **kwargs):
+            captured["tool_hint"] = kwargs.get("tool_hint") or ""
+            captured["messages"] = messages
+            return "The Broncos won 24-17."
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.chat.tool_loop.call_grounding_judge", judge)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
+        monkeypatch.setattr("homeward_gateway.models.router.complete_chat_turn", fake_complete)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.generate_response", fake_generate)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+
+        result = await process_chat(
+            "Did the Broncos win last night?",
+            [],
+            YOUNG,
+            3,
+            "Emma",
+            7,
+            live_lookups=True,
+            open_web_search=True,
+            chat_model="qwen2.5:14b",
+        )
+        assert result.allowed
+        assert result.content == "The Broncos won 24-17."
+        hint = captured["tool_hint"].lower()
+        assert "invent" in hint
+        assert "notes" in hint
+        tool_blob = " ".join(
+            item.get("content") or ""
+            for item in captured["messages"]
+            if item.get("role") == "tool"
+        )
+        assert "Broncos 24" in tool_blob
+        assert any(card.get("type") == "lookup" for card in (result.tools or []))
+
 
 class TestStreamingAndCards:
     @pytest.mark.asyncio

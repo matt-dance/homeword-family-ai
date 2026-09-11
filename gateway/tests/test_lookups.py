@@ -1168,7 +1168,7 @@ class TestProcessChatLookupGating:
             return turns.pop(0)
 
         async def fake_filter_input(*_args, **_kwargs):
-            return PipelineResult(allowed=True, content="What's the weather in Denver?")
+            return PipelineResult(allowed=True, content="Why is the sky blue?")
 
         async def fake_filter_output(text, *_args, **_kwargs):
             return PipelineResult(allowed=True, content=text)
@@ -1183,7 +1183,7 @@ class TestProcessChatLookupGating:
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
 
         result = await process_chat(
-            "What's the weather in Denver?",
+            "Why is the sky blue?",
             [],
             YOUNG,
             3,

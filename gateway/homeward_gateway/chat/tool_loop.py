@@ -490,7 +490,10 @@ async def run_lookup_tool_loop(
         )
         return _from_outcomes([outcome], native=False, needs_grounding=True)
 
-    if uses_native_lookup_tools(chat_model):
+    # Judge JSON was empty, but regex/router already planned a lookup. Honor that
+    # call for every model size so a 14B/27B native turn cannot skip sports, news,
+    # or officeholder evidence and answer from memory.
+    if call is None and uses_native_lookup_tools(chat_model):
         turn_fn = chat_turn
         if turn_fn is None:
             from homeward_gateway.models.router import complete_chat_turn

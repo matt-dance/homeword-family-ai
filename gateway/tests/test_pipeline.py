@@ -741,10 +741,10 @@ class TestPipeline:
 
     @pytest.mark.asyncio
     async def test_stream_native_final_yields_only_after_allow(self, monkeypatch):
-        safe = "It is sunny and about 70 degrees."
+        safe = "The sky looks blue because air scatters sunlight."
 
         async def fake_filter_input(*_args, **_kwargs):
-            return PipelineResult(allowed=True, content="What's the weather?")
+            return PipelineResult(allowed=True, content="Why is the sky blue?")
 
         async def fake_judge(*_args, **_kwargs):
             return None
@@ -768,7 +768,7 @@ class TestPipeline:
 
         events = []
         async for item in process_chat_stream(
-            "What's the weather?",
+            "Why is the sky blue?",
             [],
             YOUNG,
             3,
