@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
 # Build dist/macos/Homeward-macos-<arch>.dmg from Homeward.app.
-# Never embeds Ollama model weights.
+# Real UDZO disk image with volume name "Homeward" and an Applications
+# drop target — not a zip of the .app. Never embeds Ollama model weights.
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
 Usage: dmg-macos.sh [arm64|amd64] [--sign]
 
-Wrap Homeward.app in a read-only DMG with an /Applications symlink.
+Wrap Homeward.app in a compressed UDZO disk image.
+
+  Volume name:  Homeward
+  Layout:       Homeward.app + Applications (drag the app to install)
+  Output:       dist/macos/Homeward-macos-<arch>.dmg
 
   arm64|amd64   Target architecture (default: host arch when on macOS)
-  --sign      Codesign the app, notarize the DMG, and staple the ticket
-              (requires HOMEWARD_CODESIGN_IDENTITY and HOMEWARD_NOTARY_PROFILE)
+  --sign        Codesign the app, notarize the DMG, and staple the ticket
+                (requires HOMEWARD_CODESIGN_IDENTITY and HOMEWARD_NOTARY_PROFILE)
 
   HOMEWARD_DMG_SKIP_BUNDLE=1
       Skip running bundle-macos.sh (Homeward.app must already exist).
 
-Output: dist/macos/Homeward-macos-<arch>.dmg
-
-A family DMG cannot be produced except on a Mac.
+A family DMG cannot be produced except on a Mac. This is not a zip of
+the .app; it is an Apple disk image so a parent can drag Homeward into
+Applications.
 EOF
 }
 
@@ -69,6 +74,8 @@ APP="$REPO/dist/macos/$ARCH/Homeward.app"
 DMG="$REPO/dist/macos/Homeward-macos-$ARCH.dmg"
 ENTITLEMENTS="$REPO/desktop/pack/homeward.entitlements"
 BUNDLE_SCRIPT="$SCRIPT_DIR/bundle-macos.sh"
+VOLNAME="Homeward"
+ICNS="$APP/Contents/Resources/icon.icns"
 
 have_dmg_tool() {
   command -v hdiutil >/dev/null 2>&1 || command -v create-dmg >/dev/null 2>&1
@@ -105,35 +112,55 @@ sign_app() {
 }
 
 STAGE="$(mktemp -d)"
-STAGED_APP="$STAGE/Homeward.app"
 cleanup() {
   rm -rf "$STAGE"
 }
 trap cleanup EXIT
 
-ditto "$APP" "$STAGED_APP"
-ln -s /Applications "$STAGE/Applications"
+# Stage only the .app. create-dmg --app-drop-link adds Applications.
+# The hdiutil fallback adds the Applications symlink itself.
+mkdir -p "$STAGE"
+ditto "$APP" "$STAGE/Homeward.app"
 
 if [[ "$SIGN" == "1" ]]; then
-  sign_app "$STAGED_APP"
+  sign_app "$STAGE/Homeward.app"
 fi
 
 rm -f "$DMG"
 mkdir -p "$(dirname "$DMG")"
 
-if command -v create-dmg >/dev/null 2>&1; then
-  create-dmg \
-    --volname "Homeward" \
-    --overwrite \
-    "$DMG" \
-    "$STAGE"
-else
+create_udzo_with_create_dmg() {
+  local args=(
+    --volname "$VOLNAME"
+    --window-pos 200 120
+    --window-size 660 420
+    --icon-size 128
+    --icon "Homeward.app" 160 200
+    --hide-extension "Homeward.app"
+    --app-drop-link 500 200
+    --overwrite
+  )
+  if [[ -f "$ICNS" ]]; then
+    args+=(--volicon "$ICNS")
+  fi
+  create-dmg "${args[@]}" "$DMG" "$STAGE"
+}
+
+create_udzo_with_hdiutil() {
+  ln -s /Applications "$STAGE/Applications"
   hdiutil create \
-    -volname "Homeward" \
+    -volname "$VOLNAME" \
+    -fs HFS+ \
     -srcfolder "$STAGE" \
     -ov \
     -format UDZO \
     "$DMG"
+}
+
+if command -v create-dmg >/dev/null 2>&1; then
+  create_udzo_with_create_dmg
+else
+  create_udzo_with_hdiutil
 fi
 
 if [[ "$SIGN" == "1" ]]; then
