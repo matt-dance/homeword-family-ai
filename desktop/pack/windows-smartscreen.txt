@@ -1,0 +1,18 @@
+Windows SmartScreen notice
+==========================
+
+This Homeward installer is not Authenticode-signed (no code-signing
+certificate is available yet). Windows may show:
+
+  Windows protected your PC
+
+That SmartScreen warning is expected. Choose More info, then Run anyway.
+
+Homeward is open-source family software (MIT). It installs into your user
+folder, starts at login, and does not need Administrator rights.
+
+After install, open http://localhost:43123 on this computer. Kids on the
+same Wi-Fi use http://homeward.local:43123/chat.
+
+Chat and speech models are not inside this installer. The setup wizard
+downloads them on first use.
