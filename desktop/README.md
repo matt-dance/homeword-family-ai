@@ -1,10 +1,16 @@
 # Homeward desktop (contributor)
 
-Scripts and the Go supervisor that assemble `Homeward.app` on macOS. This is not family-facing documentation.
+Scripts and the Go supervisor that assemble native family installers. This is not family-facing documentation.
 
-A family DMG cannot be produced except on a Mac. `HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1` is a layout helper for CI and Linux; it cannot produce a family DMG.
+Chat and speech model weights are not part of any installer. Packagers ship the official Ollama *engine* only (plus its LICENSE). Models are pulled later into the platform data directory.
 
-Chat and speech model weights are not part of the app. The bundle installs the official Ollama *engine* only (plus its LICENSE). Models are pulled later into Application Support.
+| Platform | Family artifact | Data dir |
+|---|---|---|
+| macOS | `Homeward-macos-<arch>.dmg` (UDZO, drag to Applications) | `~/Library/Application Support/Homeward` |
+| Windows | `Homeward-windows-amd64.exe` (Inno Setup, unsigned) | `%LOCALAPPDATA%\Homeward` |
+| Linux | `Homeward-linux-amd64.tar.gz` | `~/.local/share/homeward` |
+
+Public web port is **43123** on every native install (not port 80).
 
 ## Prerequisites (macOS)
 
@@ -30,23 +36,73 @@ From the repo root:
 
 Intel Macs use `amd64`. Output: `dist/macos/<arch>/Homeward.app`.
 
-## Signed DMG
+## macOS DMG (drag to Applications)
 
-`desktop/scripts/dmg-macos.sh --sign` (after Task 10 lands) wraps this bundle, codesigns with hardened runtime + `desktop/pack/homeward.entitlements`, notarizes, and staples.
+A family DMG cannot be produced except on a Mac. The packer writes a compressed **UDZO** disk image (not a zip of the `.app`). Volume name is **Homeward**. The Finder window contains `Homeward.app` and an **Applications** drop target.
+
+```bash
+./desktop/scripts/dmg-macos.sh arm64
+```
+
+Output: `dist/macos/Homeward-macos-arm64.dmg`.
+
+`./desktop/scripts/dmg-macos.sh arm64 --sign` wraps the bundle, codesigns with hardened runtime + `desktop/pack/homeward.entitlements`, notarizes, and staples.
 
 Set `HOMEWARD_CODESIGN_IDENTITY` and `HOMEWARD_NOTARY_PROFILE`. Entitlements allow JIT / unsigned executable memory / disable-library-validation plus network client+server so the bundled Python, Node, and Ollama runtimes can start. App Sandbox is not enabled.
 
-## Skip-downloads
+`HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1` is a layout helper for CI and Linux; it cannot produce a family DMG.
 
 ```bash
 HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1 ./desktop/scripts/bundle-macos.sh arm64
 ```
 
-Creates the Contents tree and copies `policies/`. Skips Node / uv / Ollama / Homebrew runtime fetches. On non-Darwin hosts it also skips the supervisor `go build` (Cocoa cannot be linked here). A family DMG cannot be produced in skip mode.
+Creates the Contents tree and copies `policies/`. Skips Node / uv / Ollama / Homebrew runtime fetches. On non-Darwin hosts it also skips the supervisor `go build` (Cocoa cannot be linked here).
 
-## Troubleshooting
+## Troubleshooting (macOS)
 
 **Gatekeeper blocks an unsigned local build.** Expected for contributor `.app` / DMG builds without `--sign`. macOS may refuse to open or quarantine the bundle. For family machines, build with `./desktop/scripts/dmg-macos.sh <arch> --sign` after setting `HOMEWARD_CODESIGN_IDENTITY` and `HOMEWARD_NOTARY_PROFILE`.
+
+## Windows installer (Inno Setup `.exe`, amd64)
+
+Family Windows v1 is an **Inno Setup** per-user installer. Authenticode is not available, so the `.exe` is **unsigned** and SmartScreen will show “Windows protected your PC” (More info → Run anyway). Chat and speech model weights are not in the installer.
+
+A family installer must be produced on Windows (Git Bash) so Node, CPython, Ollama, ffmpeg, and espeak are Windows binaries. The Go supervisor itself can be cross-compiled (`GOOS=windows`).
+
+### Prerequisites (Windows)
+
+- Go 1.22+ (Windows tray uses pure Go syscalls; CGO/MinGW is not required)
+- Node 22+
+- uv (CPython 3.12)
+- [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe` on `PATH`)
+- curl, plus 7-Zip (or `msiexec`) to extract the espeak-ng MSI
+
+### Skip-downloads (layout / CI)
+
+From the repo root:
+
+```bash
+HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1 ./desktop/scripts/bundle-windows.sh amd64
+```
+
+Creates `dist/windows/amd64/Homeward-windows-amd64/` with `policies/`, empty `resources/runtime/{python,node,ollama,ffmpeg,espeak}` dirs, and a cross-compiled `Homeward.exe` when Go is available. Skips Node / uv / Ollama / ffmpeg / espeak downloads.
+
+Compile-only skip (payload already assembled):
+
+```bash
+HOMEWARD_EXE_SKIP_BUNDLE=1 HOMEWARD_EXE_SKIP_COMPILE=1 ./desktop/scripts/exe-windows.sh amd64
+```
+
+### Family installer (Windows)
+
+```bash
+./desktop/scripts/exe-windows.sh amd64
+```
+
+That runs `bundle-windows.sh` then Inno Setup. Output: `dist/windows/amd64/Homeward-windows-amd64.exe`.
+
+The wizard installs to `%LOCALAPPDATA%\Programs\Homeward`, writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` so Homeward starts at login, and launches the tray supervisor. Family data and pulled models live in `%LOCALAPPDATA%\Homeward` (not `%USERPROFILE%\.ollama`). Uninstall stops Homeward and can optionally wipe that data directory.
+
+After install, open **http://localhost:43123**. Kids on the same Wi-Fi use **http://homeward.local:43123/chat**.
 
 ## Linux tarball (amd64)
 

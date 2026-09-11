@@ -20,14 +20,29 @@ func MarkOpened(markerPath string) error {
 }
 
 func OpenURL(rawURL string) *exec.Cmd {
-	return exec.Command(openProgram(runtime.GOOS), rawURL)
+	return openURLCmd(runtime.GOOS, rawURL)
+}
+
+func openURLCmd(goos, rawURL string) *exec.Cmd {
+	switch goos {
+	case "windows":
+		return exec.Command("cmd", "/c", "start", "", rawURL)
+	case "linux":
+		return exec.Command("xdg-open", rawURL)
+	default:
+		return exec.Command("open", rawURL)
+	}
 }
 
 func openProgram(goos string) string {
-	if goos == "linux" {
+	switch goos {
+	case "windows":
+		return "cmd"
+	case "linux":
 		return "xdg-open"
+	default:
+		return "open"
 	}
-	return "open"
 }
 
 // DecideLaunchOpen reports whether this invocation should open the parent

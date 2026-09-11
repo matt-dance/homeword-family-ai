@@ -14,6 +14,10 @@ func TestAppSupportDirFromHome(t *testing.T) {
 		got = AppSupportDirFromHome("/home/sam")
 		want = "/home/sam/.local/share/homeward"
 	}
+	if runtime.GOOS == "windows" {
+		got = AppSupportDirFromHome("C:/Users/sam")
+		want = "C:/Users/sam/AppData/Local/Homeward"
+	}
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
@@ -27,6 +31,7 @@ func TestAppSupportDirFromHomeGOOS(t *testing.T) {
 	}{
 		{goos: "darwin", home: "/Users/sam", want: "/Users/sam/Library/Application Support/Homeward"},
 		{goos: "linux", home: "/home/sam", want: "/home/sam/.local/share/homeward"},
+		{goos: "windows", home: "C:/Users/sam", want: "C:/Users/sam/AppData/Local/Homeward"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.goos, func(t *testing.T) {
@@ -51,6 +56,15 @@ func TestResourceRootFromDevTree(t *testing.T) {
 	exe := "/tmp/homeward-dev/Homeward"
 	got := ResourceRoot(exe)
 	want := filepath.Join("/tmp/homeward-dev", "resources")
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestResourceRootFromWindowsInstallTree(t *testing.T) {
+	exe := "/Users/sam/AppData/Local/Programs/Homeward/Homeward.exe"
+	got := ResourceRoot(exe)
+	want := filepath.Join("/Users/sam/AppData/Local/Programs/Homeward", "resources")
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}

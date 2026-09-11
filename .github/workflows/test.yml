@@ -44,3 +44,25 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm run test:unit
+
+  desktop:
+    name: Desktop supervisor and packagers
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Run supervisor tests
+        run: go test ./...
+      - name: Packager layout tests
+        working-directory: .
+        run: |
+          bash desktop/scripts/bundle-macos_test.sh
+          bash desktop/scripts/dmg-macos_test.sh
+          bash desktop/scripts/bundle-linux_test.sh
+          bash desktop/scripts/bundle-windows_test.sh
+

@@ -1,6 +1,7 @@
 package paths
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -11,12 +12,28 @@ func AppSupportDirFromHome(home string) string {
 }
 
 func appSupportDirFromHome(home, goos string) string {
-	if goos == "linux" {
+	switch goos {
+	case "linux":
 		return home + "/.local/share/homeward"
+	case "windows":
+		return home + "/AppData/Local/Homeward"
+	default:
+		return home + "/Library/Application Support/Homeward"
 	}
-	return home + "/Library/Application Support/Homeward"
 }
 
+func AppSupportDir() (string, error) {
+	if runtime.GOOS == "windows" {
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			return filepath.Join(local, "Homeward"), nil
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return AppSupportDirFromHome(home), nil
+}
 func ResourceRoot(exePath string) string {
 	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
 		exePath = resolved

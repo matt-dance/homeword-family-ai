@@ -44,7 +44,7 @@ Do not implement these in the macOS v1 plan.
 - Privileged bind to port 80, pf redirects, or a port-80 helper.
 - Pairing-style kid access (custom codes, device pairing, replacing mDNS/port URLs).
 - Bundling `llama3.2:3b`, `llava:7b`, or any other Ollama chat/vision weights.
-- Windows `.exe` or Linux `.deb` implementation (specified below as later phases only).
+- Linux `.deb` implementation (specified below as a later phase). Windows `.exe` is Phase B.
 - Auto-update (Sparkle / WinSparkle / custom updater).
 - Rewriting the Next.js UI inside Electron or Tauri.
 - PyInstaller / Nuitka freeze of the gateway.
@@ -285,13 +285,13 @@ v1 does not ship a separate uninstaller .pkg.
 - Signed and notarized for family distribution.
 - Contributor Docker remains documented in `README.md` until a later copy pass (not part of the first plan unless a contributor `desktop/README.md` is required to build the DMG).
 
-### Phase B — Windows `.exe` (later plan, not written yet)
+### Phase B — Windows `.exe`
 
 - Same supervisor (Go) and bundle layout.
-- Inno Setup wizard.
+- Inno Setup wizard (`desktop/pack/homeward.iss`, `desktop/scripts/exe-windows.sh`).
 - Tray + HKCU Run / Startup.
 - Listen on 43123. No port 80.
-- **Unsigned.** SmartScreen will warn (“Windows protected your PC”). The later Windows plan must document that on the download page and in the installer. Authenticode is out of scope until a cert exists.
+- **Unsigned.** SmartScreen will warn (“Windows protected your PC”). Documented in the installer (`desktop/pack/windows-smartscreen.txt`) and `desktop/README.md`. Authenticode is out of scope until a cert exists.
 
 ### Phase C — Linux `.deb` (later plan, not written yet)
 
