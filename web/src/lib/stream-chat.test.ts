@@ -57,6 +57,37 @@ describe("streamChat", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
 
+  it("preserves standalone newline and space tokens from the model", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse([
+          'data: {"type":"token","content":"Hello"}\n\n',
+          'data: {"type":"token","content":"\\n"}\n\n',
+          'data: {"type":"token","content":"\\n"}\n\n',
+          'data: {"type":"token","content":"there"}\n\n',
+          'data: {"type":"token","content":" "}\n\n',
+          'data: {"type":"token","content":"again"}\n\n',
+          'data: {"type":"done","session_id":1}\n\n',
+        ]),
+      ),
+    );
+
+    const tokens: string[] = [];
+    await streamChat(
+      "hi",
+      1,
+      (token) => tokens.push(token),
+      () => {
+        throw new Error("should not block");
+      },
+      () => undefined,
+      1,
+    );
+    expect(tokens).toEqual(["Hello", "\n", "\n", "there", " ", "again"]);
+    expect(tokens.join("")).toBe("Hello\n\nthere again");
+  });
+
   it("delivers tokens and finishes on done", async () => {
     vi.stubGlobal(
       "fetch",
@@ -185,6 +216,22 @@ describe("streamChat", () => {
     );
     expect(tokens).toEqual(["Hi"]);
     expect(statuses[0]).toMatch(/Writing/i);
+  });
+
+  it("uses nap copy when a blocked event has blank message text", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse([
+          'data: {"type":"blocked","message":"\\n"}\n\n',
+          'data: {"type":"done","session_id":1}\n\n',
+        ]),
+      ),
+    );
+
+    const blocked: string[] = [];
+    await streamChat("hi", 1, () => undefined, (msg) => blocked.push(msg), () => undefined, 1);
+    expect(blocked[0]).toMatch(/nap|try again/i);
   });
 
   it("surfaces a gateway error instead of hanging", async () => {

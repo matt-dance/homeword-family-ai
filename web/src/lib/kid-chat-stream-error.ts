@@ -40,8 +40,19 @@ export function isAbortLikeError(error: unknown): boolean {
   return false;
 }
 
-/** Coerce stream/UI text so React never receives a non-string child. */
+/**
+ * Coerce stream/UI text so React never receives a non-string child.
+ * Whitespace-only strings are kept — Ollama emits standalone space and newline tokens.
+ */
 export function kidText(value: unknown, fallback = STREAM_STALL_MESSAGE): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+/**
+ * Visible kid-facing copy for blocked/error bubbles.
+ * Blank or whitespace-only values use the fallback so the chat never shows an empty warning.
+ */
+export function kidVisibleText(value: unknown, fallback = STREAM_STALL_MESSAGE): string {
   return typeof value === "string" && value.trim() ? value : fallback;
 }
 

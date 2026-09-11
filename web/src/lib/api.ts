@@ -7,6 +7,7 @@ import {
   isAbortLikeError,
   kidSafeUnhandledStreamMessage,
   kidText,
+  kidVisibleText,
   reportKidChatStreamFailure,
   STREAM_STALL_MESSAGE,
 } from "@/lib/kid-chat-stream-error";
@@ -690,7 +691,7 @@ export async function streamChat(
                 deliverToken(kidText(data.content, ""));
               } else if (data.type === "blocked" || data.type === "error") {
                 sawReply = true;
-                deliverBlocked(kidText(data.message, STREAM_STALL_MESSAGE), data.tools);
+                deliverBlocked(kidVisibleText(data.message, STREAM_STALL_MESSAGE), data.tools);
                 if (data.type === "error") finish();
               } else if (data.type === "status") {
                 const statusText =

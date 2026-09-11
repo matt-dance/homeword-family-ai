@@ -4,6 +4,7 @@ import {
   isAbortLikeError,
   kidSafeUnhandledStreamMessage,
   kidText,
+  kidVisibleText,
   reportKidChatStreamFailure,
   STREAM_STALL_MESSAGE,
 } from "./kid-chat-stream-error";
@@ -45,6 +46,24 @@ describe("kidText", () => {
     expect(kidText({ message: "nope" })).toBe(STREAM_STALL_MESSAGE);
     expect(kidText(undefined)).toBe(STREAM_STALL_MESSAGE);
     expect(kidText("Hello")).toBe("Hello");
+  });
+
+  it("keeps whitespace-only strings so stream tokens are not dropped", () => {
+    expect(kidText("\n", "")).toBe("\n");
+    expect(kidText(" ", "")).toBe(" ");
+    expect(kidText("\n\n", "")).toBe("\n\n");
+    expect(kidText("\t", "")).toBe("\t");
+    expect(kidText("", "")).toBe("");
+  });
+});
+
+describe("kidVisibleText", () => {
+  it("uses fallback for blank blocked copy", () => {
+    expect(kidVisibleText("   ")).toBe(STREAM_STALL_MESSAGE);
+    expect(kidVisibleText("\n")).toBe(STREAM_STALL_MESSAGE);
+    expect(kidVisibleText("")).toBe(STREAM_STALL_MESSAGE);
+    expect(kidVisibleText({ message: "nope" })).toBe(STREAM_STALL_MESSAGE);
+    expect(kidVisibleText("PIN required")).toBe("PIN required");
   });
 });
 
