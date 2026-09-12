@@ -74,3 +74,7 @@ export const AGE_THEME_CONFIGS: Record<AgeTheme, AgeThemeConfig> = {
     cardAvatar: "bg-violet-100 dark:bg-violet-900/40",
   },
 };
+
+export function getAgeThemeConfig(child?: { age?: number; preset_id?: string }): AgeThemeConfig {
+  return AGE_THEME_CONFIGS[getAgeTheme(child)] ?? AGE_THEME_CONFIGS.curious;
+}

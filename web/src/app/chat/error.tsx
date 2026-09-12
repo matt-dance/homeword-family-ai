@@ -2,12 +2,12 @@
 
 import { KidSafeRouteError } from "@/components/kid-safe-route-error";
 
-export default function KidChatRouteError({
+export default function ChatPickerRouteError({
   error,
   reset,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  return <KidSafeRouteError error={error} reset={reset} reportContext="kid-chat-route-error" />;
+  return <KidSafeRouteError error={error} reset={reset} reportContext="chat-picker-route-error" />;
 }
