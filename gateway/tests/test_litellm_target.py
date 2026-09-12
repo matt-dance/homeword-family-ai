@@ -1,6 +1,14 @@
 """Tests for LiteLLM target resolution."""
 
+import importlib
+
 from homeward_gateway.models.litellm_target import resolve_litellm_target
+
+
+def test_router_imports_without_litellm_installed():
+    """Local Ollama must collect/start even when the optional cloud extra is absent."""
+    router = importlib.import_module("homeward_gateway.models.router")
+    assert router.strip_thinking("<think>hidden</think>Hi") == "Hi"
 
 
 def test_ollama_target_disables_thinking(monkeypatch):
