@@ -46,9 +46,8 @@ class Settings(BaseSettings):
     llm_timeout: float = 60.0
     # llama3.2:3b on CPU can sit quiet this long after the classifier turn.
     llm_first_token_timeout: float = 45.0
-    # Cloud/OpenAI stays off unless a parent explicitly enables it.
-    cloud_enabled: bool = False
-    openai_api_key: str = ""
+    # Do not declare cloud_enabled / openai_api_key: HOMEWARD_* env would
+    # silently send kid chats to OpenAI (unsupported; see SECURITY.md).
     lookup_timeout: float = 8.0
     # Host-only open-web engine (SearxNG). Empty disables the household check.
     searxng_url: str = "http://127.0.0.1:8888"
