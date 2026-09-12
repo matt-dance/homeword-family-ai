@@ -5,7 +5,7 @@ from homeward_gateway.config import settings
 
 def resolve_litellm_target(model: str | None) -> tuple[str, str, str | None, dict]:
     """Return (model, api_key, api_base, extra_kwargs) for litellm.acompletion."""
-    if settings.cloud_enabled and settings.openai_api_key:
+    if getattr(settings, "cloud_enabled", False) and getattr(settings, "openai_api_key", ""):
         return "gpt-4o-mini", settings.openai_api_key, None, {}
 
     llm_model = f"ollama/{model or settings.ollama_model}"
