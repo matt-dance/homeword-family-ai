@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getAgeTheme } from "./age-theme";
+import { getAgeTheme, getAgeThemeConfig } from "./age-theme";
 
 describe("age-theme", () => {
   it("determines young theme for age <= 8 or preset young_explorer", () => {
@@ -37,5 +37,10 @@ describe("age-theme", () => {
 
   it("defaults to curious when public child payloads omit age and preset", () => {
     expect(getAgeTheme({} as { age?: number; preset_id?: string })).toBe("curious");
+  });
+
+  it("always returns a theme config so the picker cannot read undefined fields", () => {
+    expect(getAgeThemeConfig({ age: 7, preset_id: "young_explorer" }).avatarEmoji).toBe("🦁");
+    expect(getAgeThemeConfig(undefined).title).toBe("Curious Explorer");
   });
 });
