@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, type Child } from "@/lib/api";
+import { resolveChatSlug } from "@/lib/chat-route-params";
 import { slugifyName } from "@/lib/slug";
 import { QUICK_CHAT_LABEL, QUICK_CHAT_SLUG } from "@/lib/default-profile";
 import { KidChatView } from "@/components/kid-chat-view";
@@ -26,7 +27,8 @@ function findChildBySlug(children: Child[], slug: string): Child | undefined {
 function ChildChatContent() {
   const router = useRouter();
   const params = useParams();
-  const slug = typeof params.slug === "string" ? params.slug : "";
+  const pathname = usePathname();
+  const slug = resolveChatSlug(params, pathname);
   const [selectedChild, setSelectedChild] = useState<Child | null>(null);
   const [displayName, setDisplayName] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);

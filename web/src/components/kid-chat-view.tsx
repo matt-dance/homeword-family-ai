@@ -231,7 +231,10 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
   useEffect(() => {
     if (!pinVerified) return;
     setSimpleMode(localStorage.getItem(simpleModeKey(selectedChild.id)) === "1");
-    api.conversationStarters(selectedChild.id).then(setStarters).catch(() => setStarters([]));
+    api
+      .conversationStarters(selectedChild.id)
+      .then((items) => setStarters(Array.isArray(items) ? items : []))
+      .catch(() => setStarters([]));
   }, [selectedChild.id, pinVerified]);
 
   useEffect(() => {
