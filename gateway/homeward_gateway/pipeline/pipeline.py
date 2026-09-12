@@ -8,25 +8,13 @@ from homeward_gateway.pipeline.classifier import classify
 from homeward_gateway.pipeline.normalize import normalize, normalize_output
 from homeward_gateway.pipeline.policy import PolicyPreset, check_policy_match
 from homeward_gateway.pipeline.rules import check_rules
-from homeward_gateway.chat.lookups import (
-    LookupIntent,
-    LookupResult,
-    detect_web_search_intent,
-    fetch_lookup,
-    is_referential,
-    lookup_card,
-    lookup_context_hint,
-    lookup_prompt_notes,
-    open_web_unavailable_notes,
-    resolve_lookup_intent,
-    weather_missing_place_notes,
-    weather_place_not_found_notes,
-)
+from homeward_gateway.chat.lookups import LookupIntent, LookupResult
 from homeward_gateway.chat.session_state import (
     SessionState,
     format_user_turn,
     resolve_turn,
 )
+from homeward_gateway.chat.tool_loop import lookup_tool_fact_hint, run_lookup_tool_loop
 from homeward_gateway.chat.tools import (
     apply_card_routing,
     ask_parent_card,
@@ -43,6 +31,7 @@ from homeward_gateway.chat.tools import (
     tool_prompt_hint,
 )
 from homeward_gateway.models.ollama_chat import aclose_quietly, anext_bounded, first_token_timeout_seconds
+from homeward_gateway.models.prompts import build_system_prompt
 from homeward_gateway.models.router import generate_response, stream_response
 from homeward_gateway.home.location import HomeContext
 
@@ -224,17 +213,28 @@ async def filter_output(
     return PipelineResult(allowed=True, content=normalized)
 
 
-def _lookup_blocked_notes(intent: LookupIntent | None) -> str:
-    notes = (
-        "A live lookup was skipped because the notes were not kid-safe. "
-        "Do not invent weather, scores, or headlines. Say you could not check."
-    )
-    if intent and intent.kind == "web":
-        notes += (
-            " You do not know current events. Do not describe protests, wars, "
-            "or officeholders from memory."
+def _lookup_filter_notes(
+    preset: PolicyPreset,
+    strictness: int,
+    classifier_model: str | None,
+    *,
+    classifier_enabled: bool,
+    rules_only_classifier: bool,
+):
+    async def filter_notes(text: str) -> str | None:
+        safety = await filter_output(
+            text,
+            preset,
+            strictness,
+            classifier_model,
+            classifier_enabled=classifier_enabled,
+            rules_only_classifier=rules_only_classifier,
         )
-    return notes
+        if not safety.allowed:
+            return None
+        return safety.content or text
+
+    return filter_notes
 
 
 async def resolve_live_lookup(
@@ -249,89 +249,61 @@ async def resolve_live_lookup(
     session_state: SessionState | None = None,
     rules_only_classifier: bool = False,
     open_web_search: bool = False,
+    chat_model: str | None = None,
+    classifier_enabled: bool = True,
 ) -> tuple[str, list[dict], LookupIntent | None, LookupResult | None]:
-    """Fetch a named source, or open web search, when the parent enabled it."""
-    if not live_lookups:
-        return "", [], None, None
-
-    context = session_state.to_context() if session_state else None
-    intent, ctx = resolve_lookup_intent(
+    """Run the allowlisted lookup loop and return notes, cards, and the last result."""
+    loop = await run_lookup_tool_loop(
         user_message,
         history,
-        home_location=home.location if home else None,
-        context=context,
-    )
-    if intent and intent.kind in {"weather", "sports"}:
-        if intent.kind == "weather" and not intent.query:
-            return weather_missing_place_notes(), [], intent, None
-        result = await fetch_lookup(intent)
-        if not result:
-            if intent.kind == "weather":
-                return weather_place_not_found_notes(intent.query), [], intent, None
-            return "", [], intent, None
-        safety = await filter_output(
-            result.notes,
+        live_lookups=live_lookups,
+        open_web_search=open_web_search,
+        chat_model=chat_model or "llama3.2:3b",
+        filter_notes=_lookup_filter_notes(
             preset,
             strictness,
             classifier_model,
+            classifier_enabled=classifier_enabled,
             rules_only_classifier=rules_only_classifier,
-        )
-        if not safety.allowed:
-            return _lookup_blocked_notes(intent), [], intent, None
-        hint = lookup_context_hint(
-            user_message,
-            intent,
-            ctx,
-            referential=is_referential(user_message),
-        )
-        return lookup_prompt_notes(result, context_hint=hint), [lookup_card(result).to_dict()], intent, result
+        ),
+        home_location=home.location if home else None,
+        context=session_state.to_context() if session_state else None,
+        classifier_model=classifier_model,
+    )
+    notes = "\n".join(
+        str(item.get("content") or "") for item in loop.extra_messages if item.get("content")
+    )
+    return notes, loop.cards, loop.intent, loop.result
 
-    if open_web_search:
-        web_intent = detect_web_search_intent(user_message)
-        if web_intent:
-            result = await fetch_lookup(web_intent)
-            if not result:
-                return open_web_unavailable_notes(), [], web_intent, None
-            safety = await filter_output(
-                result.notes,
-                preset,
-                strictness,
-                classifier_model,
-                rules_only_classifier=rules_only_classifier,
-            )
-            if not safety.allowed:
-                return _lookup_blocked_notes(web_intent), [], web_intent, None
-            return lookup_prompt_notes(result), [lookup_card(result).to_dict()], web_intent, result
 
-    if not intent:
-        return "", [], None, None
-
-    if intent.kind == "weather" and not intent.query:
-        return weather_missing_place_notes(), [], intent, None
-
-    result = await fetch_lookup(intent)
-    if not result:
-        if intent.kind == "weather":
-            return weather_place_not_found_notes(intent.query), [], intent, None
-        return "", [], intent, None
-
-    safety = await filter_output(
-        result.notes,
+def _kid_system_prompt(
+    child_name: str,
+    age: int,
+    preset: PolicyPreset,
+    *,
+    homework_mode: bool = False,
+    tool_hint: str = "",
+    home: HomeContext | None = None,
+    ai_tone: str = "balanced",
+    ai_verbosity: int = 3,
+    quick_chat: bool = False,
+    memory_items: list[dict] | None = None,
+    continue_conversation: bool = False,
+) -> str:
+    """Same safety prompt generate_response uses — required for native tool turns."""
+    return build_system_prompt(
+        child_name,
+        age,
         preset,
-        strictness,
-        classifier_model,
-        rules_only_classifier=rules_only_classifier,
+        homework_mode=homework_mode,
+        tool_hint=tool_hint,
+        continue_conversation=continue_conversation,
+        home_label=home.label if home else None,
+        ai_tone=ai_tone,
+        ai_verbosity=ai_verbosity,
+        quick_chat=quick_chat,
+        memory_items=memory_items,
     )
-    if not safety.allowed:
-        return _lookup_blocked_notes(intent), [], intent, None
-
-    hint = lookup_context_hint(
-        user_message,
-        intent,
-        ctx,
-        referential=is_referential(user_message),
-    )
-    return lookup_prompt_notes(result, context_hint=hint), [lookup_card(result).to_dict()], intent, result
 
 
 def _combined_tool_hint(
@@ -449,49 +421,78 @@ async def process_chat(
             ),
         )
 
-    lookup_notes, lookup_tools, intent, lookup_result = await resolve_live_lookup(
-        resolved.expanded_message,
-        live_lookups=live_lookups,
-        open_web_search=open_web_search,
-        preset=preset,
-        strictness=strictness,
-        classifier_model=classifier_model,
-        history=history,
-        home=home,
-        session_state=resolved.state,
-        rules_only_classifier=rules_only,
-    )
-    if intent and lookup_result:
-        updated_state = updated_state.merge_lookup(intent, lookup_result)
-
     hint = _combined_tool_hint(
         user_message,
         home,
         local_types={card.type for card in local_cards},
     )
-    if resolved.context_hint:
-        hint = "\n\n".join(part for part in (hint, resolved.context_hint) if part)
-    user_turn = format_user_turn(
-        resolved,
-        filtered_content=input_result.content or user_message,
-        lookup_notes=lookup_notes,
-    )
-    try:
-        response = await generate_response(
-            messages_for_llm(history, user_message, user_turn),
+    lookup_loop = await run_lookup_tool_loop(
+        user_message,
+        history,
+        live_lookups=live_lookups,
+        open_web_search=open_web_search,
+        chat_model=chat_model,
+        filter_notes=_lookup_filter_notes(
+            preset,
+            strictness,
+            classifier_model,
+            classifier_enabled=classifier_enabled,
+            rules_only_classifier=rules_only,
+        ),
+        home_location=home.location if home else None,
+        context=resolved.state.to_context() if resolved.state else None,
+        classifier_model=classifier_model,
+        system_prompt=_kid_system_prompt(
             child_name,
             age,
             preset,
-            model=chat_model,
             homework_mode=homework_mode,
             tool_hint=hint,
-            home_label=home.label if home else None,
+            home=home,
             ai_tone=ai_tone,
             ai_verbosity=ai_verbosity,
             quick_chat=quick_chat,
             memory_items=memory_items,
             continue_conversation=bool(history),
-        )
+        ),
+    )
+    lookup_tools = lookup_loop.cards
+    if lookup_loop.intent and lookup_loop.result:
+        updated_state = updated_state.merge_lookup(lookup_loop.intent, lookup_loop.result)
+
+    fact_hint = lookup_tool_fact_hint(
+        bool(lookup_loop.extra_messages),
+        needs_grounding=lookup_loop.needs_grounding,
+    )
+    if fact_hint:
+        hint = "\n\n".join(part for part in (hint, fact_hint) if part)
+    user_turn = format_user_turn(
+        resolved,
+        filtered_content=input_result.content or user_message,
+    )
+    model_messages = [
+        *messages_for_llm(history, user_message, user_turn),
+        *lookup_loop.extra_messages,
+    ]
+    try:
+        if lookup_loop.native and lookup_loop.final_content:
+            response = lookup_loop.final_content
+        else:
+            response = await generate_response(
+                model_messages,
+                child_name,
+                age,
+                preset,
+                model=chat_model,
+                homework_mode=homework_mode,
+                tool_hint=hint,
+                home_label=home.label if home else None,
+                ai_tone=ai_tone,
+                ai_verbosity=ai_verbosity,
+                quick_chat=quick_chat,
+                memory_items=memory_items,
+                continue_conversation=bool(history),
+            )
     except TimeoutError:
         return PipelineResult(allowed=False, block_reason="llm timeout", stage="llm")
     except Exception as exc:
@@ -588,85 +589,124 @@ async def process_chat_stream(
 
     if live_lookups:
         yield StatusEvent(message="Looking that up…", phase="lookup")
-    lookup_notes, lookup_tools, intent, lookup_result = await resolve_live_lookup(
-        resolved.expanded_message,
-        live_lookups=live_lookups,
-        open_web_search=open_web_search,
-        preset=preset,
-        strictness=strictness,
-        classifier_model=classifier_model,
-        history=history,
-        home=home,
-        session_state=resolved.state,
-        rules_only_classifier=rules_only,
-    )
-    updated_state = resolved.state.with_topic(user_message)
-    if intent and lookup_result:
-        updated_state = updated_state.merge_lookup(intent, lookup_result)
-
-    if lookup_tools:
-        yield ToolEvent(lookup_tools)
-
     hint = _combined_tool_hint(
         user_message,
         home,
         local_types={card.type for card in local_cards},
     )
-    if resolved.context_hint:
-        hint = "\n\n".join(part for part in (hint, resolved.context_hint) if part)
+    lookup_loop = await run_lookup_tool_loop(
+        user_message,
+        history,
+        live_lookups=live_lookups,
+        open_web_search=open_web_search,
+        chat_model=chat_model,
+        filter_notes=_lookup_filter_notes(
+            preset,
+            strictness,
+            classifier_model,
+            classifier_enabled=classifier_enabled,
+            rules_only_classifier=rules_only,
+        ),
+        home_location=home.location if home else None,
+        context=resolved.state.to_context() if resolved.state else None,
+        classifier_model=classifier_model,
+        system_prompt=_kid_system_prompt(
+            child_name,
+            age,
+            preset,
+            homework_mode=homework_mode,
+            tool_hint=hint,
+            home=home,
+            ai_tone=ai_tone,
+            ai_verbosity=ai_verbosity,
+            quick_chat=quick_chat,
+            memory_items=memory_items,
+            continue_conversation=bool(history),
+        ),
+    )
+    lookup_tools = lookup_loop.cards
+    updated_state = resolved.state.with_topic(user_message)
+    if lookup_loop.intent and lookup_loop.result:
+        updated_state = updated_state.merge_lookup(lookup_loop.intent, lookup_loop.result)
+
+    if lookup_tools:
+        yield ToolEvent(lookup_tools)
+
+    fact_hint = lookup_tool_fact_hint(
+        bool(lookup_loop.extra_messages),
+        needs_grounding=lookup_loop.needs_grounding,
+    )
+    if fact_hint:
+        hint = "\n\n".join(part for part in (hint, fact_hint) if part)
     user_turn = format_user_turn(
         resolved,
         filtered_content=input_result.content or user_message,
-        lookup_notes=lookup_notes,
     )
+    model_messages = [
+        *messages_for_llm(history, user_message, user_turn),
+        *lookup_loop.extra_messages,
+    ]
     collected = []
-    yield StatusEvent(message="Writing a reply…", phase="generating")
-    stream = stream_response(
-        messages_for_llm(history, user_message, user_turn),
-        child_name,
-        age,
-        preset,
-        model=chat_model,
-        homework_mode=homework_mode,
-        tool_hint=hint,
-        home_label=home.label if home else None,
-        ai_tone=ai_tone,
-        ai_verbosity=ai_verbosity,
-        quick_chat=quick_chat,
-        memory_items=memory_items,
-        continue_conversation=bool(history),
+    yield StatusEvent(
+        message=(
+            "Still putting the answer together…"
+            if lookup_tools
+            else "Writing a reply…"
+        ),
+        phase="generating",
     )
-    first_timeout = first_token_timeout_seconds()
-    deadline = asyncio.get_running_loop().time() + first_timeout
-    try:
-        while True:
-            try:
-                if not collected:
-                    remaining = deadline - asyncio.get_running_loop().time()
-                    if remaining <= 0:
-                        raise TimeoutError("LLM stream produced no tokens before timeout")
-                    token = await anext_bounded(stream, remaining)
-                else:
-                    token = await anext(stream)
-            except StopAsyncIteration:
-                break
-            collected.append(token)
-            yield token
-    except Exception as exc:
-        reason = "llm timeout" if _is_llm_timeout(exc) else "llm stream error"
-        yield PipelineResult(allowed=False, block_reason=reason, stage="llm")
-        return
-    finally:
-        await aclose_quietly(stream)
+    native_final = bool(lookup_loop.native and lookup_loop.final_content)
+    if native_final:
+        # Complete text is already in hand — filter before the kid UI sees it.
+        full_response = lookup_loop.final_content or ""
+        collected.append(full_response)
+    else:
+        stream = stream_response(
+            model_messages,
+            child_name,
+            age,
+            preset,
+            model=chat_model,
+            homework_mode=homework_mode,
+            tool_hint=hint,
+            home_label=home.label if home else None,
+            ai_tone=ai_tone,
+            ai_verbosity=ai_verbosity,
+            quick_chat=quick_chat,
+            memory_items=memory_items,
+            continue_conversation=bool(history),
+        )
+        first_timeout = first_token_timeout_seconds()
+        deadline = asyncio.get_running_loop().time() + first_timeout
+        try:
+            while True:
+                try:
+                    if not collected:
+                        remaining = deadline - asyncio.get_running_loop().time()
+                        if remaining <= 0:
+                            raise TimeoutError("LLM stream produced no tokens before timeout")
+                        token = await anext_bounded(stream, remaining)
+                    else:
+                        token = await anext(stream)
+                except StopAsyncIteration:
+                    break
+                collected.append(token)
+                yield token
+        except Exception as exc:
+            reason = "llm timeout" if _is_llm_timeout(exc) else "llm stream error"
+            yield PipelineResult(allowed=False, block_reason=reason, stage="llm")
+            return
+        finally:
+            await aclose_quietly(stream)
 
-    if not collected:
-        yield PipelineResult(allowed=False, block_reason="empty LLM stream", stage="llm")
-        return
+        if not collected:
+            yield PipelineResult(allowed=False, block_reason="empty LLM stream", stage="llm")
+            return
 
-    full_response = "".join(collected)
+        full_response = "".join(collected)
     visible, model_cards = extract_model_tools(full_response)
     extra = [card.to_dict() for card in apply_card_routing(user_message, model_cards)]
-    if extra:
+    if extra and not native_final:
         yield ToolEvent(extra)
     output_result = await filter_output(
         full_response, preset, strictness, classifier_model,
@@ -676,6 +716,11 @@ async def process_chat_stream(
     if not output_result.allowed:
         yield _blocked_result(output_result)
         return
+
+    if native_final:
+        yield output_result.content or full_response
+        if extra:
+            yield ToolEvent(extra)
 
     # Only after output is allowed: turn a prose recipe into a howto card.
     if (

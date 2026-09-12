@@ -62,7 +62,17 @@ REFERENTIAL_PLACES = {
 }
 SPORTS_FOLLOWUP_RE = re.compile(
     r"\b(did they win|did we win|who won|what was the score|what(?:'s| is) the score|"
-    r"how did they do|did they lose|the score|final score)\b",
+    r"how did they do|did they lose|the score|final score|last game)\b",
+    re.IGNORECASE,
+)
+_SPORTS_SCORE_RE = re.compile(
+    r"\b(score|who won|final|last game|last night|"
+    r"did they win|did we win|did they lose|how did they do)\b",
+    re.IGNORECASE,
+)
+_SPORTS_SCHEDULE_RE = re.compile(
+    r"\b(schedule|playing|next game|this weekend|matchup|"
+    r"when (?:do|does|is|are))\b",
     re.IGNORECASE,
 )
 _PLACE_STOP = {
@@ -144,8 +154,13 @@ _TEAM_STOP = {
     "who",
 }
 NEWS_RE = re.compile(
-    r"\b(current events|in the news|today'?s news|world news|news headlines|"
-    r"what(?:'s| is) (?:in )?the news)\b",
+    r"\b("
+    r"current events|in the news|today'?s news|world news|news headlines|"
+    r"what(?:'s| is) (?:in )?the news|"
+    r"(?:latest |recent |today'?s )?news stor(?:y|ies)|"
+    r"some news|"
+    r"news (?:from |for )?today"
+    r")\b",
     re.IGNORECASE,
 )
 TIMELY_TOPIC_RE = re.compile(
@@ -348,6 +363,35 @@ def build_session_context(history: list[dict] | None, *, limit: int = 10) -> Ses
     )
 
 
+def detect_lookup_intent(message: str) -> LookupIntent | None:
+    """Return at most one named lookup for this turn."""
+    text = (message or "").strip()
+    if not text:
+        return None
+
+    if WEATHER_RE.search(text):
+        place = _extract_place(text)
+        return LookupIntent("weather", place)
+
+    if NEWS_RE.search(text):
+        return LookupIntent("news", "current events")
+
+    team_key = _matching_team_key(text) or _extract_sports_team(text)
+    if SPORTS_ASK_RE.search(text) or team_key:
+        if team_key:
+            scores = _sports_wants_completed_score(text)
+            date_range = _sports_date_range(text, scores=scores)
+            return LookupIntent(
+                "sports",
+                team_key,
+                date_range=date_range,
+                schedule=_sports_wants_schedule(text),
+            )
+        return None
+
+    return None
+
+
 def coerce_open_web_search(live_lookups: bool, open_web_search: bool) -> bool:
     """Open web search cannot stay on unless live lookups are on."""
     return bool(live_lookups and open_web_search)
@@ -369,7 +413,9 @@ def detect_web_search_intent(message: str) -> LookupIntent | None:
         return None
     if SPORTS_ASK_RE.search(text) or _matching_team_key(text) or _extract_sports_team(text):
         return None
-    if NEWS_RE.search(text) or TIMELY_TOPIC_RE.search(text):
+    if NEWS_RE.search(text):
+        return None
+    if TIMELY_TOPIC_RE.search(text):
         return LookupIntent("web", rewrite_web_query(text))
     return None
 
@@ -477,22 +523,24 @@ def _resolve_sports_intent(
 ) -> LookupIntent | None:
     wants_sports = bool(SPORTS_ASK_RE.search(message) or SPORTS_FOLLOWUP_RE.search(message))
     if referential and context.team and wants_sports:
-        date_range = _sports_date_range(message)
-        schedule = bool(
-            date_range
-            or SPORTS_FOLLOWUP_RE.search(message)
-            or re.search(r"\b(schedule|playing|games?|matchup|next game)\b", message, re.IGNORECASE)
+        team = _matching_team_key(context.team) or context.team
+        scores = _sports_wants_completed_score(message)
+        return LookupIntent(
+            "sports",
+            team,
+            date_range=_sports_date_range(message, scores=scores),
+            schedule=_sports_wants_schedule(message),
         )
-        return LookupIntent("sports", context.team, date_range=date_range, schedule=schedule)
 
     team_key = _matching_team_key(message) or _extract_sports_team(message)
     if team_key:
-        date_range = _sports_date_range(message)
-        schedule = bool(
-            date_range
-            or re.search(r"\b(schedule|playing|games?|matchup|next game)\b", message, re.IGNORECASE)
+        scores = _sports_wants_completed_score(message)
+        return LookupIntent(
+            "sports",
+            team_key,
+            date_range=_sports_date_range(message, scores=scores),
+            schedule=_sports_wants_schedule(message),
         )
-        return LookupIntent("sports", team_key, date_range=date_range, schedule=schedule)
 
     return None
 
@@ -577,6 +625,23 @@ def lookup_context_hint(
     if context.event_time and intent.kind == "weather":
         hints.append(f"The event time discussed earlier was {context.event_time}.")
     return " ".join(hints)
+
+
+def resolve_weather_place(
+    message: str,
+    history: list[dict] | None = None,
+    *,
+    home_location: str | None = None,
+) -> str:
+    """Find a city in this turn, recent chat context, or the household home."""
+    context = build_session_context(history)
+    return _resolve_weather_place(
+        message,
+        context,
+        history,
+        home_location=home_location,
+        referential=is_referential(message),
+    )
 
 
 def format_geo_label(geo: dict[str, Any]) -> str:
@@ -683,12 +748,22 @@ def _fmt_espn_date(day: date) -> str:
     return day.strftime("%Y%m%d")
 
 
-def _sports_date_range(text: str) -> str | None:
+def _sports_wants_completed_score(text: str) -> bool:
+    return bool(_SPORTS_SCORE_RE.search(text or ""))
+
+
+def _sports_wants_schedule(text: str) -> bool:
+    if _sports_wants_completed_score(text):
+        return False
+    return bool(_SPORTS_SCHEDULE_RE.search(text or ""))
+
+
+def _sports_date_range(text: str, *, scores: bool = False) -> str | None:
     """Return an ESPN scoreboard dates param (YYYYMMDD or start-end)."""
     lower = text.lower()
     today = date.today()
 
-    if "this weekend" in lower or "weekend" in lower:
+    if "this weekend" in lower or ("weekend" in lower and not scores):
         days_until_friday = (4 - today.weekday()) % 7
         friday = today + timedelta(days=days_until_friday)
         sunday = friday + timedelta(days=2)
@@ -698,12 +773,19 @@ def _sports_date_range(text: str) -> str | None:
         tomorrow = today + timedelta(days=1)
         return _fmt_espn_date(tomorrow)
 
+    if "last night" in lower or "yesterday" in lower:
+        return _fmt_espn_date(today - timedelta(days=1))
+
     if "today" in lower or "tonight" in lower:
         return _fmt_espn_date(today)
 
     if "this week" in lower or "next game" in lower:
         end = today + timedelta(days=6)
         return f"{_fmt_espn_date(today)}-{_fmt_espn_date(end)}"
+
+    if "last game" in lower or scores:
+        start = today - timedelta(days=10)
+        return f"{_fmt_espn_date(start)}-{_fmt_espn_date(today)}"
 
     return None
 
@@ -837,6 +919,14 @@ def format_web_notes(query: str, items: list[dict[str, str]]) -> LookupResult:
         query=query,
         summary=items[0].get("title") or items[0].get("snippet") or query,
         notes="\n".join(lines),
+    )
+
+
+def could_not_check_notes() -> str:
+    return (
+        "A live lookup could not be completed. "
+        "Say you could not check. Do not invent scores, player names, "
+        "conferences, officeholders, wars, or headlines from memory."
     )
 
 

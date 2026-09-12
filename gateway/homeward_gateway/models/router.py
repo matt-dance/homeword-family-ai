@@ -1,14 +1,20 @@
-"""LLM model router — builds the system prompt and calls local Ollama."""
+"""LLM model router — Ollama direct or cloud via LiteLLM."""
 
+import asyncio
 import logging
 from typing import AsyncIterator
 
+import litellm
+
 from homeward_gateway.config import settings
-from homeward_gateway.models.ollama_chat import chat_completion, stream_chat_completion
+from homeward_gateway.models.litellm_target import resolve_litellm_target
+from homeward_gateway.models.ollama_chat import chat_completion, chat_message, stream_chat_completion
 from homeward_gateway.models.prompts import build_system_prompt
+from homeward_gateway.models.response_limits import GENERATION_MAX_TOKENS
 from homeward_gateway.pipeline.policy import PolicyPreset
 
 logger = logging.getLogger(__name__)
+litellm.set_verbose = False
 
 
 class EmptyModelResponseError(RuntimeError):
@@ -22,6 +28,10 @@ def strip_thinking(text: str) -> str:
     cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
     cleaned = re.sub(r"<\|?think\|?>[\s\S]*?<\|?/think\|?>", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
+
+
+def _use_cloud() -> bool:
+    return bool(settings.cloud_enabled and settings.openai_api_key)
 
 
 def _build_messages(
@@ -52,6 +62,64 @@ def _build_messages(
     return [{"role": "system", "content": system}] + messages
 
 
+def _litellm_message_dict(message: object) -> dict:
+    content = getattr(message, "content", None) or ""
+    serialized: list[dict] = []
+    for call in getattr(message, "tool_calls", None) or []:
+        fn = getattr(call, "function", call)
+        serialized.append(
+            {
+                "id": getattr(call, "id", "") or "",
+                "type": "function",
+                "function": {
+                    "name": getattr(fn, "name", "") or "",
+                    "arguments": getattr(fn, "arguments", {}) or {},
+                },
+            }
+        )
+    payload: dict = {"role": "assistant", "content": content}
+    if serialized:
+        payload["tool_calls"] = serialized
+    return payload
+
+
+async def complete_chat_turn(
+    messages: list[dict],
+    *,
+    tools: list[dict] | None = None,
+    model: str | None = None,
+    temperature: float = 0.2,
+) -> dict:
+    """One non-streaming chat turn, optionally with tools. Returns the assistant message dict."""
+    resolved_model = model or settings.ollama_model
+    try:
+        if _use_cloud():
+            llm_model, api_key, api_base, llm_extra = resolve_litellm_target(model)
+            kwargs: dict = {
+                "model": llm_model,
+                "messages": messages,
+                "api_key": api_key,
+                "api_base": api_base,
+                "timeout": settings.llm_timeout,
+                "max_tokens": GENERATION_MAX_TOKENS,
+                "temperature": temperature,
+                **llm_extra,
+            }
+            if tools:
+                kwargs["tools"] = tools
+            response = await litellm.acompletion(**kwargs)
+            return _litellm_message_dict(response.choices[0].message)
+        return await chat_message(
+            resolved_model,
+            messages,
+            tools=tools,
+            temperature=temperature,
+        )
+    except Exception as e:
+        logger.error("LLM tool-turn error: %s", e)
+        raise
+
+
 async def generate_response(
     messages: list[dict],
     child_name: str,
@@ -67,7 +135,7 @@ async def generate_response(
     memory_items: list[dict] | None = None,
     continue_conversation: bool | None = None,
 ) -> str:
-    """Generate a non-streaming LLM response via Ollama."""
+    """Generate a non-streaming LLM response via Ollama (default) or cloud if enabled."""
     full_messages = _build_messages(
         messages, child_name, age, preset, homework_mode, tool_hint,
         home_label, ai_tone, ai_verbosity, quick_chat, memory_items,
@@ -76,7 +144,21 @@ async def generate_response(
     resolved_model = model or settings.ollama_model
 
     try:
-        content = await chat_completion(resolved_model, full_messages)
+        if _use_cloud():
+            llm_model, api_key, api_base, llm_extra = resolve_litellm_target(model)
+            response = await litellm.acompletion(
+                model=llm_model,
+                messages=full_messages,
+                api_key=api_key,
+                api_base=api_base,
+                timeout=settings.llm_timeout,
+                max_tokens=GENERATION_MAX_TOKENS,
+                temperature=0.7,
+                **llm_extra,
+            )
+            content = response.choices[0].message.content or ""
+        else:
+            content = await chat_completion(resolved_model, full_messages)
         cleaned = strip_thinking(content)
         if not cleaned:
             raise EmptyModelResponseError("empty model response")
@@ -110,10 +192,54 @@ async def stream_response(
     resolved_model = model or settings.ollama_model
 
     total = 0
+    first_token_timeout = getattr(settings, "llm_first_token_timeout", 45.0)
+    deadline = asyncio.get_running_loop().time() + first_token_timeout
     try:
-        async for token in stream_chat_completion(resolved_model, full_messages):
-            total += len(token)
-            yield token
+        if _use_cloud():
+            llm_model, api_key, api_base, llm_extra = resolve_litellm_target(model)
+            response = await litellm.acompletion(
+                model=llm_model,
+                messages=full_messages,
+                api_key=api_key,
+                api_base=api_base,
+                timeout=settings.llm_timeout,
+                max_tokens=GENERATION_MAX_TOKENS,
+                temperature=0.7,
+                stream=True,
+                **llm_extra,
+            )
+            stream_iter = response.__aiter__()
+
+            async def _next_chunk():
+                try:
+                    return await stream_iter.__anext__(), False
+                except StopAsyncIteration:
+                    return None, True
+
+            while True:
+                if total == 0:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        raise RuntimeError("LLM stream produced no tokens before timeout")
+                    timeout = remaining
+                else:
+                    timeout = settings.llm_timeout
+                try:
+                    chunk, done = await asyncio.wait_for(_next_chunk(), timeout=timeout)
+                except (TimeoutError, asyncio.TimeoutError) as exc:
+                    if total == 0:
+                        raise RuntimeError("LLM stream produced no tokens before timeout") from exc
+                    raise RuntimeError("LLM stream stalled") from exc
+                if done:
+                    break
+                delta = chunk.choices[0].delta.content or ""
+                if delta:
+                    total += len(delta)
+                    yield delta
+        else:
+            async for token in stream_chat_completion(resolved_model, full_messages):
+                total += len(token)
+                yield token
         if total == 0:
             raise EmptyModelResponseError("model stream returned no answer tokens")
     except Exception as e:

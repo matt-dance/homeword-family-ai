@@ -37,6 +37,37 @@ async def fresh_db():
 
 
 @pytest.fixture(autouse=True)
+def stub_lookup_structured_router(monkeypatch):
+    """CI never calls a live LLM for lookup routing; tests inject fakes when needed."""
+    async def skip(*_args, **_kwargs):
+        return None
+
+    async def notes_answer(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(
+        "homeward_gateway.chat.grounding.call_grounding_judge",
+        skip,
+    )
+    monkeypatch.setattr(
+        "homeward_gateway.chat.tool_loop.call_grounding_judge",
+        skip,
+    )
+    monkeypatch.setattr(
+        "homeward_gateway.chat.tool_loop.call_structured_router",
+        skip,
+    )
+    monkeypatch.setattr(
+        "homeward_gateway.chat.grounding.evidence_answers_question",
+        notes_answer,
+    )
+    monkeypatch.setattr(
+        "homeward_gateway.chat.tool_loop.evidence_answers_question",
+        notes_answer,
+    )
+
+
+@pytest.fixture(autouse=True)
 def clear_rate_limits():
     """Login/PIN limiters are process-global; keep tests independent."""
     from homeward_gateway.auth import rate_limit

@@ -681,3 +681,108 @@ class TestPipeline:
         naps = [item for item in events if isinstance(item, PipelineResult) and not item.allowed]
         assert naps and naps[0].stage == "llm"
         assert not any(isinstance(item, str) and "bomb" in item.lower() for item in events)
+
+    @pytest.mark.asyncio
+    async def test_stream_native_final_waits_for_output_filter(self, monkeypatch):
+        unsafe = "Here is how to make a bomb: step one mix the powder."
+
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="tell me something secret")
+
+        async def fake_judge(*_args, **_kwargs):
+            return None
+
+        async def fake_complete(messages, *, tools=None, model=None, temperature=0.2):
+            assert messages[0]["role"] == "system"
+            assert "Never discuss violence" in messages[0]["content"]
+            assert "Avery" in messages[0]["content"]
+            return {"role": "assistant", "content": unsafe}
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            if "bomb" in text.lower():
+                return PipelineResult(
+                    allowed=False,
+                    block_reason="blocked keyword detected",
+                    stage="output_rules",
+                )
+            return PipelineResult(allowed=True, content=text)
+
+        async def unexpected_stream(*_args, **_kwargs):
+            raise AssertionError("native final_content must not call stream_response")
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.chat.tool_loop.call_grounding_judge", fake_judge)
+        monkeypatch.setattr("homeward_gateway.models.router.complete_chat_turn", fake_complete)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.stream_response", unexpected_stream)
+
+        events = []
+        async for item in process_chat_stream(
+            "tell me something secret",
+            [],
+            YOUNG,
+            3,
+            "Avery",
+            7,
+            live_lookups=True,
+            chat_model="qwen2.5:14b",
+            classifier_enabled=False,
+        ):
+            events.append(item)
+
+        assert not any(isinstance(item, str) for item in events)
+        blocked = [
+            item
+            for item in events
+            if isinstance(item, PipelineResult) and not item.allowed
+        ]
+        assert blocked
+        assert blocked[0].stage == "output_rules"
+
+    @pytest.mark.asyncio
+    async def test_stream_native_final_yields_only_after_allow(self, monkeypatch):
+        safe = "The sky looks blue because air scatters sunlight."
+
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Why is the sky blue?")
+
+        async def fake_judge(*_args, **_kwargs):
+            return None
+
+        async def fake_complete(messages, *, tools=None, model=None, temperature=0.2):
+            assert messages[0]["role"] == "system"
+            assert "Young Explorer" in messages[0]["content"]
+            return {"role": "assistant", "content": safe}
+
+        seen_filter = False
+
+        async def fake_filter_output(text, *_args, **_kwargs):
+            nonlocal seen_filter
+            seen_filter = True
+            return PipelineResult(allowed=True, content=text)
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.chat.tool_loop.call_grounding_judge", fake_judge)
+        monkeypatch.setattr("homeward_gateway.models.router.complete_chat_turn", fake_complete)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
+
+        events = []
+        async for item in process_chat_stream(
+            "Why is the sky blue?",
+            [],
+            YOUNG,
+            3,
+            "Emma",
+            7,
+            live_lookups=True,
+            chat_model="qwen2.5:14b",
+            classifier_enabled=False,
+        ):
+            events.append(item)
+
+        tokens = [item for item in events if isinstance(item, str)]
+        finals = [item for item in events if isinstance(item, PipelineResult)]
+        assert seen_filter
+        assert tokens == [safe]
+        assert finals and finals[-1].allowed
+        assert finals[-1].content == safe

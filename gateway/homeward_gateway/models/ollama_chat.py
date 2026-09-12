@@ -106,6 +106,24 @@ def _httpx_timeout(model: str) -> httpx.Timeout:
     return httpx.Timeout(connect=10.0, read=read_timeout, write=30.0, pool=5.0)
 
 
+async def chat_message(
+    model: str,
+    messages: list[dict],
+    *,
+    tools: list[dict] | None = None,
+    temperature: float = 0.2,
+) -> dict:
+    """One non-streaming /api/chat turn. Used for native tool-calling rounds."""
+    url = f"{settings.ollama_base_url.rstrip('/')}/api/chat"
+    payload = _chat_payload(model, messages, stream=False, temperature=temperature)
+    if tools:
+        payload["tools"] = tools
+    async with httpx.AsyncClient(timeout=_httpx_timeout(model)) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        return (resp.json() or {}).get("message") or {}
+
+
 async def chat_completion(
     model: str,
     messages: list[dict],
