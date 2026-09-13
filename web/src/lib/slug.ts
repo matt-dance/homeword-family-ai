@@ -1,7 +1,7 @@
 /** Slug helpers shared with the gateway. */
 
 export function slugifyName(name: string): string {
-  const slug = name
+  const slug = String(name ?? "")
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, "-")

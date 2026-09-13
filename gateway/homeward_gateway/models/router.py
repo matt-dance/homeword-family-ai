@@ -2,9 +2,7 @@
 
 import asyncio
 import logging
-from typing import AsyncIterator
-
-import litellm
+from typing import TYPE_CHECKING, AsyncIterator
 
 from homeward_gateway.config import settings
 from homeward_gateway.models.litellm_target import resolve_litellm_target
@@ -13,8 +11,18 @@ from homeward_gateway.models.prompts import build_system_prompt
 from homeward_gateway.models.response_limits import GENERATION_MAX_TOKENS
 from homeward_gateway.pipeline.policy import PolicyPreset
 
+if TYPE_CHECKING:
+    import litellm as litellm_module
+
 logger = logging.getLogger(__name__)
-litellm.set_verbose = False
+
+
+def _litellm() -> "litellm_module":
+    """Cloud path only — do not import LiteLLM for local Ollama collection/startup."""
+    import litellm
+
+    litellm.set_verbose = False
+    return litellm
 
 
 class EmptyModelResponseError(RuntimeError):
@@ -31,7 +39,8 @@ def strip_thinking(text: str) -> str:
 
 
 def _use_cloud() -> bool:
-    return bool(settings.cloud_enabled and settings.openai_api_key)
+    """True only when both cloud flags exist and are on. Missing attrs stay local."""
+    return bool(getattr(settings, "cloud_enabled", False) and getattr(settings, "openai_api_key", ""))
 
 
 def _build_messages(
@@ -107,7 +116,7 @@ async def complete_chat_turn(
             }
             if tools:
                 kwargs["tools"] = tools
-            response = await litellm.acompletion(**kwargs)
+            response = await _litellm().acompletion(**kwargs)
             return _litellm_message_dict(response.choices[0].message)
         return await chat_message(
             resolved_model,
@@ -146,7 +155,7 @@ async def generate_response(
     try:
         if _use_cloud():
             llm_model, api_key, api_base, llm_extra = resolve_litellm_target(model)
-            response = await litellm.acompletion(
+            response = await _litellm().acompletion(
                 model=llm_model,
                 messages=full_messages,
                 api_key=api_key,
@@ -197,7 +206,7 @@ async def stream_response(
     try:
         if _use_cloud():
             llm_model, api_key, api_base, llm_extra = resolve_litellm_target(model)
-            response = await litellm.acompletion(
+            response = await _litellm().acompletion(
                 model=llm_model,
                 messages=full_messages,
                 api_key=api_key,

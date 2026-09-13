@@ -4,6 +4,7 @@ import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, type Child } from "@/lib/api";
 import { chatPathForQuickChat, QUICK_CHAT_LABEL } from "@/lib/default-profile";
+import { isForceProfilePick } from "@/lib/chat-route-params";
 import { chatPathForChild } from "@/lib/slug";
 import {
   clearDeviceProfileId,
@@ -20,12 +21,19 @@ import { Sparkles, ArrowRight, Lock, BookOpen, Globe, Star, WifiOff, RotateCcw }
 function ChatPickerContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const forcePick = searchParams.get("pick") === "1";
+  const [clientSearch, setClientSearch] = useState<string | null>(null);
+  const forcePick = isForceProfilePick(searchParams, clientSearch);
+  const searchReady = searchParams != null || clientSearch != null;
   const [children, setChildren] = useState<Child[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
+    setClientSearch(window.location.search);
+  }, []);
+
+  useEffect(() => {
+    if (!searchReady) return;
     api
       .childrenPublic()
       .then((kids) => {
@@ -47,7 +55,7 @@ function ChatPickerContent() {
       // Never bounce LAN devices to /setup (the middleware sends them straight back here).
       .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
-  }, [router, forcePick]);
+  }, [router, forcePick, searchReady]);
 
   const handlePick = (child: Child) => {
     setDeviceProfileId(child.id);
