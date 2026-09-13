@@ -1,13 +1,13 @@
 "use client";
 
-import { KidSafeRouteError } from "@/components/kid-safe-route-error";
+import { KidChatRouteError } from "@/components/kid-chat-route-error";
 
-export default function KidChatRouteError({
+export default function KidChatRouteErrorPage({
   error,
   reset,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  return <KidSafeRouteError error={error} reset={reset} reportContext="kid-chat-route-error" />;
+  return <KidChatRouteError error={error} reset={reset} context="kid-chat-route-error" />;
 }

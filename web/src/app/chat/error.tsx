@@ -1,6 +1,6 @@
 "use client";
 
-import { KidSafeRouteError } from "@/components/kid-safe-route-error";
+import { KidChatRouteError } from "@/components/kid-chat-route-error";
 
 export default function ChatPickerRouteError({
   error,
@@ -9,5 +9,5 @@ export default function ChatPickerRouteError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  return <KidSafeRouteError error={error} reset={reset} reportContext="chat-picker-route-error" />;
+  return <KidChatRouteError error={error} reset={reset} context="kid-chat-picker-route-error" />;
 }

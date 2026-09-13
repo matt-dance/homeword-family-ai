@@ -9,6 +9,7 @@ describe("slugifyName", () => {
 
   it("falls back for empty slugs", () => {
     expect(slugifyName("!!!")).toBe("child");
+    expect(slugifyName(undefined as unknown as string)).toBe("child");
   });
 });
 

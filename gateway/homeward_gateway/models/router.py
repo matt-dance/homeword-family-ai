@@ -39,6 +39,7 @@ def strip_thinking(text: str) -> str:
 
 
 def _use_cloud() -> bool:
+    """True only when both cloud flags exist and are on. Missing attrs stay local."""
     return bool(getattr(settings, "cloud_enabled", False) and getattr(settings, "openai_api_key", ""))
 
 
