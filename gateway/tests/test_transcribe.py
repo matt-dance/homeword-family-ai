@@ -111,6 +111,17 @@ class TestFixtureResolution:
         assert flac.stat().st_size > 0
         assert webm.stat().st_size > 0
 
+    def test_package_directory_ships_jfk_fixtures(self):
+        """Cold pip/pack installs resolve homeward_gateway/fixtures, not tests/."""
+        packaged = Path(__file__).resolve().parents[1] / "homeward_gateway" / "fixtures"
+        flac = packaged / "jfk-sample.flac"
+        webm = packaged / "jfk-sample.webm"
+        assert flac.is_file() and flac.stat().st_size >= 50_000
+        assert webm.is_file() and webm.stat().st_size >= 5_000
+        resolved = resolve_fixture("jfk-sample.flac")
+        assert resolved.resolve() == flac.resolve()
+        assert "tests" not in resolved.parts[-3:]
+
     def test_installed_layout_uses_package_fixtures(self, tmp_path: Path):
         voice = tmp_path / "homeward_gateway" / "voice"
         packaged = tmp_path / "homeward_gateway" / "fixtures"

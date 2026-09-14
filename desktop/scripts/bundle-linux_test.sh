@@ -11,6 +11,25 @@ TIP_HOMEWARD="$TIP_STAGE/homeward"
 
 test -x "$SCRIPT"
 
+ENSURE="$ROOT/desktop/scripts/ensure-transcribe-fixtures.sh"
+test -x "$ENSURE"
+
+# Family packs must ship JFK clips at homeward_gateway/fixtures (self-test path).
+# Missing files used to 503 GET /api/v1/chat/transcribe/self-test (#71).
+"$ENSURE" source "$ROOT/gateway"
+test -s "$ROOT/gateway/homeward_gateway/fixtures/jfk-sample.flac"
+test -s "$ROOT/gateway/homeward_gateway/fixtures/jfk-sample.webm"
+test -s "$ROOT/gateway/tests/fixtures/jfk-sample.flac"
+test -s "$ROOT/gateway/tests/fixtures/jfk-sample.webm"
+grep -q 'ensure-transcribe-fixtures.sh' "$SCRIPT"
+grep -q 'ensure-transcribe-fixtures.sh' "$ROOT/desktop/scripts/bundle-macos.sh"
+grep -q 'ensure-transcribe-fixtures.sh' "$ROOT/desktop/scripts/bundle-windows.sh"
+
+if "$ENSURE" source "$ROOT/does-not-exist" >/dev/null 2>&1; then
+  echo "source check should fail when the gateway dir is missing" >&2
+  exit 1
+fi
+
 # Official Linux engine is .tar.zst (v0.33.3+); .tgz / .tar.gz 404.
 if grep -qE 'ollama-linux-amd64\.(tgz|tar\.gz)' "$SCRIPT"; then
   echo "install_ollama still hardcodes .tgz/.tar.gz (404 on current Ollama)" >&2
@@ -140,3 +159,32 @@ if [[ -n "$TIP_CKSUM" ]]; then
     exit 1
   fi
 fi
+
+# Pack-time install copies clips into site-packages/homeward_gateway/fixtures
+# even when hatch did not include them (the #71 503 path).
+FAKE_SITE="$WORK/fake-site"
+mkdir -p "$FAKE_SITE/homeward_gateway"
+printf '%s\n' '"""fake installed gateway"""' > "$FAKE_SITE/homeward_gateway/__init__.py"
+PYTHONPATH="$FAKE_SITE" "$ENSURE" install python3 "$ROOT/gateway"
+test -s "$FAKE_SITE/homeward_gateway/fixtures/jfk-sample.flac"
+test -s "$FAKE_SITE/homeward_gateway/fixtures/jfk-sample.webm"
+python3 -c '
+import os, sys
+flac, webm = sys.argv[1], sys.argv[2]
+assert os.path.getsize(flac) >= 50_000, flac
+assert os.path.getsize(webm) >= 5_000, webm
+' "$FAKE_SITE/homeward_gateway/fixtures/jfk-sample.flac" \
+  "$FAKE_SITE/homeward_gateway/fixtures/jfk-sample.webm"
+
+EMPTY_GW="$WORK/empty-gateway"
+mkdir -p "$EMPTY_GW/homeward_gateway/fixtures" "$EMPTY_GW/tests/fixtures"
+printf '%s\n' 'tiny' > "$EMPTY_GW/tests/fixtures/jfk-sample.flac"
+printf '%s\n' 'tiny' > "$EMPTY_GW/tests/fixtures/jfk-sample.webm"
+FRESH_SITE="$WORK/fresh-site"
+mkdir -p "$FRESH_SITE/homeward_gateway"
+printf '%s\n' '"""fake installed gateway"""' > "$FRESH_SITE/homeward_gateway/__init__.py"
+if PYTHONPATH="$FRESH_SITE" "$ENSURE" install python3 "$EMPTY_GW" >/dev/null 2>&1; then
+  echo "install check should fail when source fixtures are truncated" >&2
+  exit 1
+fi
+test ! -e "$FRESH_SITE/homeward_gateway/fixtures/jfk-sample.flac"
