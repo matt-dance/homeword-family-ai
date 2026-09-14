@@ -47,3 +47,18 @@ func TestChildEnvNativeFlags(t *testing.T) {
 		t.Fatalf("ESPEAK_DATA_PATH=%q", lookup(items, "ESPEAK_DATA_PATH"))
 	}
 }
+
+func TestChildEnvDropsStaleCloudVars(t *testing.T) {
+	t.Setenv("HOMEWARD_CLOUD_ENABLED", "true")
+	t.Setenv("HOMEWARD_OPENAI_API_KEY", "sk-leftover")
+	items := ChildEnv("/data", "/policies", "/app/Contents/Resources")
+	if lookup(items, "HOMEWARD_CLOUD_ENABLED") != "" {
+		t.Fatal("stale HOMEWARD_CLOUD_ENABLED must not be inherited")
+	}
+	if lookup(items, "HOMEWARD_OPENAI_API_KEY") != "" {
+		t.Fatal("stale HOMEWARD_OPENAI_API_KEY must not be inherited")
+	}
+	if lookup(items, "HOMEWARD_MANAGED") != "true" {
+		t.Fatal("HOMEWARD_MANAGED")
+	}
+}

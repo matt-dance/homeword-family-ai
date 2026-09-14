@@ -15,4 +15,4 @@ There is no bug bounty. We will try to acknowledge reports when we can.
 
 - Parent dashboard and setup are intended to work only on the Homeward computer (`http://localhost`).
 - Kid chat on the LAN (`http://homeward.local/chat`) is intentionally reachable on the home Wi‑Fi.
-- Cloud / bring-your-own-key models are not a supported parent feature yet.
+- Cloud / bring-your-own-key models are not a supported parent feature. Leftover `HOMEWARD_CLOUD_ENABLED` and `HOMEWARD_OPENAI_API_KEY` environment variables are ignored and cannot send kid chats to OpenAI.

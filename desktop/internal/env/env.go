@@ -30,6 +30,13 @@ func ChildEnv(dataDir, policiesDir, resourceRoot string) []string {
 		"ESPEAK_DATA_PATH":           espeakData,
 	}
 
+	// Removed cloud/OpenAI path (#62). Do not inherit leftover installer env
+	// that used to bind Settings.cloud_enabled / openai_api_key.
+	staleCloud := map[string]struct{}{
+		"HOMEWARD_CLOUD_ENABLED":  {},
+		"HOMEWARD_OPENAI_API_KEY": {},
+	}
+
 	env := os.Environ()
 	result := make([]string, 0, len(env)+len(overrides))
 	seen := make(map[string]struct{}, len(overrides))
@@ -38,6 +45,9 @@ func ChildEnv(dataDir, policiesDir, resourceRoot string) []string {
 		key, _, ok := strings.Cut(item, "=")
 		if !ok {
 			result = append(result, item)
+			continue
+		}
+		if _, drop := staleCloud[key]; drop {
 			continue
 		}
 		if value, ok := overrides[key]; ok {
