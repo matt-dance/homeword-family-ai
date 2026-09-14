@@ -1,6 +1,6 @@
 /** Slug helpers shared with the gateway. */
 
-export function slugifyName(name: string): string {
+export function slugifyName(name: string | null | undefined): string {
   const slug = String(name ?? "")
     .toLowerCase()
     .trim()
