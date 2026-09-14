@@ -48,6 +48,8 @@ HOST="$(uname -s)"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ENSURE_TRANSCRIBE_FIXTURES="$SCRIPT_DIR/ensure-transcribe-fixtures.sh"
+bash "$ENSURE_TRANSCRIBE_FIXTURES" source "$REPO/gateway"
 APP="$REPO/dist/macos/$ARCH/Homeward.app"
 CONTENTS="$APP/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
@@ -420,6 +422,7 @@ install_python_gateway() {
   # lives inside the .app; we own it and must install the gateway here.
   rm -f "$RUNTIME/python"/lib/python3.*/EXTERNALLY-MANAGED
   uv pip install --python "$RUNTIME/python/bin/python" --break-system-packages "$REPO/gateway"
+  bash "$ENSURE_TRANSCRIBE_FIXTURES" install "$RUNTIME/python/bin/python" "$REPO/gateway"
   rm -rf "$managed"
 }
 

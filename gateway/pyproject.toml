@@ -38,6 +38,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["homeward_gateway"]
 
+# Self-test clips also live in homeward_gateway/fixtures/ so a wheel includes
+# them as package data even if force-include is skipped. Keep this mapping so
+# tests/fixtures remains a valid source for Docker and older checkouts.
 [tool.hatch.build.targets.wheel.force-include]
 "tests/fixtures/jfk-sample.flac" = "homeward_gateway/fixtures/jfk-sample.flac"
 "tests/fixtures/jfk-sample.webm" = "homeward_gateway/fixtures/jfk-sample.webm"

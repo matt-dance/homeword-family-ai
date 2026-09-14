@@ -59,6 +59,8 @@ is_windows_host() {
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ENSURE_TRANSCRIBE_FIXTURES="$SCRIPT_DIR/ensure-transcribe-fixtures.sh"
+bash "$ENSURE_TRANSCRIBE_FIXTURES" source "$REPO/gateway"
 OUT_DIR="${HOMEWARD_BUNDLE_OUT_DIR:-$REPO/dist/windows/$ARCH}"
 if [[ "$OUT_DIR" != /* && "$OUT_DIR" != [A-Za-z]:* ]]; then
   OUT_DIR="$REPO/$OUT_DIR"
@@ -235,6 +237,7 @@ install_python_gateway() {
   fi
   rm -f "$RUNTIME/python"/Lib/EXTERNALLY-MANAGED
   uv pip install --python "$RUNTIME/python/python.exe" --break-system-packages "$REPO/gateway"
+  bash "$ENSURE_TRANSCRIBE_FIXTURES" install "$RUNTIME/python/python.exe" "$REPO/gateway"
   rm -rf "$managed"
 }
 

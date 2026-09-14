@@ -55,6 +55,7 @@ HOST="$(uname -s)"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ENSURE_TRANSCRIBE_FIXTURES="$SCRIPT_DIR/ensure-transcribe-fixtures.sh"
 OUT_DIR="${HOMEWARD_BUNDLE_OUT_DIR:-$REPO/dist/linux/$ARCH}"
 if [[ "$OUT_DIR" != /* ]]; then
   OUT_DIR="$REPO/$OUT_DIR"
@@ -209,6 +210,8 @@ copy_or_build_supervisor() {
 
 copy_or_build_supervisor
 
+bash "$ENSURE_TRANSCRIBE_FIXTURES" source "$REPO/gateway"
+
 copy_web_standalone() {
   local standalone="$REPO/web/.next/standalone"
   if [[ ! -d "$standalone" ]]; then
@@ -310,6 +313,7 @@ install_python_gateway() {
   esac
   rm -f "$RUNTIME/python"/lib/python3.*/EXTERNALLY-MANAGED
   uv pip install --python "$RUNTIME/python/bin/python" --break-system-packages "$REPO/gateway"
+  bash "$ENSURE_TRANSCRIBE_FIXTURES" install "$RUNTIME/python/bin/python" "$REPO/gateway"
   rm -rf "$managed"
 }
 
