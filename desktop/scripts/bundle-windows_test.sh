@@ -83,6 +83,12 @@ grep -q 'espeak_ng.exe' "$SCRIPT" "$STAGE_ESPEAK"
 grep -q 'start /wait' "$SCRIPT"
 grep -q 'cmd.exe //c' "$SCRIPT"
 
+# ISCC under Program Files (x86): one quoted cmd.exe /c line (Release v0.1.1).
+ISCC_CMD="$ROOT/desktop/scripts/iscc-windows-cmd.sh"
+test -x "$ISCC_CMD"
+grep -q 'iscc-windows-cmd.sh' "$EXE_SCRIPT"
+grep -q 'cmd.exe //c' "$EXE_SCRIPT"
+
 FAKE_MSI="$WORK/fake-msi"
 mkdir -p "$FAKE_MSI"
 printf 'MZ' > "$FAKE_MSI/espeak_ng.exe"

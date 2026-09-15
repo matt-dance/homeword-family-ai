@@ -95,8 +95,9 @@ find_iscc() {
 }
 
 run_iscc() {
-  local source_dir output_dir iss_path
-  local -a defs
+  local source_dir output_dir iss_path cmd_str iscc_bin st
+  local -a defs def_args
+  local iscc_cmd="$SCRIPT_DIR/iscc-windows-cmd.sh"
   source_dir="$(unix_to_iss_path "$STAGE")"
   output_dir="$(unix_to_iss_path "$OUT_DIR")"
   iss_path="$(unix_to_iss_path "$ISS")"
@@ -105,22 +106,36 @@ run_iscc() {
     "/DHomewardSourceDir=$source_dir"
     "/DHomewardOutputDir=$output_dir"
   )
+  def_args=(
+    --define "MyAppVersion=$VERSION"
+    --define "HomewardSourceDir=$source_dir"
+    --define "HomewardOutputDir=$output_dir"
+  )
   if [[ -f "$REPO/desktop/pack/icon.ico" ]]; then
     defs+=( "/DHomewardIcon=$(unix_to_iss_path "$REPO/desktop/pack/icon.ico")" )
+    def_args+=( --define "HomewardIcon=$(unix_to_iss_path "$REPO/desktop/pack/icon.ico")" )
   elif [[ -f "$STAGE/resources/icon.ico" ]]; then
     defs+=( "/DHomewardIcon=$(unix_to_iss_path "$STAGE/resources/icon.ico")" )
+    def_args+=( --define "HomewardIcon=$(unix_to_iss_path "$STAGE/resources/icon.ico")" )
   fi
 
   if iscc_bin="$(find_iscc)"; then
     echo "compiling Inno Setup with $iscc_bin"
-    "$iscc_bin" "${defs[@]}" "$iss_path"
-    return 0
+    # Git Bash splits "Program Files (x86)" and rewrites /D* into extra
+    # script filenames. Invoke via cmd.exe /c with one quoted command line.
+    cmd_str="$("$iscc_cmd" --iscc "$iscc_bin" --iss "$ISS" "${def_args[@]}")"
+    echo "ISCC command: $cmd_str"
+    # //c → /c under Git Bash. /D defines stay inside $cmd_str (one argv).
+    cmd.exe //c "$cmd_str"
+    st=$?
+    return "$st"
   fi
 
   if command -v wine >/dev/null 2>&1 && [[ -n "${HOMEWARD_WINE_ISCC:-}" && -f "$HOMEWARD_WINE_ISCC" ]]; then
     echo "compiling Inno Setup with wine"
     wine "$HOMEWARD_WINE_ISCC" "${defs[@]}" "$iss_path"
-    return 0
+    st=$?
+    return "$st"
   fi
 
   if command -v docker >/dev/null 2>&1; then
@@ -133,7 +148,8 @@ run_iscc() {
       "/DHomewardSourceDir=/out/Homeward-windows-amd64" \
       "/DHomewardOutputDir=/out" \
       /work/desktop/pack/homeward.iss
-    return 0
+    st=$?
+    return "$st"
   fi
 
   return 1
@@ -157,7 +173,7 @@ if [[ "${HOMEWARD_EXE_SKIP_COMPILE:-0}" == "1" ]]; then
 fi
 
 if ! run_iscc; then
-  echo "Inno Setup compiler (ISCC) not found." >&2
+  echo "Inno Setup compile failed (ISCC missing, or the .iss was not a single argument)." >&2
   echo "Install Inno Setup 6 on Windows, or set docker, or HOMEWARD_EXE_SKIP_COMPILE=1 for payload-only." >&2
   exit 1
 fi

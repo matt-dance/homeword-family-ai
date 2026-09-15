@@ -352,23 +352,74 @@ install_ollama() {
   rm -rf "$tmp"
 }
 
+ffmpeg_linux_urls() {
+  # GitHub release assets first: johnvansickle.com returned a non-xz (HTML)
+  # body to GitHub-hosted Linux runners (Release v0.1.1, ~0.6s, xz failed).
+  if [[ -n "${HOMEWARD_FFMPEG_LINUX_URL:-}" ]]; then
+    printf '%s\n' "$HOMEWARD_FFMPEG_LINUX_URL"
+  fi
+  printf '%s\n' \
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz" \
+    "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+}
+
+extract_ffmpeg_archive() {
+  local archive="$1" dest="$2" kind="$3"
+  case "$kind" in
+    xz) tar -xJf "$archive" -C "$dest" ;;
+    gz) tar -xzf "$archive" -C "$dest" ;;
+    tar) tar -xf "$archive" -C "$dest" ;;
+    zip)
+      python3 -c 'import zipfile, sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+        "$archive" "$dest"
+      ;;
+    *)
+      echo "unsupported ffmpeg archive kind: $kind" >&2
+      return 1
+      ;;
+  esac
+}
+
 install_ffmpeg() {
-  # Static official-style build so the tarball does not need distro ffmpeg.
-  local tmp src
+  # Static build so the tarball does not need distro ffmpeg.
+  local tmp archive extract_dir url ctype kind src
+  local check="$SCRIPT_DIR/check-download-archive.sh"
   tmp="$(mktemp -d)"
-  echo "downloading static linux amd64 ffmpeg"
-  if curl -fsSL -A "homeward-bundle" \
-    -o "$tmp/ffmpeg.tar.xz" \
-    "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"; then
-    tar -xJf "$tmp/ffmpeg.tar.xz" -C "$tmp"
-    src="$(find "$tmp" -type f -name ffmpeg | head -n 1 || true)"
-    if [[ -n "$src" ]]; then
+  archive="$tmp/ffmpeg.archive"
+  extract_dir="$tmp/extract"
+  while IFS= read -r url; do
+    [[ -z "$url" ]] && continue
+    echo "downloading static linux amd64 ffmpeg from $url"
+    rm -rf "$archive" "$extract_dir"
+    mkdir -p "$extract_dir"
+    ctype=""
+    if ! ctype="$(curl -sS -f -L --retry 3 --retry-delay 2 \
+      -A "Mozilla/5.0 (compatible; HomewardPackager/1.0; +https://github.com/matt-dance/homeword-family-ai)" \
+      -o "$archive" \
+      -w '%{content_type}' \
+      "$url")"; then
+      echo "ffmpeg download failed: $url" >&2
+      continue
+    fi
+    if ! kind="$(bash "$check" --min-bytes 1048576 --content-type "$ctype" "$archive")"; then
+      echo "ffmpeg download from $url is not an xz/tar/zip archive (not extracting)" >&2
+      continue
+    fi
+    echo "ffmpeg archive ok ($kind, $(wc -c < "$archive") bytes)"
+    if ! extract_ffmpeg_archive "$archive" "$extract_dir" "$kind"; then
+      echo "ffmpeg extract failed ($kind) from $url" >&2
+      continue
+    fi
+    src="$(find "$extract_dir" -type f -name ffmpeg | head -n 1 || true)"
+    if [[ -n "$src" ]] && is_linux_amd64_elf "$src"; then
       cp "$src" "$RUNTIME/ffmpeg/bin/ffmpeg"
       chmod +x "$RUNTIME/ffmpeg/bin/ffmpeg"
       rm -rf "$tmp"
       return 0
     fi
-  fi
+    echo "ffmpeg binary missing or not linux amd64 ELF from $url" >&2
+  done < <(ffmpeg_linux_urls)
+
   rm -rf "$tmp"
   if command -v ffmpeg >/dev/null 2>&1; then
     echo "static ffmpeg download failed; copying host ffmpeg (may need distro libs)"
@@ -376,7 +427,7 @@ install_ffmpeg() {
     chmod +x "$RUNTIME/ffmpeg/bin/ffmpeg"
     return 0
   fi
-  echo "ffmpeg missing (download static linux build or install ffmpeg)" >&2
+  echo "ffmpeg missing (static linux download was not xz/tar, and no host ffmpeg)" >&2
   exit 1
 }
 

@@ -67,4 +67,6 @@ jobs:
           bash desktop/scripts/bundle-windows_test.sh
           bash desktop/scripts/release-workflow_test.sh
           bash desktop/scripts/verify-linux-tarball_test.sh
+          bash desktop/scripts/check-download-archive_test.sh
+          bash desktop/scripts/iscc-windows-cmd_test.sh
 
