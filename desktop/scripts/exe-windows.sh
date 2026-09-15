@@ -95,7 +95,7 @@ find_iscc() {
 }
 
 run_iscc() {
-  local source_dir output_dir iss_path cmd_str iscc_bin st
+  local source_dir output_dir iss_path iscc_bin st
   local -a defs def_args
   local iscc_cmd="$SCRIPT_DIR/iscc-windows-cmd.sh"
   source_dir="$(unix_to_iss_path "$STAGE")"
@@ -122,11 +122,11 @@ run_iscc() {
   if iscc_bin="$(find_iscc)"; then
     echo "compiling Inno Setup with $iscc_bin"
     # Git Bash splits "Program Files (x86)" and rewrites /D* into extra
-    # script filenames. Invoke via cmd.exe /c with one quoted command line.
-    cmd_str="$("$iscc_cmd" --iscc "$iscc_bin" --iss "$ISS" "${def_args[@]}")"
-    echo "ISCC command: $cmd_str"
-    # //c → /c under Git Bash. /D defines stay inside $cmd_str (one argv).
-    cmd.exe //c "$cmd_str"
+    # script filenames. Do not wrap a pre-quoted ISCC command line for
+    # cmd.exe: MSYS escapes inner quotes so cmd sees a literal
+    # backslash-quote before C:\Program Files (x86)\ISCC.exe (v0.1.2).
+    # Invoke ISCC with argv + MSYS2_ARG_CONV_EXCL (see iscc-windows-cmd.sh).
+    "$iscc_cmd" --exec --iscc "$iscc_bin" --iss "$ISS" "${def_args[@]}"
     st=$?
     return "$st"
   fi

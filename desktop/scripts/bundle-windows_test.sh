@@ -83,11 +83,16 @@ grep -q 'espeak_ng.exe' "$SCRIPT" "$STAGE_ESPEAK"
 grep -q 'start /wait' "$SCRIPT"
 grep -q 'cmd.exe //c' "$SCRIPT"
 
-# ISCC under Program Files (x86): one quoted cmd.exe /c line (Release v0.1.1).
+# ISCC under Program Files (x86): argv + MSYS2_ARG_CONV_EXCL (not cmd.exe /c).
 ISCC_CMD="$ROOT/desktop/scripts/iscc-windows-cmd.sh"
 test -x "$ISCC_CMD"
 grep -q 'iscc-windows-cmd.sh' "$EXE_SCRIPT"
-grep -q 'cmd.exe //c' "$EXE_SCRIPT"
+grep -q -- '--exec' "$EXE_SCRIPT"
+grep -q 'MSYS2_ARG_CONV_EXCL' "$ISCC_CMD"
+if grep -vE '^[[:space:]]*#' "$EXE_SCRIPT" | grep -qE 'cmd\.exe[[:space:]]+//c'; then
+  echo "exe-windows.sh must not invoke ISCC via cmd.exe (v0.1.2 quote escape)" >&2
+  exit 1
+fi
 
 FAKE_MSI="$WORK/fake-msi"
 mkdir -p "$FAKE_MSI"
