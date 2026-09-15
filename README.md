@@ -7,7 +7,7 @@ Homeward helps parents. It is not a babysitter, not fail-closed, and not a guara
 ## Design goals
 
 - **Super easy setup** — no terminal, no technical knowledge for day-to-day use
-- **Local AI included** — Ollama runs automatically (Docker today; native `.dmg` / `.exe` installer later)
+- **Local AI included** — Ollama runs automatically (native installers on [GitHub Releases](https://github.com/matt-dance/homeword-family-ai/releases/latest), or Docker)
 - **Simple model picking** — choose a model in the setup wizard and click Download
 - **Privacy first** — chat and settings stay on your computer
 
@@ -26,26 +26,38 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 - **Age presets** — Young Explorer (5–8), Curious Explorer (9–12), Teen Guided (13–17)
 - **Parent dashboard** — conversation sessions, blocked attempts, model management
 - **Kid chat UI** — simple streaming chat with profile picker and friendly blocked messages
-- **Cross-platform** — Docker Compose on Mac, Windows, and Linux today
+- **Cross-platform** — native `.dmg` / `.exe` / Linux tarball, plus Docker Compose
 
 ## Quick Start (recommended)
 
-**Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or Docker + Compose (Linux)
+Family installers (no Docker, no terminal for day-to-day use) are on **[GitHub Releases](https://github.com/matt-dance/homeword-family-ai/releases/latest)**.
 
-### Get the code
+| Computer | File | How to install |
+|----------|------|----------------|
+| macOS (Apple silicon) | `Homeward-macos-arm64.dmg` | Open the disk image and drag Homeward to Applications |
+| Windows 10/11 (64-bit) | `Homeward-windows-amd64.exe` | Run the installer. SmartScreen will warn (unsigned): More info → Run anyway |
+| Linux (amd64, GNOME-style desktop) | `Homeward-linux-amd64.tar.gz` | Extract, then `./install.sh` (no root). That writes a desktop/autostart entry |
+
+Chat models are **not** inside the installer. After install, on **this computer** open **http://localhost:43123** to finish setup. Kids on the same Wi‑Fi open **http://homeward.local:43123/chat**.
+
+macOS builds from GitHub Actions are unsigned unless a Mac builder is configured with a Developer ID; Gatekeeper may block first launch (System Settings → Privacy & Security).
+
+### Docker (contributors and alternative)
+
+**Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or Docker + Compose (Linux)
 
 ```bash
 git clone https://github.com/matt-dance/homeword-family-ai.git
 cd homeword-family-ai
 ```
 
-### Mac / Linux
+Mac / Linux:
 
 ```bash
 ./scripts/install.sh
 ```
 
-### Windows (PowerShell)
+Windows (PowerShell):
 
 ```powershell
 .\scripts\install.ps1
@@ -57,21 +69,21 @@ Kids on the same Wi‑Fi open **http://homeward.local/chat**.
 
 ### Who uses which URL
 
-Install does **not** edit `/etc/hosts`. On this computer, use `localhost` for setup and the dashboard. Other devices resolve `homeward.local` via mDNS when the gateway is running (Docker includes an mDNS sidecar).
+Install does **not** edit `/etc/hosts`. On this computer, use `localhost` for setup and the dashboard. Other devices resolve `homeward.local` via mDNS when the gateway is running.
 
-| Who | URL | What works |
-|-----|-----|------------|
-| Parent on the Homeward computer | http://localhost | Setup, dashboard, settings, kid chat |
-| Kids on other devices (same Wi‑Fi) | http://homeward.local/chat | Kid chat only |
+| Who | Native installer | Docker |
+|-----|------------------|--------|
+| Parent on the Homeward computer | http://localhost:43123 | http://localhost |
+| Kids on other devices (same Wi‑Fi) | http://homeward.local:43123/chat | http://homeward.local/chat |
 
-Native development uses `http://localhost:43123` instead of port 80. mDNS for other devices starts with the gateway — no separate step needed.
+Native development also uses `http://localhost:43123` instead of port 80. mDNS for other devices starts with the gateway — no separate step needed.
 
 ### How access is protected
 
 - **Parent dashboard is host-only.** Every parent API route requires both the parent session cookie *and* a request from this computer. Login, setup and password reset are rate limited.
 - **Child PINs are enforced by the server.** A correct PIN gives that browser a signed, `HttpOnly` cookie for that child; named-profile chat, sessions, homework, and "continue last chat" refuse without it. PINs are stored hashed.
 - **Quick Chat is anonymous.** `/chat/quick` uses the household default profile's age and safety settings, but does **not** require that child's PIN and does **not** inject named-kid memory. Quick Chat sessions are stored separately from named-profile chats, so a Quick Chat request cannot attach to Avery's (or any named) history. Named profiles (`/chat/avery`, and so on) stay PIN-gated.
-- **Ports.** Only the web app (port 80) is reachable from the LAN. In Docker the gateway (8000) and Ollama (11434) are bound to `127.0.0.1` so kids' devices cannot bypass Homeward's filters by talking to the model directly. For native dev, run the gateway with `--host 127.0.0.1` for the same effect.
+- **Ports.** Only the web app is reachable from the LAN (port **43123** on a native installer, port **80** in Docker). The gateway (8000) and Ollama (11434) stay on `127.0.0.1` so kids' devices cannot bypass Homeward's filters by talking to the model directly. For native development, run the gateway with `--host 127.0.0.1` for the same effect.
 - **Chat history is server-side.** The model only sees prior turns from Homeward's own log, never text supplied by the client.
 
 That's it — Homeward starts **Ollama automatically** and begins downloading a recommended AI model on first launch.
@@ -85,13 +97,17 @@ That's it — Homeward starts **Ollama automatically** and begins downloading a 
 
 ### Stop
 
+Native install: **Quit Homeward** from the menu bar / tray.
+
+Docker:
+
 ```bash
 docker compose down
 ```
 
 ## What parents never need to do
 
-When using Docker (recommended):
+When using a native installer or Docker:
 
 - Install Ollama separately
 - Run `ollama serve`
@@ -100,17 +116,17 @@ When using Docker (recommended):
 
 The setup wizard handles model selection and download with plain-language buttons.
 
-## Roadmap: native installers
+## Native installers
 
-Docker is the supported easy path **today**. Next step for non-technical families:
+Native family installers ship on each version tag (`v*`) at **[GitHub Releases](https://github.com/matt-dance/homeword-family-ai/releases/latest)**.
 
-| Platform | Goal |
-|----------|------|
-| **macOS** | Signed `.dmg` that installs Homeward + Ollama + dependencies |
-| **Windows** | `.exe` installer with the same one-click experience |
-| **Linux** | AppImage or distro packages |
+| Platform | Artifact |
+|----------|----------|
+| **macOS** | UDZO `.dmg` (`Homeward-macos-arm64.dmg` on Apple silicon) |
+| **Windows** | Inno Setup `.exe` (`Homeward-windows-amd64.exe`, unsigned) |
+| **Linux** | `.tar.gz` + `install.sh` (`Homeward-linux-amd64.tar.gz`, desktop/autostart entry) |
 
-The in-app model picker and Ollama management UI are built to work the same way in both Docker and future native installs.
+Docker Compose stays available for contributors. The in-app model picker and Ollama management UI work the same way on native and Docker installs.
 
 ## Native Development Install
 
