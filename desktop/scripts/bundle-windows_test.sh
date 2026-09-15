@@ -74,3 +74,36 @@ fi
 HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1 HOMEWARD_BUNDLE_OUT_DIR="$OUT_DIR" \
   HOMEWARD_EXE_SKIP_BUNDLE=1 HOMEWARD_EXE_SKIP_COMPILE=1 \
   "$EXE_SCRIPT" amd64
+
+# espeak-ng 1.52.0 MSI: 7-Zip emits short names; stage both + wait on msiexec.
+STAGE_ESPEAK="$ROOT/desktop/scripts/stage-windows-espeak.sh"
+test -x "$STAGE_ESPEAK"
+grep -q 'stage-windows-espeak.sh' "$SCRIPT"
+grep -q 'espeak_ng.exe' "$SCRIPT" "$STAGE_ESPEAK"
+grep -q 'start /wait' "$SCRIPT"
+grep -q 'cmd.exe //c' "$SCRIPT"
+
+FAKE_MSI="$WORK/fake-msi"
+mkdir -p "$FAKE_MSI"
+printf 'MZ' > "$FAKE_MSI/espeak_ng.exe"
+printf 'MZ' > "$FAKE_MSI/libespeak_ng.dll"
+printf 'phontab' > "$FAKE_MSI/phontab"
+printf 'en' > "$FAKE_MSI/en_dict"
+FAKE_RUNTIME="$WORK/runtime-espeak"
+"$STAGE_ESPEAK" "$FAKE_MSI" "$FAKE_RUNTIME"
+test -f "$FAKE_RUNTIME/bin/espeak-ng.exe"
+test -f "$FAKE_RUNTIME/bin/libespeak-ng.dll"
+test -f "$FAKE_RUNTIME/share/espeak-ng-data/phontab"
+test -f "$FAKE_RUNTIME/share/espeak-ng-data/en_dict"
+
+# msiexec /a long names + espeak-ng-data directory.
+FAKE_ADMIN="$WORK/fake-admin/eSpeak NG"
+mkdir -p "$FAKE_ADMIN/espeak-ng-data"
+printf 'MZ' > "$FAKE_ADMIN/espeak-ng.exe"
+printf 'MZ' > "$FAKE_ADMIN/libespeak-ng.dll"
+printf 'phontab' > "$FAKE_ADMIN/espeak-ng-data/phontab"
+FAKE_RUNTIME2="$WORK/runtime-espeak-admin"
+"$STAGE_ESPEAK" "$WORK/fake-admin" "$FAKE_RUNTIME2"
+test -f "$FAKE_RUNTIME2/bin/espeak-ng.exe"
+test -f "$FAKE_RUNTIME2/bin/libespeak-ng.dll"
+test -f "$FAKE_RUNTIME2/share/espeak-ng-data/phontab"

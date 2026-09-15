@@ -69,17 +69,7 @@ jobs:
         run: ./desktop/scripts/bundle-linux.sh amd64
 
       - name: Verify tarball
-        run: |
-          tarball=dist/linux/amd64/Homeward-linux-amd64.tar.gz
-          test -f "$tarball"
-          tar -tzf "$tarball" | grep -qx 'Homeward-linux-amd64/install.sh'
-          tar -tzf "$tarball" | grep -qx 'Homeward-linux-amd64/uninstall.sh'
-          tar -tzf "$tarball" | grep -qx 'Homeward-linux-amd64/homeward'
-          tar -xOf "$tarball" Homeward-linux-amd64/homeward | python3 -c \
-            'import sys; d=sys.stdin.buffer.read(4); assert d==b"\x7fELF", d'
-          tar -xOf "$tarball" Homeward-linux-amd64/install.sh | grep -q 'Desktop Entry'
-          tar -xOf "$tarball" Homeward-linux-amd64/install.sh | grep -q 'autostart/homeward.desktop'
-          ls -lh "$tarball"
+        run: bash desktop/scripts/verify-linux-tarball.sh dist/linux/amd64/Homeward-linux-amd64.tar.gz
 
       - uses: actions/upload-artifact@v4
         with:

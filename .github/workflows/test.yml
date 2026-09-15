@@ -66,4 +66,5 @@ jobs:
           bash desktop/scripts/bundle-linux_test.sh
           bash desktop/scripts/bundle-windows_test.sh
           bash desktop/scripts/release-workflow_test.sh
+          bash desktop/scripts/verify-linux-tarball_test.sh
 
