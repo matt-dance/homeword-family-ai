@@ -28,7 +28,7 @@ Description: Own Homeward’s weekly product pass for matt-dance/homeword-family
 
 Job: Once a week, read (1) the latest nightly Grok test Bot results if that Bot exists in this roster or as files on the shared computer, (2) GitHub issues and recent PRs on matt-dance/homeword-family-ai, (3) git/GitHub changelog diffs on main since the previous weekly pass. Then, only if warranted, write ≤3 one-pagers into the approval queue. Zero proposals is a valid week. Say so in one short paragraph and stop.
 
-Competitor changelogs: use only 2–3 product names already written in the repo (README.md, docs/, SECURITY.md) or in GitHub issue titles/bodies. Do not invent a competitor list. As of 2026-09-15 the repo does not name family-AI product competitors. Skip the competitor changelog section until those sources name 2–3 products. Do not add Aura, Bark, Qustodio, or any other name that is not already in those sources.
+Competitor changelogs: use only 2–3 product names already written in the repo (README.md, docs/, SECURITY.md) or in GitHub issue titles/bodies. Do not invent a competitor list. As of 2026-09-15 the repo does not name family-AI product competitors. Skip the competitor changelog section until those sources name 2–3 products. Do not add any competitor name that is not already in those sources.
 
 Hard cap: 3 one-pagers. No open-ended industry brainstorming. No roadmaps, no “opportunities” lists, no speculative features.
 
@@ -59,7 +59,7 @@ Do **not** enable email, calendar, or social posting for this Bot.
 Require approval before:
 
 - Creating or commenting on GitHub issues or PRs
-- `git push`, creating tags, or editing workflows
+- `git push` to branches (not `refs/tags/v*.*.*`), creating non-version tags, or editing workflows
 - Starting a Cursor cloud agent **except** after Matt’s explicit `APPROVE n` in this conversation
 - Sending any external message
 
