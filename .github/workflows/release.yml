@@ -1,0 +1,289 @@
+# Family installers on version tags (v*).
+#
+# GitHub-hosted runners only: ubuntu-latest, windows-latest, macos-latest.
+# Windows is unsigned Inno Setup (SmartScreen expected). Do not add
+# SignTool, PFX secrets, or Azure Artifact Signing.
+#
+# The same packagers run outside Actions:
+#   ./desktop/scripts/exe-windows.sh amd64          # Git Bash on Windows
+#   ./desktop/scripts/dmg-macos.sh arm64            # or amd64 on Intel Mac
+#   ./desktop/scripts/bundle-linux.sh amd64
+#
+# macOS: GitHub-hosted stays unsigned. A Mac with Developer ID in the
+# keychain may export HOMEWARD_CODESIGN_IDENTITY and HOMEWARD_NOTARY_PROFILE
+# when running dmg-macos.sh locally with --sign.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: homeward-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  linux:
+    name: Linux tarball (amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        run: echo "version=$(bash desktop/scripts/release-version.sh)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: desktop/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Linux packager dependencies
+        run: bash desktop/scripts/ci-setup-linux.sh
+
+      - name: Build family Linux tarball
+        env:
+          HOMEWARD_VERSION: ${{ steps.version.outputs.version }}
+        run: ./desktop/scripts/bundle-linux.sh amd64
+
+      - name: Verify tarball
+        run: |
+          tarball=dist/linux/amd64/Homeward-linux-amd64.tar.gz
+          test -f "$tarball"
+          tar -tzf "$tarball" | grep -qx 'Homeward-linux-amd64/install.sh'
+          tar -tzf "$tarball" | grep -qx 'Homeward-linux-amd64/uninstall.sh'
+          tar -tzf "$tarball" | grep -qx 'Homeward-linux-amd64/homeward'
+          tar -xOf "$tarball" Homeward-linux-amd64/homeward | python3 -c \
+            'import sys; d=sys.stdin.buffer.read(4); assert d==b"\x7fELF", d'
+          tar -xOf "$tarball" Homeward-linux-amd64/install.sh | grep -q 'Desktop Entry'
+          tar -xOf "$tarball" Homeward-linux-amd64/install.sh | grep -q 'autostart/homeward.desktop'
+          ls -lh "$tarball"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Homeward-linux-amd64
+          path: dist/linux/amd64/Homeward-linux-amd64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+  windows:
+    name: Windows Inno Setup exe (amd64, unsigned)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        run: echo "version=$(bash desktop/scripts/release-version.sh)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: desktop/go.sum
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Windows packager dependencies
+        run: bash desktop/scripts/ci-setup-windows.sh
+
+      - name: Build family Windows installer (unsigned)
+        env:
+          HOMEWARD_VERSION: ${{ steps.version.outputs.version }}
+        run: ./desktop/scripts/exe-windows.sh amd64
+
+      - name: Verify installer is PE and unsigned
+        run: |
+          exe=dist/windows/amd64/Homeward-windows-amd64.exe
+          test -f "$exe"
+          python3 -c 'import sys; p=open(sys.argv[1],"rb").read(2); assert p==b"MZ", p' "$exe"
+          status="$(powershell.exe -NoProfile -Command "(Get-AuthenticodeSignature 'dist\\windows\\amd64\\Homeward-windows-amd64.exe').Status" | tr -d '\r')"
+          echo "Authenticode status: $status"
+          test "$status" = "NotSigned"
+          ls -lh "$exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Homeward-windows-amd64
+          path: dist/windows/amd64/Homeward-windows-amd64.exe
+          if-no-files-found: error
+          compression-level: 0
+
+  macos:
+    name: macOS UDZO DMG
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        run: echo "version=$(bash desktop/scripts/release-version.sh)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: desktop/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install macOS packager dependencies
+        run: bash desktop/scripts/ci-setup-macos.sh
+
+      - name: Build family macOS DMG
+        env:
+          HOMEWARD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          arch=arm64
+          case "$(uname -m)" in
+            x86_64|amd64) arch=amd64 ;;
+          esac
+          echo "building macOS $arch DMG on $(uname -m)"
+          if [[ -n "${HOMEWARD_CODESIGN_IDENTITY:-}" && -n "${HOMEWARD_NOTARY_PROFILE:-}" ]]; then
+            ./desktop/scripts/dmg-macos.sh "$arch" --sign
+          else
+            ./desktop/scripts/dmg-macos.sh "$arch"
+          fi
+
+      - name: Verify UDZO DMG
+        run: |
+          shopt -s nullglob
+          dmgs=(dist/macos/Homeward-macos-*.dmg)
+          if [[ ${#dmgs[@]} -ne 1 ]]; then
+            echo "expected one Homeward-macos-*.dmg, found: ${dmgs[*]:-none}" >&2
+            exit 1
+          fi
+          dmg="${dmgs[0]}"
+          test -f "$dmg"
+          hdiutil imageinfo "$dmg" | grep -qi UDZO
+          hdiutil attach "$dmg" -nobrowse -readonly
+          test -d /Volumes/Homeward/Homeward.app
+          test -e /Volumes/Homeward/Applications
+          hdiutil detach /Volumes/Homeward
+          ls -lh "$dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Homeward-macos
+          path: dist/macos/Homeward-macos-*.dmg
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    name: GitHub Release
+    needs: [linux, windows, macos]
+    # Publish Linux whenever it succeeds. Windows/macOS attach when those
+    # GitHub-hosted jobs succeed; a flaky Win/Mac job must not block Linux.
+    if: >-
+      always()
+      && !cancelled()
+      && needs.linux.result == 'success'
+      && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Homeward-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Checksums and notes
+        env:
+          VERSION: ${{ needs.linux.outputs.version }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
+        run: |
+          set -euo pipefail
+          cd release-assets
+          ls -lh
+          test -f Homeward-linux-amd64.tar.gz
+          sha256sum Homeward-* > SHA256SUMS.txt
+          {
+            echo "Family installers for **Homeward ${VERSION}**."
+            echo
+            echo "Chat and speech model weights are not included. After install, the setup wizard downloads models."
+            echo
+            echo "On this computer open **http://localhost:43123**. Kids on the same Wi-Fi use **http://homeward.local:43123/chat**."
+            echo
+            echo "| File | Platform |"
+            echo "| --- | --- |"
+            if [[ -f Homeward-macos-arm64.dmg ]]; then
+              echo "| \`Homeward-macos-arm64.dmg\` | macOS Apple silicon (UDZO; drag Homeward to Applications) |"
+            fi
+            if [[ -f Homeward-macos-amd64.dmg ]]; then
+              echo "| \`Homeward-macos-amd64.dmg\` | macOS Intel (UDZO; drag Homeward to Applications) |"
+            fi
+            if [[ -f Homeward-windows-amd64.exe ]]; then
+              echo "| \`Homeward-windows-amd64.exe\` | Windows 10/11 64-bit (Inno Setup, unsigned — SmartScreen: More info → Run anyway) |"
+            fi
+            echo "| \`Homeward-linux-amd64.tar.gz\` | Linux amd64 (extract and run \`./install.sh\`; desktop/autostart entry, no root) |"
+            echo
+            echo "Latest download page: https://github.com/matt-dance/homeword-family-ai/releases/latest"
+            if [[ "$WINDOWS_RESULT" != "success" ]]; then
+              echo
+              echo "> Windows installer was not produced in this run (\`windows\` job: ${WINDOWS_RESULT}). Re-run the failed job to attach \`Homeward-windows-amd64.exe\`."
+            fi
+            if [[ "$MACOS_RESULT" != "success" ]]; then
+              echo
+              echo "> macOS DMG was not produced in this run (\`macos\` job: ${MACOS_RESULT}). Re-run the failed job to attach the DMG."
+            fi
+          } > ../release-notes.md
+          cat ../release-notes.md
+          cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Homeward ${{ needs.linux.outputs.version }}
+          body_path: release-notes.md
+          generate_release_notes: true
+          files: |
+            release-assets/Homeward-*
+            release-assets/SHA256SUMS.txt
+          fail_on_unmatched_files: false
+          overwrite_files: true
+          make_latest: true

@@ -2,6 +2,8 @@
 
 Scripts and the Go supervisor that assemble native family installers. This is not family-facing documentation.
 
+Families download builds from **[GitHub Releases](https://github.com/matt-dance/homeword-family-ai/releases/latest)** (`Homeward-macos-*.dmg`, `Homeward-windows-amd64.exe`, `Homeward-linux-amd64.tar.gz`).
+
 Chat and speech model weights are not part of any installer. Packagers ship the official Ollama *engine* only (plus its LICENSE). Models are pulled later into the platform data directory.
 
 | Platform | Family artifact | Data dir |
@@ -11,6 +13,23 @@ Chat and speech model weights are not part of any installer. Packagers ship the 
 | Linux | `Homeward-linux-amd64.tar.gz` | `~/.local/share/homeward` |
 
 Public web port is **43123** on every native install (not port 80).
+
+## GitHub Releases
+
+`.github/workflows/release.yml` runs on version tags (`v*`) and publishes those three artifacts from GitHub-hosted runners (`ubuntu-latest`, `windows-latest`, `macos-latest`). The Windows `.exe` is **unsigned** (no SignTool, PFX, or Azure Artifact Signing); SmartScreen is expected. Linux is required for the GitHub Release; Windows and macOS attach when those jobs succeed.
+
+To cut a release from `main`:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+That creates https://github.com/matt-dance/homeword-family-ai/releases/latest when the workflow finishes.
+
+`workflow_dispatch` on a branch builds the same artifacts without publishing a release.
+
+You can also run the packagers below on a Windows PC or a Mac with no workflow changes. GitHub Actions always builds the family Windows installer on `windows-latest`.
 
 ## Prerequisites (macOS)
 
