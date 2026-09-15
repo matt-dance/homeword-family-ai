@@ -38,6 +38,12 @@ fi
 grep -q 'ollama-linux-amd64.tar.zst' "$SCRIPT"
 grep -q 'tar --zstd' "$SCRIPT"
 
+# Static ffmpeg: validate magic/size before tar -xJf (Release v0.1.1 HTML body).
+CHECK_ARCHIVE="$ROOT/desktop/scripts/check-download-archive.sh"
+test -x "$CHECK_ARCHIVE"
+grep -q 'check-download-archive.sh' "$SCRIPT"
+grep -q 'BtbN/FFmpeg-Builds' "$SCRIPT"
+
 # arm64 is not a v1 family target.
 if HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1 "$SCRIPT" arm64 >/dev/null 2>&1; then
   echo "bundle-linux.sh arm64 should fail (amd64 only)" >&2
