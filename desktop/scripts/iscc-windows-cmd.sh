@@ -8,6 +8,11 @@
 #
 # Keep the compiler path, /D defines, and the .iss path inside one quoted
 # command line so cmd.exe parses them as distinct arguments.
+#
+# cmd.exe /c then strips the first and last quote when there are more than
+# two quotes, or when the text contains special characters such as ().
+# Wrap the whole line in an extra quote pair so the inner argv stays quoted
+# after that strip:  ""C:\Program Files (x86)\...\ISCC.exe" /D... "script.iss""
 set -euo pipefail
 
 usage() {
@@ -88,10 +93,11 @@ for d in "${DEFS[@]+"${DEFS[@]}"}"; do
 done
 parts+=( "$(cmd_quote "$iss_win")" )
 
-printf '%s' "${parts[0]}"
+inner="${parts[0]}"
 idx=1
 while [[ "$idx" -lt "${#parts[@]}" ]]; do
-  printf ' %s' "${parts[$idx]}"
+  inner+=" ${parts[$idx]}"
   idx=$((idx + 1))
 done
-printf '\n'
+# Extra outer quotes survive cmd.exe /c stripping (see header comment).
+printf '"%s"\n' "$inner"

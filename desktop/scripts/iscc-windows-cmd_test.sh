@@ -65,7 +65,24 @@ fi
 
 python3 -c '
 import re, sys
-cmd = open(sys.argv[1], encoding="utf-8").read().strip()
+
+def cmd_c_unquote(cmdline):
+    """cmd.exe /c: strip first and last quote unless exactly two quotes,
+    no special chars (&<>()@^|), and the quoted text is an executable.
+    """
+    nquotes = cmdline.count("\"")
+    special = any(c in cmdline for c in "&<>()@^|")
+    preserve = nquotes == 2 and not special
+    if not preserve and cmdline.startswith("\""):
+        last = cmdline.rfind("\"")
+        if last > 0:
+            cmdline = cmdline[1:last] + cmdline[last + 1 :]
+    return cmdline
+
+raw = open(sys.argv[1], encoding="utf-8").read().strip()
+if not (raw.startswith("\"\"") and raw.endswith("\"")):
+    raise SystemExit(f"cmd.exe /c needs extra outer quotes, got: {raw!r}")
+cmd = cmd_c_unquote(raw)
 tokens = [a or b for a, b in re.findall(r"\"([^\"]*)\"|(\S+)", cmd)]
 if not tokens:
     raise SystemExit("empty ISCC command")
@@ -93,7 +110,21 @@ cp "$ISS" "$SPACED"
 out_space="$("$CMD" --iscc "/c/Program Files/Inno Setup 6/ISCC" --iss "$SPACED")"
 python3 -c '
 import re, sys
-cmd = sys.argv[1]
+
+def cmd_c_unquote(cmdline):
+    nquotes = cmdline.count("\"")
+    special = any(c in cmdline for c in "&<>()@^|")
+    preserve = nquotes == 2 and not special
+    if not preserve and cmdline.startswith("\""):
+        last = cmdline.rfind("\"")
+        if last > 0:
+            cmdline = cmdline[1:last] + cmdline[last + 1 :]
+    return cmdline
+
+raw = sys.argv[1]
+if not (raw.startswith("\"\"") and raw.endswith("\"")):
+    raise SystemExit(f"cmd.exe /c needs extra outer quotes, got: {raw!r}")
+cmd = cmd_c_unquote(raw)
 tokens = [a or b for a, b in re.findall(r"\"([^\"]*)\"|(\S+)", cmd)]
 iss = [t for t in tokens if t.lower().endswith(".iss")]
 if len(iss) != 1:

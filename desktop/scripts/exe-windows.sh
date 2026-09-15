@@ -126,6 +126,8 @@ run_iscc() {
     cmd_str="$("$iscc_cmd" --iscc "$iscc_bin" --iss "$ISS" "${def_args[@]}")"
     echo "ISCC command: $cmd_str"
     # //c → /c under Git Bash. /D defines stay inside $cmd_str (one argv).
+    # Helper adds extra outer quotes so cmd.exe /c stripping leaves the
+    # "Program Files (x86)" ISCC path quoted.
     cmd.exe //c "$cmd_str"
     st=$?
     return "$st"
