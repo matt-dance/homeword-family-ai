@@ -16,7 +16,7 @@ Public web port is **43123** on every native install (not port 80).
 
 ## GitHub Releases
 
-`.github/workflows/release.yml` runs on version tags (`v*`) and publishes those three artifacts. Default runners are GitHub-hosted (`ubuntu-latest`, `windows-latest`, `macos-latest`). Linux is required for the GitHub Release; Windows and macOS attach when those jobs succeed.
+`.github/workflows/release.yml` runs on version tags (`v*`) and publishes those three artifacts from GitHub-hosted runners (`ubuntu-latest`, `windows-latest`, `macos-latest`). The Windows `.exe` is **unsigned** (no SignTool, PFX, or Azure Artifact Signing); SmartScreen is expected. Linux is required for the GitHub Release; Windows and macOS attach when those jobs succeed.
 
 To cut a release from `main`:
 
@@ -27,11 +27,9 @@ git push origin v0.1.0
 
 That creates https://github.com/matt-dance/homeword-family-ai/releases/latest when the workflow finishes.
 
-`workflow_dispatch` on a branch builds the same artifacts without publishing a release (use it to test builders).
+`workflow_dispatch` on a branch builds the same artifacts without publishing a release.
 
-To use a self-hosted/GCP Windows VM or a local Mac as the builder, set repository variables `HOMEWARD_WINDOWS_RUNNER` / `HOMEWARD_MACOS_RUNNER` to that runner's label (for example `homeward-windows`). Do not change the workflow file. Git for Windows (Git Bash) is required on the Windows VM. Optional macOS signing uses `HOMEWARD_CODESIGN_IDENTITY` and `HOMEWARD_NOTARY_PROFILE` already present on the Mac runner; GitHub-hosted macOS stays unsigned.
-
-You can also run the packagers below on those machines with no workflow changes.
+You can also run the packagers below on a Windows PC or a Mac with no workflow changes. GitHub Actions always builds the family Windows installer on `windows-latest`.
 
 ## Prerequisites (macOS)
 

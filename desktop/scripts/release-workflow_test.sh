@@ -16,21 +16,27 @@ test -x "$ROOT/desktop/scripts/ci-setup-windows.sh"
 test -x "$ROOT/desktop/scripts/ci-setup-macos.sh"
 test -x "$ROOT/desktop/scripts/release-version.sh"
 
-# Tag trigger, GitHub-hosted defaults, overridable self-hosted labels.
+# Tag trigger; GitHub-hosted runners only (no GCP / self-hosted Windows).
 grep -q 'tags:' "$WF"
 grep -q 'v\*' "$WF"
-grep -q "ubuntu-latest" "$WF"
-grep -q "windows-latest" "$WF"
-grep -q "macos-latest" "$WF"
-grep -q 'HOMEWARD_LINUX_RUNNER' "$WF"
-grep -q 'HOMEWARD_WINDOWS_RUNNER' "$WF"
-grep -q 'HOMEWARD_MACOS_RUNNER' "$WF"
+grep -qE '^[[:space:]]+runs-on: ubuntu-latest$' "$WF"
+grep -qE '^[[:space:]]+runs-on: windows-latest$' "$WF"
+grep -qE '^[[:space:]]+runs-on: macos-latest$' "$WF"
 
-# Do not require a private builder by default.
-if grep -E "runs-on:[[:space:]]*\[?[[:space:]]*self-hosted" "$WF"; then
-  echo "release workflow must default to GitHub-hosted runners" >&2
+if grep -q 'HOMEWARD_WINDOWS_RUNNER' "$WF"; then
+  echo "Windows must stay on GitHub-hosted windows-latest (no runner override)" >&2
   exit 1
 fi
+if grep -E "runs-on:[[:space:]]*\[?[[:space:]]*self-hosted" "$WF"; then
+  echo "release workflow must use GitHub-hosted runners" >&2
+  exit 1
+fi
+if grep -vE '^[[:space:]]*#' "$WF" | grep -qiE 'signtool|\.pfx|trusted-signing|ossmsft'; then
+  echo "Windows signing (SignTool / Azure / PFX) is out of scope" >&2
+  exit 1
+fi
+grep -q 'Get-AuthenticodeSignature' "$WF"
+grep -q 'NotSigned' "$WF"
 
 # Existing packagers — not a zip of the .app, not a skip-downloads stub.
 grep -q 'bundle-linux.sh amd64' "$WF"

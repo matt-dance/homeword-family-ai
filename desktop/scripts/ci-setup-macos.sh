@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install packager deps for a family macOS DMG (GitHub-hosted or a local Mac runner).
+# Install packager deps for a family macOS DMG (GitHub-hosted macos-latest).
 # Safe to re-run. Does not fetch Node/Ollama/CPython — bundle-macos.sh does that.
 set -euo pipefail
 

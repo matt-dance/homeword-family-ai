@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install packager deps for a family Linux tarball (GitHub-hosted or self-hosted).
+# Install packager deps for a family Linux tarball (GitHub-hosted ubuntu-latest).
 # Safe to re-run. Does not fetch Node/Ollama/CPython — bundle-linux.sh does that.
 set -euo pipefail
 

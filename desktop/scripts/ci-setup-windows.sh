@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install packager deps for a family Windows Inno Setup installer.
-# Works in Git Bash on GitHub-hosted windows-latest or a self-hosted/GCP VM.
+# CI uses GitHub-hosted windows-latest (Git Bash). The installer stays
+# unsigned — no SignTool, PFX, or Azure Artifact Signing.
 # Safe to re-run. Does not fetch Node/Ollama/CPython — bundle-windows.sh does that.
 set -euo pipefail
 
