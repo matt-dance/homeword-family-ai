@@ -15,6 +15,8 @@ test -x "$ROOT/desktop/scripts/ci-setup-linux.sh"
 test -x "$ROOT/desktop/scripts/ci-setup-windows.sh"
 test -x "$ROOT/desktop/scripts/ci-setup-macos.sh"
 test -x "$ROOT/desktop/scripts/release-version.sh"
+test -x "$ROOT/desktop/scripts/verify-linux-tarball.sh"
+test -x "$ROOT/desktop/scripts/stage-windows-espeak.sh"
 
 # Tag trigger; GitHub-hosted runners only (no GCP / self-hosted Windows).
 grep -q 'tags:' "$WF"
@@ -40,6 +42,11 @@ grep -q 'NotSigned' "$WF"
 
 # Existing packagers — not a zip of the .app, not a skip-downloads stub.
 grep -q 'bundle-linux.sh amd64' "$WF"
+grep -q 'verify-linux-tarball.sh' "$WF"
+if grep -E 'tar[[:space:]]+-xOf.*python3' "$WF"; then
+  echo "release.yml must not pipe tar -xOf into a short python read (SIGPIPE / pipefail)" >&2
+  exit 1
+fi
 grep -q 'exe-windows.sh amd64' "$WF"
 grep -q 'dmg-macos.sh' "$WF"
 grep -q 'UDZO' "$WF"

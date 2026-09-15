@@ -93,7 +93,7 @@ A family installer must be produced on Windows (Git Bash) so Node, CPython, Olla
 - Node 22+
 - uv (CPython 3.12)
 - [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe` on `PATH`)
-- curl, plus 7-Zip (or `msiexec`) to extract the espeak-ng MSI
+- curl, plus 7-Zip (or `msiexec /a`) to extract the espeak-ng MSI. 7-Zip emits MSI short names (`espeak_ng.exe`); the packer copies that to `espeak-ng.exe`.
 
 ### Skip-downloads (layout / CI)
 

@@ -298,36 +298,104 @@ install_ffmpeg() {
   exit 1
 }
 
+win_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+find_7z() {
+  if command -v 7z >/dev/null 2>&1; then
+    command -v 7z
+    return 0
+  fi
+  if command -v 7z.exe >/dev/null 2>&1; then
+    command -v 7z.exe
+    return 0
+  fi
+  local candidate
+  for candidate in \
+    "/c/Program Files/7-Zip/7z.exe" \
+    "/c/Program Files (x86)/7-Zip/7z.exe"; do
+    if [[ -x "$candidate" || -f "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+extract_espeak_msi() {
+  local msi="$1" dest="$2"
+  mkdir -p "$dest"
+
+  local z
+  if z="$(find_7z)"; then
+    echo "extracting espeak-ng MSI with $z"
+    # Windows 7-Zip needs a native -o path; Git Bash /tmp is not C:\tmp.
+    if command -v cygpath >/dev/null 2>&1; then
+      "$z" x -y "-o$(cygpath -w "$dest")" "$(cygpath -w "$msi")"
+    else
+      "$z" x -y -o"$dest" "$msi"
+    fi
+    return 0
+  fi
+
+  local msiexec_bin=""
+  if command -v msiexec.exe >/dev/null 2>&1; then
+    msiexec_bin="$(command -v msiexec.exe)"
+  elif [[ -f /c/Windows/System32/msiexec.exe ]]; then
+    msiexec_bin="/c/Windows/System32/msiexec.exe"
+  fi
+  if [[ -n "$msiexec_bin" ]] && command -v cmd.exe >/dev/null 2>&1; then
+    echo "extracting espeak-ng MSI with msiexec /a (wait)"
+    local msi_w dest_w
+    msi_w="$(win_path "$msi")"
+    dest_w="$(win_path "$dest")"
+    # Run switches inside cmd so Git Bash does not rewrite /a and /qn.
+    # start /wait so we do not race a detached msiexec.
+    cmd.exe //c "start /wait msiexec.exe /a \"${msi_w}\" TARGETDIR=\"${dest_w}\" /qn"
+    return $?
+  fi
+
+  if command -v msiextract >/dev/null 2>&1; then
+    echo "extracting espeak-ng MSI with msiextract"
+    msiextract -C "$dest" "$msi"
+    return $?
+  fi
+
+  echo "no MSI extractor (install 7-Zip or keep msiexec on PATH)" >&2
+  return 1
+}
+
 install_espeak() {
   local version="${HOMEWARD_ESPEAK_VERSION:-1.52.0}"
-  local tmp msi url src data
+  local tmp url stage
   tmp="$(mktemp -d)"
+  stage="$SCRIPT_DIR/stage-windows-espeak.sh"
   url="https://github.com/espeak-ng/espeak-ng/releases/download/${version}/espeak-ng.msi"
   echo "downloading espeak-ng ${version} Windows MSI"
-  if curl -fsSL -L -o "$tmp/espeak-ng.msi" "$url"; then
-    if command -v 7z >/dev/null 2>&1; then
-      7z x -y -o"$tmp/msi" "$tmp/espeak-ng.msi" >/dev/null
-    elif command -v msiexec.exe >/dev/null 2>&1; then
-      msiexec.exe /a "$tmp/espeak-ng.msi" TARGETDIR="$(cygpath -w "$tmp/msi" 2>/dev/null || echo "$tmp/msi")" /qn || true
-    elif command -v msiextract >/dev/null 2>&1; then
-      mkdir -p "$tmp/msi"
-      msiextract -C "$tmp/msi" "$tmp/espeak-ng.msi" >/dev/null
-    fi
-  fi
-  src="$(find "$tmp" -type f -name espeak-ng.exe | head -n 1 || true)"
-  if [[ -z "$src" ]] && command -v espeak-ng.exe >/dev/null 2>&1; then
-    src="$(command -v espeak-ng.exe)"
-  fi
-  if [[ -z "$src" ]]; then
-    echo "espeak-ng.exe missing (install espeak-ng or keep 7z/msiexec on PATH)" >&2
+  if ! curl -fsSL -L -o "$tmp/espeak-ng.msi" "$url"; then
+    echo "espeak-ng MSI download failed" >&2
     rm -rf "$tmp"
     exit 1
   fi
-  cp "$src" "$RUNTIME/espeak/bin/espeak-ng.exe"
-  data="$(find "$tmp" -type d -name espeak-ng-data | head -n 1 || true)"
-  if [[ -n "$data" ]]; then
-    rm -rf "$RUNTIME/espeak/share/espeak-ng-data"
-    cp -R "$data" "$RUNTIME/espeak/share/espeak-ng-data"
+  if ! extract_espeak_msi "$tmp/espeak-ng.msi" "$tmp/extracted"; then
+    rm -rf "$tmp"
+    exit 1
+  fi
+  # 7-Zip emits espeak_ng.exe; msiexec /a emits espeak-ng.exe. Stage both.
+  if ! "$stage" "$tmp" "$RUNTIME/espeak"; then
+    if command -v espeak-ng.exe >/dev/null 2>&1; then
+      mkdir -p "$RUNTIME/espeak/bin"
+      cp "$(command -v espeak-ng.exe)" "$RUNTIME/espeak/bin/espeak-ng.exe"
+    else
+      echo "espeak-ng.exe missing after MSI extract (7-Zip short name is espeak_ng.exe)" >&2
+      rm -rf "$tmp"
+      exit 1
+    fi
   fi
   rm -rf "$tmp"
 }
@@ -363,6 +431,7 @@ if [[ "$SKIP" == "1" ]]; then
 else
   test -f "$STAGE/Homeward.exe"
   test -f "$RUNTIME/ffmpeg/bin/ffmpeg.exe"
+  test -f "$RUNTIME/espeak/bin/espeak-ng.exe"
   test -f "$RES/web/server.js"
   test -d "$RES/policies"
 fi
