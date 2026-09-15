@@ -56,9 +56,23 @@ grep -q 'Homeward-macos-\*.dmg' "$WF"
 grep -q 'softprops/action-gh-release' "$WF"
 grep -q 'contents: write' "$WF"
 
-# Linux at least publishes if Win/Mac fail.
+# Publish only when every platform installer job succeeds on a tag.
 grep -q 'needs.linux.result == .success.' "$WF"
+grep -q 'needs.windows.result == .success.' "$WF"
+grep -q 'needs.macos.result == .success.' "$WF"
 grep -q 'always()' "$WF"
+grep -q 'fail_on_unmatched_files: true' "$WF"
+if grep -q 'SHA256SUMS' "$WF"; then
+  echo "release.yml must not upload SHA256SUMS.txt" >&2
+  exit 1
+fi
+if grep -qiE 'reattach|was not produced|must not block Linux' "$WF"; then
+  echo "release.yml must not describe partial / Linux-only releases" >&2
+  exit 1
+fi
+grep -q 'release-assets/Homeward-windows-amd64.exe' "$WF"
+grep -q 'release-assets/Homeward-macos-\*.dmg' "$WF"
+grep -q 'release-assets/Homeward-linux-amd64.tar.gz' "$WF"
 
 # Family-facing download URL.
 url='https://github.com/matt-dance/homeword-family-ai/releases/latest'
