@@ -16,7 +16,7 @@ Public web port is **43123** on every native install (not port 80).
 
 ## GitHub Releases
 
-`.github/workflows/release.yml` runs on version tags (`v*`) and publishes those three artifacts from GitHub-hosted runners (`ubuntu-latest`, `windows-latest`, `macos-latest`). The Windows `.exe` is **unsigned** (no SignTool, PFX, or Azure Artifact Signing); SmartScreen is expected. Linux is required for the GitHub Release; Windows and macOS attach when those jobs succeed.
+`.github/workflows/release.yml` runs on version tags (`v*`) and publishes those three artifacts from GitHub-hosted runners (`ubuntu-latest`, `windows-latest`, `macos-latest`). The Windows `.exe` is **unsigned** (no SignTool, PFX, or Azure Artifact Signing); SmartScreen is expected. A GitHub Release is published only when the Linux, Windows, and macOS jobs all succeed.
 
 To cut a release from `main`:
 

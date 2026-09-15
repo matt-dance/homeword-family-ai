@@ -202,12 +202,14 @@ jobs:
   publish:
     name: GitHub Release
     needs: [linux, windows, macos]
-    # Publish Linux whenever it succeeds. Windows/macOS attach when those
-    # GitHub-hosted jobs succeed; a flaky Win/Mac job must not block Linux.
+    # Publish only a complete family set: Linux, Windows, and macOS must all
+    # succeed on a version tag. Do not ship a Linux-only / partial release.
     if: >-
       always()
       && !cancelled()
       && needs.linux.result == 'success'
+      && needs.windows.result == 'success'
+      && needs.macos.result == 'success'
       && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
@@ -221,17 +223,21 @@ jobs:
           merge-multiple: true
           path: release-assets
 
-      - name: Checksums and notes
+      - name: Release notes
         env:
           VERSION: ${{ needs.linux.outputs.version }}
-          WINDOWS_RESULT: ${{ needs.windows.result }}
-          MACOS_RESULT: ${{ needs.macos.result }}
         run: |
           set -euo pipefail
           cd release-assets
           ls -lh
           test -f Homeward-linux-amd64.tar.gz
-          sha256sum Homeward-* > SHA256SUMS.txt
+          test -f Homeward-windows-amd64.exe
+          shopt -s nullglob
+          dmgs=(Homeward-macos-*.dmg)
+          if [[ ${#dmgs[@]} -lt 1 ]]; then
+            echo "expected at least one Homeward-macos-*.dmg" >&2
+            exit 1
+          fi
           {
             echo "Family installers for **Homeward ${VERSION}**."
             echo
@@ -247,23 +253,12 @@ jobs:
             if [[ -f Homeward-macos-amd64.dmg ]]; then
               echo "| \`Homeward-macos-amd64.dmg\` | macOS Intel (UDZO; drag Homeward to Applications) |"
             fi
-            if [[ -f Homeward-windows-amd64.exe ]]; then
-              echo "| \`Homeward-windows-amd64.exe\` | Windows 10/11 64-bit (Inno Setup, unsigned — SmartScreen: More info → Run anyway) |"
-            fi
+            echo "| \`Homeward-windows-amd64.exe\` | Windows 10/11 64-bit (Inno Setup, unsigned — SmartScreen: More info → Run anyway) |"
             echo "| \`Homeward-linux-amd64.tar.gz\` | Linux amd64 (extract and run \`./install.sh\`; desktop/autostart entry, no root) |"
             echo
             echo "Latest download page: https://github.com/matt-dance/homeword-family-ai/releases/latest"
-            if [[ "$WINDOWS_RESULT" != "success" ]]; then
-              echo
-              echo "> Windows installer was not produced in this run (\`windows\` job: ${WINDOWS_RESULT}). Re-run the failed job to attach \`Homeward-windows-amd64.exe\`."
-            fi
-            if [[ "$MACOS_RESULT" != "success" ]]; then
-              echo
-              echo "> macOS DMG was not produced in this run (\`macos\` job: ${MACOS_RESULT}). Re-run the failed job to attach the DMG."
-            fi
           } > ../release-notes.md
           cat ../release-notes.md
-          cat SHA256SUMS.txt
 
       - uses: softprops/action-gh-release@v3
         with:
@@ -272,8 +267,9 @@ jobs:
           body_path: release-notes.md
           generate_release_notes: true
           files: |
-            release-assets/Homeward-*
-            release-assets/SHA256SUMS.txt
-          fail_on_unmatched_files: false
+            release-assets/Homeward-windows-amd64.exe
+            release-assets/Homeward-macos-*.dmg
+            release-assets/Homeward-linux-amd64.tar.gz
+          fail_on_unmatched_files: true
           overwrite_files: true
           make_latest: true
