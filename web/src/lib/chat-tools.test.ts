@@ -214,6 +214,13 @@ describe("extractChatTools", () => {
     expect(text).not.toMatch(/\{\s*topic/);
   });
 
+  it("maps a single-quoted Facts payload that contains a possessive apostrophe", () => {
+    const content = "Facts { topic: 'Dogs', facts: [ 'A dog's nose is wet!' ] }";
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(tools).toEqual([{ type: "facts", topic: "Dogs", facts: ["A dog's nose is wet!"] }]);
+  });
+
   it("keeps spoken prose and still maps a trailing Facts payload", () => {
     const content =
       'Here is a fun one!\n\nFacts { topic: "Animal Fun Facts", facts: [ "Butterflies taste with their feet!" ] }\n';
