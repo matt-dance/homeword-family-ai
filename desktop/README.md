@@ -121,7 +121,7 @@ That runs `bundle-windows.sh` then Inno Setup. Output: `dist/windows/amd64/Homew
 
 The wizard installs to `%LOCALAPPDATA%\Programs\Homeward`, writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` so Homeward starts at login, and launches the tray supervisor. Family data and pulled models live in `%LOCALAPPDATA%\Homeward` (not `%USERPROFILE%\.ollama`). Uninstall stops Homeward and can optionally wipe that data directory.
 
-After install, open **http://localhost:43123**. Kids on the same Wi-Fi use **http://homeward.local:43123/chat**.
+After install, open **http://localhost:43123**. Add phones and tablets from **Add a phone or tablet** in Settings (QR or house code), on the same Wi-Fi as this computer.
 
 ## Linux tarball (amd64)
 

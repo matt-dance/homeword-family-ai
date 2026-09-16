@@ -7,6 +7,7 @@ describe("isParentOnlyApi", () => {
     expect(isParentOnlyApi("/api/v1/children/3/starters", "GET")).toBe(false);
     expect(isParentOnlyApi("/api/v1/children/3/verify-pin", "POST")).toBe(false);
     expect(isParentOnlyApi("/api/v1/children/3/sessions/resume", "GET")).toBe(false);
+    expect(isParentOnlyApi("/api/v1/pairing/join", "POST")).toBe(false);
     expect(isParentOnlyApi("/api/v1/chat", "POST")).toBe(false);
     expect(isParentOnlyApi("/api/v1/chat/sessions/9/messages", "GET")).toBe(false);
     expect(isParentOnlyApi("/api/v1/chat/homework/status", "GET")).toBe(false);
@@ -25,6 +26,9 @@ describe("isParentOnlyApi", () => {
     expect(isParentOnlyApi("/api/v1/children/3/memory", "POST")).toBe(true);
     expect(isParentOnlyApi("/api/v1/children/3/memory/abc123", "PATCH")).toBe(true);
     expect(isParentOnlyApi("/api/v1/children/3/memory/abc123", "DELETE")).toBe(true);
+    expect(isParentOnlyApi("/api/v1/pairing", "GET")).toBe(true);
+    expect(isParentOnlyApi("/api/v1/pairing/rotate", "POST")).toBe(true);
+    expect(isParentOnlyApi("/api/v1/pairing/devices/3", "DELETE")).toBe(true);
     expect(isParentOnlyApi("/api/v1/auth/me", "GET")).toBe(true);
     expect(isParentOnlyApi("/api/v1/auth/logout", "POST")).toBe(true);
     expect(isParentOnlyApi("/api/v1/setup", "POST")).toBe(true);

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import socket
 import threading
 import time
@@ -34,6 +35,27 @@ def homeward_url(hostname: str = "homeward.local", port: int = 80) -> str:
     if port == 80:
         return f"http://{hostname}"
     return f"http://{hostname}:{port}"
+
+
+_IPV4 = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
+
+
+def is_ipv4(value: str) -> bool:
+    """True for dotted IPv4, never a hostname like homeward.local."""
+    if not _IPV4.fullmatch(value):
+        return False
+    return all(0 <= int(part) <= 255 for part in value.split("."))
+
+
+def join_url(code: str, *, ip: str | None = None, port: int | None = None) -> str | None:
+    """QR payload: raw LAN IPv4 + port + house code. Never a hostname."""
+    host = lan_ip() if ip is None else ip
+    if not host or not is_ipv4(host) or host.startswith(("127.", "0.")):
+        return None
+    from homeward_gateway.config import settings
+
+    web_port = settings.web_port if port is None else port
+    return f"{homeward_url(host, web_port)}/join?code={code}"
 
 
 def start(hostname: str = "homeward.local", port: int = 80) -> bool:
