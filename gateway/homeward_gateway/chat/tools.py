@@ -973,6 +973,15 @@ def normalize_facts_data(data: dict[str, Any] | None) -> dict[str, Any] | None:
     return {"topic": title.strip(), "facts": facts}
 
 
+def _is_js_quote_closer(text: str, index: int, quote: str) -> bool:
+    if text[index] != quote:
+        return False
+    # Tiny models leave possessives unescaped inside single-quoted strings.
+    if quote == "'" and index + 1 < len(text) and text[index + 1].isalpha():
+        return False
+    return True
+
+
 def _extract_balanced_json(text: str, start: int) -> tuple[str, int] | None:
     if start < 0 or start >= len(text) or text[start] != "{":
         return None
@@ -988,7 +997,7 @@ def _extract_balanced_json(text: str, start: int) -> tuple[str, int] | None:
             if char == "\\":
                 escape = True
                 continue
-            if char == quote:
+            if _is_js_quote_closer(text, index, quote):
                 quote = None
             continue
         if char in "\"'":
@@ -1109,7 +1118,7 @@ def _read_js_string(cur: _JsCursor) -> str:
             out.append(mapping.get(nxt, nxt))
             cur.i += 2
             continue
-        if ch == quote:
+        if _is_js_quote_closer(cur.s, cur.i, quote):
             cur.i += 1
             return "".join(out)
         out.append(ch)
