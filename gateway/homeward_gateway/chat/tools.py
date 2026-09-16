@@ -989,6 +989,10 @@ def _extract_balanced_json(text: str, start: int) -> tuple[str, int] | None:
                 escape = True
                 continue
             if char == quote:
+                # Tiny models emit JS-style 'dog's' — don't end the string on a possessive.
+                nxt = text[index + 1] if index + 1 < len(text) else ""
+                if quote == "'" and nxt.isalpha():
+                    continue
                 quote = None
             continue
         if char in "\"'":
@@ -1110,6 +1114,11 @@ def _read_js_string(cur: _JsCursor) -> str:
             cur.i += 2
             continue
         if ch == quote:
+            nxt = cur.s[cur.i + 1] if cur.i + 1 < len(cur.s) else ""
+            if quote == "'" and nxt.isalpha():
+                out.append(ch)
+                cur.i += 1
+                continue
             cur.i += 1
             return "".join(out)
         out.append(ch)

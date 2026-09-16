@@ -187,7 +187,11 @@ function extractBalancedJson(source: string, start: number): { raw: string; end:
         escape = true;
         continue;
       }
-      if (char === quote) quote = null;
+      if (char === quote) {
+        // Tiny models emit JS-style 'dog's' — don't end the string on a possessive.
+        if (quote === "'" && /[A-Za-z]/.test(source[i + 1] || "")) continue;
+        quote = null;
+      }
       continue;
     }
     if (char === '"' || char === "'") {
@@ -262,6 +266,11 @@ function readJsString(p: JsCursor): string {
       continue;
     }
     if (ch === quote) {
+      if (quote === "'" && /[A-Za-z]/.test(p.s[p.i + 1] || "")) {
+        out += ch;
+        p.i += 1;
+        continue;
+      }
       p.i += 1;
       return out;
     }
