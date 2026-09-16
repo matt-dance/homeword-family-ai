@@ -16,6 +16,7 @@ from homeward_gateway.chat.tools import (
     local_practice_card,
     local_quiz_card,
     messages_for_llm,
+    normalize_facts_data,
     normalize_howto_data,
     parse_timer_seconds,
     requested_story_pages,
@@ -362,6 +363,71 @@ def test_howto_from_prose_numbered_recipe():
     assert card is not None
     assert card.type == "howto"
     assert card.data["steps"] == ["Mix flour and milk", "Heat the pan", "Flip when bubbly"]
+
+
+def test_normalize_facts_accepts_nested_fact_objects():
+    normalized = normalize_facts_data(
+        {
+            "type": "facts",
+            "topic": "Dogs",
+            "facts": [{"text": "They sniff."}, {"fact": "They run."}],
+        }
+    )
+    assert normalized == {"topic": "Dogs", "facts": ["They sniff.", "They run."]}
+
+
+def test_extract_model_tools_unfenced_facts_payload():
+    text = 'Facts { topic: "Animal Fun Facts", facts: [ "Butterflies taste with their feet!" ] }'
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert cards[0].type == "facts"
+    assert cards[0].data["topic"] == "Animal Fun Facts"
+    assert cards[0].data["facts"] == ["Butterflies taste with their feet!"]
+    assert "topic:" not in cleaned
+    assert "{" not in cleaned
+
+
+def test_extract_model_tools_unfenced_facts_keeps_spoken_prose():
+    text = (
+        "Here is a fun one!\n\n"
+        'Facts { topic: "Animal Fun Facts", facts: [ "Butterflies taste with their feet!" ] }\n'
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == "Here is a fun one!"
+    assert cards[0].type == "facts"
+    assert cards[0].data["facts"] == ["Butterflies taste with their feet!"]
+
+
+def test_extract_model_tools_unfenced_json_facts():
+    text = '{"type":"facts","topic":"dogs","facts":["They sniff.","They run."]}'
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert cards[0].type == "facts"
+    assert cards[0].data == {"topic": "dogs", "facts": ["They sniff.", "They run."]}
+
+
+def test_extract_model_tools_hides_incomplete_facts_payload():
+    cleaned, cards = extract_model_tools(
+        'Almost ready\nFacts { topic: "Animal Fun Facts", facts: [ "Butterflies'
+    )
+    assert cleaned == "Almost ready"
+    assert cards == []
+    assert "Facts" not in cleaned
+
+
+def test_card_route_keeps_facts_for_fun_fact_prompt():
+    route = card_route_for_message("Tell me one fun fact about animals.")
+    assert route["allow"] is not None
+    assert "facts" in route["allow"]
+    card = ToolCard("facts", {"topic": "Animal Fun Facts", "facts": ["Butterflies taste with their feet!"]})
+    kept = apply_card_routing("Tell me one fun fact about animals.", [card])
+    assert [item.type for item in kept] == ["facts"]
+
+
+def test_tool_prompt_hint_facts_uses_json_shape():
+    hint = tool_prompt_hint(["facts"])
+    assert '"type":"facts"' in hint
+    assert "facts {topic, facts}" not in hint
 
 
 def test_tool_prompt_hint_local_howto_does_not_ask_for_fence():
