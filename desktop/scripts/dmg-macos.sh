@@ -153,7 +153,7 @@ notary_submit() {
   issuer="$(notary_issuer)"
   key_path="${APPLE_API_KEY_PATH:-}"
   if [[ -n "${APPLE_API_KEY:-}" && -z "$key_path" ]]; then
-    NOTARY_KEY_FILE="$(mktemp "${TMPDIR:-/tmp}/homeward-authkey.XXXXXX.p8")"
+    NOTARY_KEY_FILE="$(mktemp "${TMPDIR:-/tmp}/homeward-authkey.XXXXXX")"
     python3 - "$NOTARY_KEY_FILE" <<'PY'
 import os, sys
 path = sys.argv[1]
