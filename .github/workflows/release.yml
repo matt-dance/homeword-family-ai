@@ -9,9 +9,12 @@
 #   ./desktop/scripts/dmg-macos.sh arm64            # or amd64 on Intel Mac
 #   ./desktop/scripts/bundle-linux.sh amd64
 #
-# macOS: GitHub-hosted stays unsigned. A Mac with Developer ID in the
-# keychain may export HOMEWARD_CODESIGN_IDENTITY and HOMEWARD_NOTARY_PROFILE
-# when running dmg-macos.sh locally with --sign.
+# macOS: GitHub-hosted stays unsigned unless Developer ID + App Store
+# Connect API key secrets are present. Then the job imports the P12 into
+# a temporary keychain and notarizes with notarytool --key/--key-id/--issuer
+# (not store-credentials / --keychain-profile; those fail headless).
+# Local Macs may still use HOMEWARD_CODESIGN_IDENTITY and
+# HOMEWARD_NOTARY_PROFILE with dmg-macos.sh --sign.
 
 name: Release
 
@@ -163,15 +166,34 @@ jobs:
       - name: Build family macOS DMG
         env:
           HOMEWARD_VERSION: ${{ steps.version.outputs.version }}
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY_ISSUER: ${{ secrets.APPLE_API_KEY_ISSUER }}
+          HOMEWARD_CODESIGN_IDENTITY: ${{ secrets.HOMEWARD_CODESIGN_IDENTITY }}
         run: |
           arch=arm64
           case "$(uname -m)" in
             x86_64|amd64) arch=amd64 ;;
           esac
           echo "building macOS $arch DMG on $(uname -m)"
-          if [[ -n "${HOMEWARD_CODESIGN_IDENTITY:-}" && -n "${HOMEWARD_NOTARY_PROFILE:-}" ]]; then
+          issuer="${APPLE_API_ISSUER:-${APPLE_API_ISSUER_ID:-${APPLE_API_KEY_ISSUER:-}}}"
+          if [[ -n "${MACOS_CERTIFICATE_P12:-}" && \
+                -n "${MACOS_CERTIFICATE_PASSWORD:-}" && \
+                -n "${HOMEWARD_CODESIGN_IDENTITY:-}" && \
+                -n "${APPLE_API_KEY:-}" && \
+                -n "${APPLE_API_KEY_ID:-}" && \
+                -n "$issuer" ]]; then
+            envf="${RUNNER_TEMP}/homeward-codesign.env"
+            bash desktop/scripts/ci-macos-codesign-setup.sh --env-file "$envf"
+            # shellcheck disable=SC1090
+            source "$envf"
             ./desktop/scripts/dmg-macos.sh "$arch" --sign
           else
+            echo "signing secrets absent; building unsigned DMG"
             ./desktop/scripts/dmg-macos.sh "$arch"
           fi
 

@@ -11,6 +11,8 @@ test -f "$WF"
 test -x "$ROOT/desktop/scripts/bundle-linux.sh"
 test -x "$ROOT/desktop/scripts/exe-windows.sh"
 test -x "$ROOT/desktop/scripts/dmg-macos.sh"
+test -x "$ROOT/desktop/scripts/ci-macos-codesign-setup.sh"
+test -x "$ROOT/desktop/scripts/macos-codesign-nested.sh"
 test -x "$ROOT/desktop/scripts/ci-setup-linux.sh"
 test -x "$ROOT/desktop/scripts/ci-setup-windows.sh"
 test -x "$ROOT/desktop/scripts/ci-setup-macos.sh"
@@ -49,6 +51,20 @@ if grep -E 'tar[[:space:]]+-xOf.*python3' "$WF"; then
 fi
 grep -q 'exe-windows.sh amd64' "$WF"
 grep -q 'dmg-macos.sh' "$WF"
+grep -q 'ci-macos-codesign-setup.sh' "$WF"
+grep -q 'MACOS_CERTIFICATE_P12' "$WF"
+grep -q 'APPLE_API_KEY' "$WF"
+grep -q 'APPLE_API_KEY_ID' "$WF"
+grep -q -- '--sign' "$WF"
+grep -q 'signing secrets absent' "$WF"
+if grep -vE '^[[:space:]]*#' "$WF" | grep -q 'store-credentials'; then
+  echo "release.yml must not call notarytool store-credentials" >&2
+  exit 1
+fi
+if grep -vE '^[[:space:]]*#' "$WF" | grep -q 'HOMEWARD_NOTARY_PROFILE'; then
+  echo "release.yml must not gate CI signing on HOMEWARD_NOTARY_PROFILE" >&2
+  exit 1
+fi
 grep -q 'UDZO' "$WF"
 grep -q 'Homeward-linux-amd64.tar.gz' "$WF"
 grep -q 'Homeward-windows-amd64.exe' "$WF"
