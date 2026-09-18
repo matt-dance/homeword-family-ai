@@ -387,6 +387,15 @@ def test_extract_model_tools_unfenced_facts_payload():
     assert "{" not in cleaned
 
 
+def test_extract_model_tools_unfenced_facts_single_quoted_possessive():
+    text = "Facts { topic: 'Dogs', facts: [ 'A dog's nose is wet!' ] }"
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert cards[0].type == "facts"
+    assert cards[0].data["topic"] == "Dogs"
+    assert cards[0].data["facts"] == ["A dog's nose is wet!"]
+
+
 def test_extract_model_tools_unfenced_facts_keeps_spoken_prose():
     text = (
         "Here is a fun one!\n\n"
