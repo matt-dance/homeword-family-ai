@@ -190,6 +190,10 @@ fi
 # Do not call `xcrun notarytool store-credentials` — it prompts and fails
 # headless with "User interaction is not allowed".
 PREV_DEFAULT_KEYCHAIN="$(security default-keychain -d user 2>/dev/null | tr -d '"' | awk '{$1=$1;print}')"
+# Wrap sources --env-file in this same step; rewrite now that PREV is known.
+if [[ -n "$ENV_FILE" ]]; then
+  write_exports > "$ENV_FILE"
+fi
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
 security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
