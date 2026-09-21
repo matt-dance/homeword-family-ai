@@ -153,7 +153,9 @@ notary_submit() {
   issuer="$(notary_issuer)"
   key_path="${APPLE_API_KEY_PATH:-}"
   if [[ -n "${APPLE_API_KEY:-}" && -z "$key_path" ]]; then
-    NOTARY_KEY_FILE="$(mktemp "${TMPDIR:-/tmp}/homeward-authkey.XXXXXX.p8")"
+    # BSD mktemp requires XXXXXX at the end of the template (no .p8 suffix).
+    # notarytool accepts the PEM contents regardless of extension.
+    NOTARY_KEY_FILE="$(mktemp "${TMPDIR:-/tmp}/homeward-authkey.XXXXXX")"
     python3 - "$NOTARY_KEY_FILE" <<'PY'
 import os, sys
 path = sys.argv[1]
@@ -221,6 +223,9 @@ mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/Homeward.app"
 
 if [[ "$SIGN" == "1" ]]; then
+  if command -v xattr >/dev/null 2>&1; then
+    xattr -cr "$STAGE/Homeward.app" || true
+  fi
   sign_app "$STAGE/Homeward.app"
 fi
 
@@ -276,6 +281,8 @@ else
 fi
 
 if [[ "$SIGN" == "1" ]]; then
+  # Sign the disk image itself (no --options runtime; that flag is for Mach-O).
+  codesign --force --sign "$HOMEWARD_CODESIGN_IDENTITY" --timestamp "$DMG"
   notary_submit "$DMG"
   xcrun stapler staple "$DMG"
 fi

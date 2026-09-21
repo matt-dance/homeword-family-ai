@@ -8,7 +8,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ci-macos-codesign-setup.sh [--env-file PATH]
+Usage: ci-macos-codesign-setup.sh [--env-file PATH] [--cleanup]
 
 Non-interactive Developer ID + notarytool API-key setup for Release CI.
 
@@ -23,12 +23,15 @@ Required env:
 Writes a .p8 and prints shell exports (APPLE_API_KEY_PATH, issuer, key id).
 With --env-file, also writes those exports to PATH (source from the same job).
 
+  --cleanup                       restore the previous default keychain and
+                                  delete HOMEWARD_CODESIGN_KEYCHAIN
   HOMEWARD_CI_CODESIGN_DRY_RUN=1  write the .p8 / env file and print the
                                   security(1) plan; do not call security
 EOF
 }
 
 ENV_FILE=""
+CLEANUP=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --help|-h)
@@ -39,6 +42,10 @@ while [[ $# -gt 0 ]]; do
       ENV_FILE="${2:-}"
       shift 2
       ;;
+    --cleanup)
+      CLEANUP=1
+      shift
+      ;;
     *)
       echo "unknown argument: $1" >&2
       usage >&2
@@ -46,6 +53,34 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+cleanup_keychain() {
+  if [[ -z "${HOMEWARD_CODESIGN_KEYCHAIN:-}" ]]; then
+    echo "HOMEWARD_CODESIGN_KEYCHAIN is required for --cleanup" >&2
+    exit 2
+  fi
+  if [[ "${HOMEWARD_CI_CODESIGN_DRY_RUN:-0}" == "1" ]]; then
+    echo "dry-run: restore default keychain and delete $(printf '%q' "$HOMEWARD_CODESIGN_KEYCHAIN")"
+    if [[ -n "${HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN:-}" ]]; then
+      echo "security default-keychain -s $(printf '%q' "$HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN")"
+    fi
+    echo "security delete-keychain $(printf '%q' "$HOMEWARD_CODESIGN_KEYCHAIN")"
+    return 0
+  fi
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "ci-macos-codesign-setup.sh --cleanup must run on macOS" >&2
+    exit 1
+  fi
+  if [[ -n "${HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN:-}" ]]; then
+    security default-keychain -s "$HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN" || true
+  fi
+  security delete-keychain "$HOMEWARD_CODESIGN_KEYCHAIN" || true
+}
+
+if [[ "$CLEANUP" == "1" ]]; then
+  cleanup_keychain
+  exit 0
+fi
 
 APPLE_API_ISSUER="${APPLE_API_ISSUER:-${APPLE_API_ISSUER_ID:-${APPLE_API_KEY_ISSUER:-}}}"
 APPLE_API_KEY_ID="${APPLE_API_KEY_ID:-}"
@@ -112,12 +147,15 @@ if [[ ! -f "$APPLE_API_KEY_PATH" ]]; then
   exit 2
 fi
 
+PREV_DEFAULT_KEYCHAIN="${HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN:-}"
+
 write_exports() {
   cat <<EOF
 export APPLE_API_KEY_PATH=$(printf '%q' "$APPLE_API_KEY_PATH")
 export APPLE_API_KEY_ID=$(printf '%q' "$APPLE_API_KEY_ID")
 export APPLE_API_ISSUER=$(printf '%q' "$APPLE_API_ISSUER")
 export HOMEWARD_CODESIGN_KEYCHAIN=$(printf '%q' "$KEYCHAIN_PATH")
+export HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN=$(printf '%q' "$PREV_DEFAULT_KEYCHAIN")
 EOF
 }
 
@@ -126,7 +164,7 @@ print_security_plan() {
 security create-keychain -p <redacted> $(printf '%q' "$KEYCHAIN_PATH")
 security set-keychain-settings -lut 21600 $(printf '%q' "$KEYCHAIN_PATH")
 security unlock-keychain -p <redacted> $(printf '%q' "$KEYCHAIN_PATH")
-security import $(printf '%q' "$P12_PATH") -P <redacted> -A -t cert -f pkcs12 -k $(printf '%q' "$KEYCHAIN_PATH") -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild
+security import $(printf '%q' "$P12_PATH") -P <redacted> -t cert -f pkcs12 -k $(printf '%q' "$KEYCHAIN_PATH") -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k <redacted> $(printf '%q' "$KEYCHAIN_PATH")
 security list-keychains -d user -s $(printf '%q' "$KEYCHAIN_PATH") <existing-user-keychains>
 security find-identity -v -p codesigning $(printf '%q' "$KEYCHAIN_PATH")
@@ -151,12 +189,13 @@ fi
 
 # Do not call `xcrun notarytool store-credentials` — it prompts and fails
 # headless with "User interaction is not allowed".
+PREV_DEFAULT_KEYCHAIN="$(security default-keychain -d user 2>/dev/null | tr -d '"' | awk '{$1=$1;print}')"
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
 security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+# Allow only codesign / security / productbuild — not -A (any app).
 security import "$P12_PATH" \
   -P "$MACOS_CERTIFICATE_PASSWORD" \
-  -A \
   -t cert \
   -f pkcs12 \
   -k "$KEYCHAIN_PATH" \
@@ -192,5 +231,6 @@ if [[ -n "${GITHUB_ENV:-}" ]]; then
     echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID"
     echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
     echo "HOMEWARD_CODESIGN_KEYCHAIN=$KEYCHAIN_PATH"
+    echo "HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN=$PREV_DEFAULT_KEYCHAIN"
   } >> "$GITHUB_ENV"
 fi

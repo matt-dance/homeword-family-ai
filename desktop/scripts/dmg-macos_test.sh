@@ -4,11 +4,13 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$ROOT/desktop/scripts/dmg-macos.sh"
 NESTED="$ROOT/desktop/scripts/macos-codesign-nested.sh"
 SETUP="$ROOT/desktop/scripts/ci-macos-codesign-setup.sh"
+VERIFY="$ROOT/desktop/scripts/macos-codesign-verify.sh"
 ENT="$ROOT/desktop/pack/homeward.entitlements"
 
 test -x "$SCRIPT"
 test -x "$NESTED"
 test -x "$SETUP"
+test -x "$VERIFY"
 test -f "$ENT"
 
 "$SCRIPT" --help | grep -q "Homeward-macos"
@@ -21,6 +23,8 @@ test -f "$ENT"
 "$SCRIPT" --help | grep -q "APPLE_API_KEY"
 "$NESTED" --help | grep -q "leaf-first\|deepest-first"
 "$SETUP" --help | grep -q "notarytool"
+"$SETUP" --help | grep -q -- "--cleanup"
+"$VERIFY" --help | grep -q "Developer ID"
 
 grep -q -- '-volname' "$SCRIPT"
 grep -q 'Homeward' "$SCRIPT"
@@ -34,6 +38,38 @@ if grep -Eq 'zip[[:space:]].*Homeward\.app|ditto -c -k' "$SCRIPT"; then
   echo "dmg-macos.sh must not zip the .app" >&2
   exit 1
 fi
+
+# BSD mktemp rejects a suffix after XXXXXX (e.g. XXXXXX.p8).
+python3 - "$SCRIPT" "$SETUP" <<'PY'
+import re, sys
+pat = re.compile(r"mktemp.*XXXXXX\.[A-Za-z0-9]+")
+for path in sys.argv[1:]:
+    text = open(path, encoding="utf-8").read()
+    if pat.search(text):
+        raise SystemExit(f"{path}: mktemp template must end with XXXXXX (BSD; no .p8 suffix)")
+print("mktemp templates are BSD-safe")
+PY
+
+# Sign the DMG itself before notarytool; do not put --options runtime on the DMG.
+grep -q 'codesign --force --sign "$HOMEWARD_CODESIGN_IDENTITY" --timestamp "$DMG"' "$SCRIPT"
+python3 - "$SCRIPT" <<'PY'
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+block = src.split('if [[ "$SIGN" == "1" ]]; then')[-1]
+if "codesign --force --sign" not in block or "notary_submit" not in block:
+    raise SystemExit("signed path must codesign the DMG and call notary_submit")
+if block.index("codesign --force --sign") > block.index("notary_submit"):
+    raise SystemExit("DMG must be signed before notary_submit")
+if "--options runtime" in block.split("notary_submit", 1)[0] and "codesign --force --sign" in block:
+    # hardened runtime is for Mach-O via macos-codesign-nested.sh, not the DMG
+    pass
+dmg_line = [ln for ln in block.splitlines() if "codesign --force --sign" in ln]
+if not dmg_line:
+    raise SystemExit("missing DMG codesign line")
+if "--options" in dmg_line[0]:
+    raise SystemExit("DMG codesign must not use --options runtime")
+print("DMG codesign precedes notarytool")
+PY
 
 # Signing must not rely on codesign --deep alone (or at all for --sign).
 if grep -nE 'codesign[[:space:]].*--deep|--deep[[:space:]].*--sign' "$SCRIPT"; then
@@ -279,6 +315,20 @@ for row, label in ((dylib, "libpython"), (ffmpeg, "ffmpeg"), (espeak, "espeak-ng
 print("codesign argv (dry-run) ok")
 PY
 
+HOMEWARD_CODESIGN_VERIFY_DRY_RUN=1 \
+  "$VERIFY" "$APP" > "$WORK/verify-out.txt"
+grep -q 'Contents/Resources/runtime/espeak/bin/espeak-ng' "$WORK/verify-out.txt"
+grep -q 'Contents/Resources/runtime/ffmpeg/bin/ffmpeg' "$WORK/verify-out.txt"
+grep -q 'python3.12' "$WORK/verify-out.txt"
+grep -q 'libpython3.12.dylib' "$WORK/verify-out.txt"
+grep -q 'Authority=Developer ID Application' "$WORK/verify-out.txt"
+grep -q 'Timestamp=' "$WORK/verify-out.txt"
+grep -q 'hardened runtime' "$WORK/verify-out.txt"
+if grep -q -- '--deep' "$WORK/verify-out.txt"; then
+  echo "verify dry-run must not sign --deep" >&2
+  exit 1
+fi
+
 # CI setup: write API key + print security plan without calling security(1).
 P12_B64="$(python3 -c 'import base64; print(base64.b64encode(b"\x30" + b"\x00" * 24).decode())')"
 ENVF="$WORK/codesign.env"
@@ -295,9 +345,15 @@ grep -q 'create-keychain' "$WORK/setup-out.txt"
 grep -q 'security import' "$WORK/setup-out.txt"
 grep -q 'set-key-partition-list' "$WORK/setup-out.txt"
 grep -q 'find-identity' "$WORK/setup-out.txt"
+grep -q -- '-T /usr/bin/codesign' "$WORK/setup-out.txt"
+if grep -E 'security import .* -A( |$)' "$WORK/setup-out.txt"; then
+  echo "security import must not use -A (any application)" >&2
+  exit 1
+fi
 grep -q 'APPLE_API_KEY_PATH=' "$ENVF"
 grep -q 'KEYID123' "$ENVF"
 grep -q 'issuer-uuid-from-alias' "$ENVF"
+grep -q 'HOMEWARD_CODESIGN_KEYCHAIN=' "$ENVF"
 # shellcheck disable=SC1090
 source "$ENVF"
 test -f "$APPLE_API_KEY_PATH"
@@ -308,5 +364,16 @@ if grep -q 'store-credentials' "$WORK/setup-out.txt"; then
   exit 1
 fi
 test -s "$WORK/ci/developer-id.p12"
+
+HOMEWARD_CI_CODESIGN_DRY_RUN=1 \
+HOMEWARD_CODESIGN_KEYCHAIN="$WORK/ci/homeward-signing.keychain-db" \
+HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN="$WORK/login.keychain-db" \
+  "$SETUP" --cleanup > "$WORK/cleanup-out.txt"
+grep -q 'delete-keychain' "$WORK/cleanup-out.txt"
+grep -q 'default-keychain' "$WORK/cleanup-out.txt"
+if grep -q 'store-credentials' "$WORK/cleanup-out.txt"; then
+  echo "cleanup must not store a notary keychain profile" >&2
+  exit 1
+fi
 
 echo "dmg-macos nested codesign / notarytool wiring ok"

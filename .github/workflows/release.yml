@@ -10,8 +10,9 @@
 #   ./desktop/scripts/bundle-linux.sh amd64
 #
 # macOS: GitHub-hosted stays unsigned unless Developer ID + App Store
-# Connect API key secrets are present. Then the job imports the P12 into
-# a temporary keychain and notarizes with notarytool --key/--key-id/--issuer
+# Connect API key secrets are present. The job assembles Homeward.app
+# first (no signing secrets), then imports the P12 into a temporary
+# keychain and notarizes with notarytool --key/--key-id/--issuer
 # (not store-credentials / --keychain-profile; those fail headless).
 # Local Macs may still use HOMEWARD_CODESIGN_IDENTITY and
 # HOMEWARD_NOTARY_PROFILE with dmg-macos.sh --sign.
@@ -163,9 +164,22 @@ jobs:
       - name: Install macOS packager dependencies
         run: bash desktop/scripts/ci-setup-macos.sh
 
-      - name: Build family macOS DMG
+      # Assemble Homeward.app without Developer ID / notary secrets so
+      # downloaded Node / Ollama / CPython / ffmpeg cannot inherit them.
+      - name: Assemble Homeward.app
         env:
           HOMEWARD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          arch=arm64
+          case "$(uname -m)" in
+            x86_64|amd64) arch=amd64 ;;
+          esac
+          echo "building macOS $arch app on $(uname -m)"
+          ./desktop/scripts/bundle-macos.sh "$arch"
+
+      - name: Wrap UDZO DMG
+        id: codesign
+        env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
@@ -179,7 +193,6 @@ jobs:
           case "$(uname -m)" in
             x86_64|amd64) arch=amd64 ;;
           esac
-          echo "building macOS $arch DMG on $(uname -m)"
           issuer="${APPLE_API_ISSUER:-${APPLE_API_ISSUER_ID:-${APPLE_API_KEY_ISSUER:-}}}"
           if [[ -n "${MACOS_CERTIFICATE_P12:-}" && \
                 -n "${MACOS_CERTIFICATE_PASSWORD:-}" && \
@@ -191,10 +204,16 @@ jobs:
             bash desktop/scripts/ci-macos-codesign-setup.sh --env-file "$envf"
             # shellcheck disable=SC1090
             source "$envf"
-            ./desktop/scripts/dmg-macos.sh "$arch" --sign
+            cleanup_codesign() {
+              bash desktop/scripts/ci-macos-codesign-setup.sh --cleanup || true
+            }
+            trap cleanup_codesign EXIT
+            HOMEWARD_DMG_SKIP_BUNDLE=1 ./desktop/scripts/dmg-macos.sh "$arch" --sign
+            echo "signed=true" >> "$GITHUB_OUTPUT"
           else
             echo "signing secrets absent; building unsigned DMG"
-            ./desktop/scripts/dmg-macos.sh "$arch"
+            HOMEWARD_DMG_SKIP_BUNDLE=1 ./desktop/scripts/dmg-macos.sh "$arch"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Verify UDZO DMG
@@ -211,6 +230,9 @@ jobs:
           hdiutil attach "$dmg" -nobrowse -readonly
           test -d /Volumes/Homeward/Homeward.app
           test -e /Volumes/Homeward/Applications
+          if [[ "${{ steps.codesign.outputs.signed }}" == "true" ]]; then
+            bash desktop/scripts/macos-codesign-verify.sh /Volumes/Homeward/Homeward.app
+          fi
           hdiutil detach /Volumes/Homeward
           ls -lh "$dmg"
 
