@@ -101,14 +101,54 @@ export function preferCanonicalLastChat(
   return liveCount >= apiCount ? fromLive : fromApi;
 }
 
+/** True when the on-screen transcript was produced for this session id. */
+export function messagesBelongToSession(
+  chatSessionId: number | null | undefined,
+  ownerSessionId: number | null | undefined,
+): boolean {
+  return typeof chatSessionId === "number" && chatSessionId === ownerSessionId;
+}
+
+/**
+ * Keep the newest session. A later write of an older id must not put the
+ * previous transcript back on top of Start fresh.
+ */
+export function foldRememberedLastChat(
+  existing: ResumeSessionLike | null | undefined,
+  incoming: ResumeSessionLike,
+): ResumeSessionLike {
+  if (!isResumableSession(existing)) return incoming;
+  if (!isResumableSession(incoming)) return existing;
+  if (incoming.session_id < existing.session_id) return existing;
+  if (incoming.session_id > existing.session_id) return incoming;
+  const incomingCount = Array.isArray(incoming.messages) ? incoming.messages.length : 0;
+  const existingCount = Array.isArray(existing.messages) ? existing.messages.length : 0;
+  if (incomingCount < existingCount) return existing;
+  return incoming;
+}
+
 function lastChatStorageKey(childId: number) {
   return `homeward-last-chat-${childId}`;
 }
 
-export function readRememberedLastChat(childId: number): ResumeSessionLike | null {
-  if (typeof sessionStorage === "undefined") return null;
+function browserStores(): Array<{ store: Storage; durable: boolean }> {
+  const stores: Array<{ store: Storage; durable: boolean }> = [];
   try {
-    const raw = sessionStorage.getItem(lastChatStorageKey(childId));
+    if (typeof localStorage !== "undefined") stores.push({ store: localStorage, durable: true });
+  } catch {
+    // Blocked storage — fall through to sessionStorage.
+  }
+  try {
+    if (typeof sessionStorage !== "undefined") stores.push({ store: sessionStorage, durable: false });
+  } catch {
+    // Blocked storage — resume still has the API path.
+  }
+  return stores;
+}
+
+function readStoredSession(store: Storage, childId: number): ResumeSessionLike | null {
+  try {
+    const raw = store.getItem(lastChatStorageKey(childId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as ResumeSessionLike;
     return isResumableSession(parsed) ? parsed : null;
@@ -117,24 +157,41 @@ export function readRememberedLastChat(childId: number): ResumeSessionLike | nul
   }
 }
 
+export function readRememberedLastChat(childId: number): ResumeSessionLike | null {
+  // localStorage survives a profile switch that starts a new page session.
+  // sessionStorage covers the same tab if local storage is blocked.
+  const stores = browserStores();
+  const durable = stores.find((entry) => entry.durable);
+  if (durable) {
+    const fromLocal = readStoredSession(durable.store, childId);
+    if (fromLocal) return fromLocal;
+  }
+  for (const entry of stores) {
+    if (entry.durable) continue;
+    const found = readStoredSession(entry.store, childId);
+    if (found) return found;
+  }
+  return null;
+}
+
 export function writeRememberedLastChat(
   childId: number,
   session: ResumeSessionLike | null,
 ): void {
-  if (typeof sessionStorage === "undefined") return;
+  const stores = browserStores();
+  if (stores.length === 0) return;
+  const key = lastChatStorageKey(childId);
   try {
-    const key = lastChatStorageKey(childId);
     if (!isResumableSession(session)) {
-      sessionStorage.removeItem(key);
+      for (const entry of stores) entry.store.removeItem(key);
       return;
     }
-    sessionStorage.setItem(
-      key,
-      JSON.stringify({
-        session_id: session.session_id,
-        messages: session.messages,
-      }),
-    );
+    const next = foldRememberedLastChat(readRememberedLastChat(childId), session);
+    const payload = JSON.stringify({
+      session_id: next.session_id,
+      messages: next.messages,
+    });
+    for (const entry of stores) entry.store.setItem(key, payload);
   } catch {
     // Private mode / quota — resume still has the API path.
   }

@@ -10,7 +10,7 @@ from typing import Annotated, AsyncIterator, Literal
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from homeward_gateway.auth.local_host import client_ip_from_request, require_local_request
@@ -1140,6 +1140,13 @@ async def _log_message(
         # Conversation logs and blocked_attempts stay intact for parents.
         if blocked and is_hard_safety_stage(stage) and chat_session:
             chat_session.context_state = None
+        # Continue last chat follows the named session that just received a
+        # visible turn, not an older row that merely started later.
+        visible = bool((content or "").strip()) and not (blocked and direction == "input")
+        if chat_session and visible and not bool(chat_session.quick_chat):
+            child = await session.get(ChildProfile, child_id)
+            if child is not None:
+                child.last_named_session_id = chat_session.id
 
     if blocked:
         attempt = BlockedAttempt(
@@ -1293,18 +1300,50 @@ def _resume_messages(logs: list[ConversationLog]) -> list[dict]:
     return messages
 
 
+def _quick_chat_clause(*, quick_chat: bool):
+    """Named resume includes unset quick_chat (legacy rows). Guest chats stay out."""
+    if quick_chat:
+        return ChatSession.quick_chat.is_(True)
+    return or_(ChatSession.quick_chat.is_(False), ChatSession.quick_chat.is_(None))
+
+
+async def _visible_resume_messages(
+    session: AsyncSession, chat_session_id: int
+) -> list[dict]:
+    logs_result = await session.execute(
+        select(ConversationLog)
+        .where(ConversationLog.session_id == chat_session_id)
+        .order_by(ConversationLog.created_at.asc(), ConversationLog.id.asc())
+    )
+    return _resume_messages(list(logs_result.scalars().all()))
+
+
 async def _load_resumable_session(
     session: AsyncSession,
     child_id: int,
     *,
     quick_chat: bool = False,
 ) -> tuple[ChatSession, list[dict]] | None:
-    """Canonical last chat: the session that most recently received a turn.
+    """Canonical last chat: the named session that most recently received a turn.
 
     Empty Start-fresh rows are skipped so Continue can still open the prior
-    conversation. After the fresh chat has messages, that session wins — not
-    an older transcript ordered only by started_at.
+    conversation. After the fresh chat has a visible turn, that session wins —
+    not an older transcript ordered only by started_at.
     """
+    if not quick_chat:
+        child = await session.get(ChildProfile, child_id)
+        pointed_id = child.last_named_session_id if child else None
+        if pointed_id:
+            pointed = await session.get(ChatSession, pointed_id)
+            if (
+                pointed
+                and pointed.child_id == child_id
+                and not bool(pointed.quick_chat)
+            ):
+                messages = await _visible_resume_messages(session, pointed.id)
+                if messages:
+                    return pointed, messages
+
     last_log = (
         select(
             ConversationLog.session_id.label("session_id"),
@@ -1319,18 +1358,13 @@ async def _load_resumable_session(
         .join(last_log, ChatSession.id == last_log.c.session_id)
         .where(
             ChatSession.child_id == child_id,
-            ChatSession.quick_chat.is_(bool(quick_chat)),
+            _quick_chat_clause(quick_chat=quick_chat),
         )
         .order_by(last_log.c.last_log_id.desc(), ChatSession.id.desc())
         .limit(20)
     )
     for chat_session in sessions_result.scalars().all():
-        logs_result = await session.execute(
-            select(ConversationLog)
-            .where(ConversationLog.session_id == chat_session.id)
-            .order_by(ConversationLog.created_at.asc(), ConversationLog.id.asc())
-        )
-        messages = _resume_messages(list(logs_result.scalars().all()))
+        messages = await _visible_resume_messages(session, chat_session.id)
         if messages:
             return chat_session, messages
     return None
@@ -1557,6 +1591,9 @@ async def chat_stream(
                     nonlocal persisted, input_logged
                     if persisted or blocked_early:
                         return
+                    # Don't store a turn the safety check hasn't accepted yet.
+                    if not input_logged and not collected:
+                        return
                     persisted = True
                     full = strip_thinking("".join(collected))
                     if not input_logged:
@@ -1658,6 +1695,11 @@ async def chat_stream(
                             collected.append(item)
                             payload = json.dumps({"type": "token", "content": item})
                             yield f"data: {payload}\n\n"
+                    await persist_turn()
+                    if not collected:
+                        yield f"data: {json.dumps({'type': 'error', 'message': LLM_UNAVAILABLE_MESSAGE})}\n\n"
+                        return
+                    yield f"data: {json.dumps({'type': 'done', 'session_id': chat_session_id})}\n\n"
                 except asyncio.CancelledError:
                     await persist_turn()
                     raise
@@ -1679,12 +1721,14 @@ async def chat_stream(
                         )
                     yield f"data: {json.dumps({'type': 'error', 'message': kid_message})}\n\n"
                     return
-
-                await persist_turn()
-                if not collected:
-                    yield f"data: {json.dumps({'type': 'error', 'message': LLM_UNAVAILABLE_MESSAGE})}\n\n"
-                    return
-                yield f"data: {json.dumps({'type': 'done', 'session_id': chat_session_id})}\n\n"
+                finally:
+                    # GeneratorExit (client gone mid-token) skips except CancelledError.
+                    # Only flush a turn the safety check already accepted.
+                    if input_logged or collected:
+                        try:
+                            await persist_turn()
+                        except Exception:
+                            logger.exception("Failed to persist chat turn on stream close")
 
         async for chunk in with_sse_heartbeats(chat_events()):
             yield chunk

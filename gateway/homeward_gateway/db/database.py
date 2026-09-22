@@ -98,6 +98,8 @@ class ChildProfile(Base):
     quiet_hours_days: Mapped[str | None] = mapped_column(String(20), nullable=True)
     slug: Mapped[str] = mapped_column(String(100), nullable=False, default="child")
     memory_items: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Named-profile session that most recently received a visible turn.
+    last_named_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -219,6 +221,7 @@ def _migrate_child_columns(connection) -> None:
         ("quiet_hours_days", "VARCHAR(20)"),
         ("slug", "VARCHAR(100)"),
         ("memory_items", "TEXT"),
+        ("last_named_session_id", "INTEGER"),
     ]
     for name, col_type in additions:
         if name not in columns:

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   actionAfterPinUnlock,
+  foldRememberedLastChat,
   isResumableSession,
+  messagesBelongToSession,
   preferCanonicalLastChat,
   readRememberedLastChat,
   resumeTranscript,
@@ -140,16 +142,54 @@ describe("preferCanonicalLastChat", () => {
   });
 });
 
+describe("messagesBelongToSession", () => {
+  it("rejects a transcript that was produced for a different session", () => {
+    expect(messagesBelongToSession(8, 8)).toBe(true);
+    expect(messagesBelongToSession(9, 5)).toBe(false);
+    expect(messagesBelongToSession(null, 5)).toBe(false);
+  });
+});
+
+describe("foldRememberedLastChat", () => {
+  const older = {
+    session_id: 2,
+    messages: [{ role: "user", content: "Tell me a very short joke." }],
+  };
+  const fresh = {
+    session_id: 5,
+    messages: [{ role: "user", content: "remember the purple dragon" }],
+  };
+
+  it("keeps Start fresh when a later write is the older session", () => {
+    expect(foldRememberedLastChat(fresh, older)).toEqual(fresh);
+  });
+
+  it("keeps the longer transcript for the same session", () => {
+    const longer = {
+      session_id: 5,
+      messages: [
+        { role: "user", content: "remember the purple dragon" },
+        { role: "assistant", content: "Got it!" },
+      ],
+    };
+    expect(foldRememberedLastChat(longer, fresh)).toEqual(longer);
+    expect(foldRememberedLastChat(fresh, longer)).toEqual(longer);
+  });
+});
+
 describe("remembered last chat storage", () => {
-  const memory = new Map<string, string>();
+  const localMemory = new Map<string, string>();
+  const sessionMemory = new Map<string, string>();
 
   afterEach(() => {
-    memory.clear();
+    localMemory.clear();
+    sessionMemory.clear();
+    Reflect.deleteProperty(globalThis, "localStorage");
     Reflect.deleteProperty(globalThis, "sessionStorage");
   });
 
-  function installMemoryStorage() {
-    const storage = {
+  function installStorage(memory: Map<string, string>) {
+    return {
       getItem: (key: string) => memory.get(key) ?? null,
       setItem: (key: string, value: string) => {
         memory.set(key, value);
@@ -161,14 +201,17 @@ describe("remembered last chat storage", () => {
       key: () => null,
       length: 0,
     };
-    Object.defineProperty(globalThis, "sessionStorage", {
-      configurable: true,
-      value: storage,
-    });
   }
 
-  it("remembers a Start-fresh transcript for the same kid", () => {
-    installMemoryStorage();
+  it("remembers a Start-fresh transcript for the same kid in localStorage", () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: installStorage(localMemory),
+    });
+    Object.defineProperty(globalThis, "sessionStorage", {
+      configurable: true,
+      value: installStorage(sessionMemory),
+    });
     const session = {
       session_id: 8,
       messages: [{ role: "user" as const, content: "remember the purple dragon" }],
@@ -176,5 +219,43 @@ describe("remembered last chat storage", () => {
     writeRememberedLastChat(3, session);
     expect(readRememberedLastChat(3)).toEqual(session);
     expect(readRememberedLastChat(4)).toBeNull();
+    expect(localMemory.get("homeward-last-chat-3")).toContain("purple dragon");
+  });
+
+  it("does not let an older session replace the fresh transcript", () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: installStorage(localMemory),
+    });
+    const fresh = {
+      session_id: 8,
+      messages: [{ role: "user" as const, content: "remember the purple dragon" }],
+    };
+    const older = {
+      session_id: 2,
+      messages: [{ role: "user" as const, content: "Tell me a very short joke." }],
+    };
+    writeRememberedLastChat(3, fresh);
+    writeRememberedLastChat(3, older);
+    expect(readRememberedLastChat(3)).toEqual(fresh);
+  });
+
+  it("reads a same-tab sessionStorage transcript when local storage is empty", () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: installStorage(localMemory),
+    });
+    Object.defineProperty(globalThis, "sessionStorage", {
+      configurable: true,
+      value: installStorage(sessionMemory),
+    });
+    sessionMemory.set(
+      "homeward-last-chat-3",
+      JSON.stringify({
+        session_id: 8,
+        messages: [{ role: "user", content: "remember the purple dragon" }],
+      }),
+    );
+    expect(readRememberedLastChat(3)?.session_id).toBe(8);
   });
 });

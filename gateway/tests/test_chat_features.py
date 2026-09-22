@@ -2,11 +2,13 @@
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
 
 from homeward_gateway.api.routes import _latest_recovery_turn
 from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.chat.starters import get_conversation_starters
-from homeward_gateway.pipeline.pipeline import PipelineResult
+from homeward_gateway.db import database as db_module
+from homeward_gateway.pipeline.pipeline import PipelineResult, StatusEvent
 from homeward_gateway.pipeline.policy import load_all_presets
 from tests.conftest import create_child, setup_parent
 
@@ -227,6 +229,111 @@ class TestChatFeaturesAPI:
         data = resume.json()
         assert data["session_id"] == fresh_id
         contents = " ".join(m["content"] for m in data["messages"])
+        assert "purple dragon" in contents
+        assert "Tell me a very short joke." not in contents
+
+    @pytest.mark.asyncio
+    async def test_resume_keeps_start_fresh_when_older_session_gets_a_later_log(
+        self, authenticated_client: AsyncClient, monkeypatch
+    ):
+        """The named session that received the fresh turn stays canonical."""
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+        replies = iter(["A short joke.", "The purple dragon is noted."])
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content=next(replies))
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+
+        first = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        old_id = first.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={"message": "Tell me a very short joke.", "child_id": child["id"], "session_id": old_id},
+        )
+        fresh = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        fresh_id = fresh.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={
+                "message": "remember the purple dragon",
+                "child_id": child["id"],
+                "session_id": fresh_id,
+            },
+        )
+        async with db_module.async_session_factory() as db:
+            await db.execute(
+                text(
+                    "INSERT INTO conversation_logs "
+                    "(child_id, session_id, direction, content, blocked, created_at) "
+                    "VALUES (:child_id, :session_id, 'input', 'later stray joke', 0, CURRENT_TIMESTAMP)"
+                ),
+                {"child_id": child["id"], "session_id": old_id},
+            )
+            await db.commit()
+
+        resume = await authenticated_client.get(f"/api/v1/children/{child['id']}/sessions/resume")
+        assert resume.status_code == 200
+        data = resume.json()
+        assert data["session_id"] == fresh_id
+        contents = " ".join(m["content"] for m in data["messages"])
+        assert "purple dragon" in contents
+        assert "Tell me a very short joke." not in contents
+
+    @pytest.mark.asyncio
+    async def test_stream_start_fresh_is_the_resume_target(
+        self, authenticated_client: AsyncClient, monkeypatch
+    ):
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+        replies = iter(["A short joke.", "The purple dragon is noted."])
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content=next(replies))
+
+        async def fake_stream(*_args, **_kwargs):
+            text_out = next(replies)
+            yield StatusEvent(message="Writing a reply…", phase="generating")
+            yield text_out
+            yield PipelineResult(allowed=True, content=text_out)
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat_stream", fake_stream)
+
+        first = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        old_id = first.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={"message": "Tell me a very short joke.", "child_id": child["id"], "session_id": old_id},
+        )
+        fresh = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        fresh_id = fresh.json()["session_id"]
+        streamed = await authenticated_client.post(
+            "/api/v1/chat/stream",
+            json={
+                "message": "remember the purple dragon",
+                "child_id": child["id"],
+                "session_id": fresh_id,
+            },
+        )
+        assert streamed.status_code == 200
+        assert "purple dragon" in streamed.text or "noted" in streamed.text
+
+        resume = await authenticated_client.get(f"/api/v1/children/{child['id']}/sessions/resume")
+        assert resume.status_code == 200
+        assert resume.json()["session_id"] == fresh_id
+        contents = " ".join(m["content"] for m in resume.json()["messages"])
         assert "purple dragon" in contents
         assert "Tell me a very short joke." not in contents
 
