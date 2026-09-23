@@ -1548,7 +1548,7 @@ def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
             if key not in seen:
                 cards.append(card)
                 seen.add(key)
-    if not cleaned and not cards and re.search(r"\bFacts\b|```homeward", text or "", flags=re.IGNORECASE):
+    if not cleaned and not cards and re.search(r"\bFacts\b", text or "", flags=re.IGNORECASE):
         cleaned = FACTS_EMPTY_FALLBACK
     return cleaned, cards
 

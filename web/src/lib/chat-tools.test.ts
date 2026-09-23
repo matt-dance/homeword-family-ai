@@ -390,6 +390,14 @@ describe("extractChatTools", () => {
     expect(done.text).not.toContain("topic:");
   });
 
+  it("does not use the facts fallback for a completed empty non-facts fence", () => {
+    const howto = '```homeward\n{"type":"howto","title":"Toast","steps":[]}\n```\n';
+    const done = extractChatTools(howto, [], null, true);
+    expect(done.tools).toEqual([]);
+    expect(done.text).toBe("");
+    expect(done.text).not.toBe(FACTS_EMPTY_FALLBACK);
+  });
+
   it("factsFromProse needs at least two facts", () => {
     expect(factsFromProse("Just one sentence.")).toBeNull();
     expect(factsFromProse("1. Only one fact")).toBeNull();

@@ -505,6 +505,15 @@ def test_extract_model_tools_empty_facts_payload_uses_fallback():
     assert "topic:" not in cleaned
 
 
+def test_extract_model_tools_empty_non_facts_fence_skips_facts_fallback():
+    cleaned, cards = extract_model_tools(
+        '```homeward\n{"type":"howto","title":"Toast","steps":[]}\n```\n'
+    )
+    assert cards == []
+    assert cleaned == ""
+    assert cleaned != FACTS_EMPTY_FALLBACK
+
+
 def test_extract_model_tools_keeps_dogs_apostrophe_card():
     text = "Facts { topic: 'Dogs', facts: [ 'A dog's nose is wet!' ] }"
     cleaned, cards = extract_model_tools(text)

@@ -735,12 +735,7 @@ export function extractChatTools(
       text = [afterFacts, prose].filter((part) => part.trim()).join("\n\n").trim();
     }
   }
-  if (
-    complete &&
-    !text.trim() &&
-    !tools.length &&
-    /\bFacts\b|```homeward/i.test(content)
-  ) {
+  if (complete && !text.trim() && !tools.length && /\bFacts\b/i.test(content)) {
     text = FACTS_EMPTY_FALLBACK;
   }
   return { text, tools };
