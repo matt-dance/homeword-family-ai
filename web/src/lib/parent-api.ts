@@ -12,5 +12,6 @@ export function isParentOnlyApi(path: string, method: string): boolean {
   if (path.startsWith("/api/v1/children")) return !KID_CHILD_PATHS.test(path);
   // Password check for the homework camera — host-only, must not be LAN-reachable.
   if (path === "/api/v1/chat/homework/unlock") return true;
+  if (path.startsWith("/api/v1/pairing")) return path !== "/api/v1/pairing/join";
   return false;
 }

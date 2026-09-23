@@ -5,6 +5,8 @@ import {
   homewardBaseUrl,
   isLocalDashboardClient,
   isLoopbackHostname,
+  isLanIpv4,
+  joinUrl,
   kidChatUrl,
   normalizeHostname,
   parentLocalUrl,
@@ -62,5 +64,16 @@ describe("local-host", () => {
   it("omits port 80 from kid and parent URLs", () => {
     expect(kidChatUrl(80)).toBe("http://homeward.local/chat");
     expect(parentLocalUrl(80)).toBe("http://localhost");
+  });
+
+  it("builds a join URL from a raw IPv4 address, not a hostname", () => {
+    expect(joinUrl("192.168.1.10", 43123, "4821")).toBe(
+      "http://192.168.1.10:43123/join?code=4821",
+    );
+    expect(joinUrl("192.168.1.10", 80, "4821")).toBe("http://192.168.1.10/join?code=4821");
+    expect(joinUrl("homeward.local", 43123, "4821")).toBeNull();
+    expect(joinUrl("127.0.0.1", 43123, "4821")).toBeNull();
+    expect(isLanIpv4("10.0.0.5")).toBe(true);
+    expect(isLanIpv4("homeward.local")).toBe(false);
   });
 });

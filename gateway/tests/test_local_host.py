@@ -106,6 +106,9 @@ class TestParentSurfaceIsHostOnly:
             ("GET", "/api/v1/ollama/recommendations", None),
             ("GET", "/api/v1/auth/me", None),
             ("POST", "/api/v1/auth/logout", None),
+            ("GET", "/api/v1/pairing", None),
+            ("POST", "/api/v1/pairing/rotate", None),
+            ("DELETE", "/api/v1/pairing/devices/1", None),
         ],
     )
     async def test_parent_routes_reject_lan_even_with_cookie(
@@ -147,3 +150,8 @@ class TestParentSurfaceIsHostOnly:
             "/api/v1/chat/sessions", json={"child_id": child["id"]}, headers=LAN_HEADERS
         )
         assert session.status_code == 200
+        code = (await client.get("/api/v1/pairing")).json()["house_code"]
+        joined = await client.post(
+            "/api/v1/pairing/join", json={"code": code}, headers=LAN_HEADERS
+        )
+        assert joined.status_code == 200

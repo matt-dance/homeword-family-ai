@@ -16,7 +16,7 @@ docker compose up -d --build
 echo ""
 echo "Homeward is starting up."
 echo "On this computer, open http://localhost to finish setup and use the dashboard."
-echo "Kids on the same Wi-Fi can open http://homeward.local/chat"
+echo "Kids on the same Wi-Fi: scan the QR or type the house code from Add a phone or tablet (Settings)."
 echo ""
 echo "On first launch, the setup wizard will help you:"
 echo "  1. Create a parent password"

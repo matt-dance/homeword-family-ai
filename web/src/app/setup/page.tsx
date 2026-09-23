@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { kidChatUrl, parentLocalUrl } from "@/lib/local-host";
 import { api, type Preset } from "@/lib/api";
 import { isParentSignedOut, parentRouteAfterSessionCheck } from "@/lib/parent-session";
 import { HomewardLogo } from "@/components/homeward-logo";
@@ -14,6 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { OllamaSetup } from "@/components/ollama-setup";
 import { LiveLookupsToggle } from "@/components/live-lookups-toggle";
 import { VoiceGenderPicker, type VoiceGender } from "@/components/voice-gender-picker";
+import { AddPhoneCard } from "@/components/add-phone-card";
 import { getAgeTheme, AGE_THEME_CONFIGS } from "@/lib/age-theme";
 import {
   Plus,
@@ -697,61 +697,51 @@ export default function SetupPage() {
         )}
 
         {step === "review" && (
-          <Card className="border-border/80 shadow-md rounded-2xl animate-pop-in">
-            <CardHeader>
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500 mb-2">
-                <CheckCircle2 className="h-6 w-6" />
-              </div>
-              <CardTitle className="text-xl font-bold">You&apos;re all set!</CardTitle>
-              <CardDescription>
-                Homeward is fully configured. Your kids can start chatting, and you can review conversations from the parent dashboard.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="rounded-2xl border border-border/80 bg-muted/30 p-4 space-y-2.5 text-xs sm:text-sm">
-                <div className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-emerald-500" />
-                  <span>
-                    <strong>{children.length}</strong> child profile{children.length !== 1 ? "s" : ""} created
-                  </span>
+          <div className="space-y-4">
+            <Card className="border-border/80 shadow-md rounded-2xl animate-pop-in">
+              <CardHeader>
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500 mb-2">
+                  <CheckCircle2 className="h-6 w-6" />
                 </div>
-                <div className="flex items-center gap-2">
-                  <Check className={`h-4 w-4 ${ollamaReady ? "text-emerald-500" : "text-amber-500"}`} />
-                  <span>
-                    Local Ollama AI engine {ollamaReady ? "(active and ready)" : "(still downloading — chat waits until it finishes)"}
-                  </span>
+                <CardTitle className="text-xl font-bold">You&apos;re all set!</CardTitle>
+                <CardDescription>
+                  Homeward is fully configured. Your kids can start chatting, and you can review conversations from the parent dashboard.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="rounded-2xl border border-border/80 bg-muted/30 p-4 space-y-2.5 text-xs sm:text-sm">
+                  <div className="flex items-center gap-2">
+                    <Check className="h-4 w-4 text-emerald-500" />
+                    <span>
+                      <strong>{children.length}</strong> child profile{children.length !== 1 ? "s" : ""} created
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Check className={`h-4 w-4 ${ollamaReady ? "text-emerald-500" : "text-amber-500"}`} />
+                    <span>
+                      Local Ollama AI engine {ollamaReady ? "(active and ready)" : "(still downloading — chat waits until it finishes)"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Check className="h-4 w-4 text-emerald-500" />
+                    <span>All conversations logged privately on this computer</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-emerald-500" />
-                  <span>All conversations logged privately on this computer</span>
-                </div>
-              </div>
-              <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4 text-xs sm:text-sm space-y-1">
-                <p className="font-semibold text-foreground">
-                  Kids can chat from phones and tablets on your Wi‑Fi at{" "}
-                  <code className="text-primary font-mono bg-primary/10 px-1.5 py-0.5 rounded">
-                    {kidChatUrl()}
-                  </code>
-                </p>
-                <p className="text-muted-foreground">
-                  On this computer, use{" "}
-                  <code className="font-mono">{parentLocalUrl()}</code> for setup and the
-                  parent dashboard.
-                </p>
-              </div>
-              {error && (
-                <p className="text-sm font-medium text-destructive text-center">{error}</p>
-              )}
-              <Button
-                onClick={handleComplete}
-                disabled={loading}
-                className="w-full h-12 rounded-xl text-base font-semibold shadow-sm shadow-primary/25"
-              >
-                Go to Parent Dashboard
-                <ChevronRight className="ml-2 h-4 w-4" />
-              </Button>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+            <AddPhoneCard showParentNote />
+            {error && (
+              <p className="text-sm font-medium text-destructive text-center">{error}</p>
+            )}
+            <Button
+              onClick={handleComplete}
+              disabled={loading}
+              className="w-full h-12 rounded-xl text-base font-semibold shadow-sm shadow-primary/25"
+            >
+              Go to Parent Dashboard
+              <ChevronRight className="ml-2 h-4 w-4" />
+            </Button>
+          </div>
         )}
       </main>
     </div>

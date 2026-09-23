@@ -3,16 +3,15 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { kidChatUrl, parentLocalUrl } from "@/lib/local-host";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { OllamaSetup } from "@/components/ollama-setup";
+import { AddPhoneCard } from "@/components/add-phone-card";
 import {
   KeyRound,
   MapPin,
   Server,
-  Smartphone,
   CheckCircle2,
   Shield,
   Sparkles,
@@ -432,33 +431,7 @@ export default function SettingsPage() {
         )}
       </Card>
 
-      {/* Network & Connected Devices */}
-      <Card className="border-border/80 shadow-xs">
-        <CardHeader className="pb-4">
-          <CardTitle className="text-lg font-bold flex items-center gap-2">
-            <Smartphone className="h-5 w-5 text-primary" />
-            Local Network & Devices
-          </CardTitle>
-          <CardDescription>
-            Access kid chat from any phone, tablet, or laptop on your home Wi‑Fi.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-xl bg-muted/40 p-4 border border-border/60 text-xs sm:text-sm text-muted-foreground leading-relaxed space-y-1">
-            <p className="font-semibold text-foreground">
-              Kids on Wi‑Fi:{" "}
-              <code className="text-primary font-mono bg-primary/10 px-1.5 py-0.5 rounded">
-                {kidChatUrl()}
-              </code>
-            </p>
-            <p>
-              On this computer, use{" "}
-              <code className="font-mono text-foreground">{parentLocalUrl()}</code> for setup and the
-              parent dashboard. Kid chat is the only page that opens from other devices.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <AddPhoneCard showParentNote />
     </main>
   );
 }
