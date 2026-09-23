@@ -22,6 +22,8 @@ from homeward_gateway.chat.tools import (
     clock_tool_hint,
     detect_intents,
     extract_model_tools,
+    facts_from_prose,
+    facts_title,
     local_card_cheer,
     messages_for_llm,
     howto_from_prose,
@@ -343,6 +345,10 @@ def _model_cards_for_turn(user_message: str, model_text: str) -> list[dict]:
     visible, model_cards = extract_model_tools(model_text or "")
     if "howto" in detect_intents(user_message) and not any(card.type == "howto" for card in model_cards):
         synthesized = howto_from_prose(visible, title=howto_title(user_message))
+        if synthesized:
+            model_cards = [*model_cards, synthesized]
+    if "facts" in detect_intents(user_message) and not any(card.type == "facts" for card in model_cards):
+        synthesized = facts_from_prose(visible, title=facts_title(user_message))
         if synthesized:
             model_cards = [*model_cards, synthesized]
     return [card.to_dict() for card in apply_card_routing(user_message, model_cards)]
@@ -729,6 +735,17 @@ async def process_chat_stream(
         and not any(card.type == "howto" for card in local_cards)
     ):
         synthesized = howto_from_prose(visible, title=howto_title(user_message))
+        if synthesized:
+            routed = [card.to_dict() for card in apply_card_routing(user_message, [synthesized])]
+            if routed:
+                yield ToolEvent(routed)
+
+    if (
+        "facts" in detect_intents(user_message)
+        and not any(card.get("type") == "facts" for card in extra)
+        and not any(card.type == "facts" for card in local_cards)
+    ):
+        synthesized = facts_from_prose(visible, title=facts_title(user_message))
         if synthesized:
             routed = [card.to_dict() for card in apply_card_routing(user_message, [synthesized])]
             if routed:

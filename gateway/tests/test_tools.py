@@ -8,6 +8,9 @@ from homeward_gateway.chat.tools import (
     detect_intents,
     evaluate_math,
     extract_model_tools,
+    FACTS_EMPTY_FALLBACK,
+    facts_from_prose,
+    facts_title,
     howto_from_prose,
     is_clock_question,
     is_self_contained_card_request,
@@ -430,6 +433,100 @@ def test_extract_model_tools_hides_incomplete_facts_payload():
     assert cleaned == "Almost ready"
     assert cards == []
     assert "Facts" not in cleaned
+
+
+def test_extract_model_tools_animals_inner_quotes():
+    text = (
+        'Facts { topic: "Animals", facts: [ '
+        '"A group of lions is called a "pride".", '
+        '"Octopuses have three hearts." ] }'
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert cards
+    assert cards[0].type == "facts"
+    assert cards[0].data["topic"] == "Animals"
+    assert len(cards[0].data["facts"]) >= 1
+    assert "topic:" not in cleaned
+    assert "{" not in cleaned
+
+
+def test_extract_model_tools_partial_numbered_animals_facts():
+    text = (
+        'Facts { topic: "Animals", facts: [\n'
+        "1. Octopuses have three hearts.\n"
+        "2. A snail can sleep for three years."
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert cards[0].type == "facts"
+    assert cards[0].data == {
+        "topic": "Animals",
+        "facts": ["Octopuses have three hearts.", "A snail can sleep for three years."],
+    }
+
+
+def test_extract_model_tools_js_style_fenced_animals_facts():
+    text = (
+        "```homeward\n"
+        "{ type: 'facts', topic: 'Animals', "
+        "facts: ['Octopuses have three hearts.', 'Cows have four stomachs.'] }\n"
+        "```"
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert "homeward" not in cleaned
+    assert cards[0].type == "facts"
+    assert cards[0].data == {
+        "topic": "Animals",
+        "facts": ["Octopuses have three hearts.", "Cows have four stomachs."],
+    }
+
+
+def test_extract_model_tools_facts_object_map():
+    text = (
+        'Facts { type: "facts", topic: "Animals", '
+        'facts: { one: "Octopuses have three hearts.", two: "Cows have four stomachs." } }'
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert cards[0].data == {
+        "topic": "Animals",
+        "facts": ["Octopuses have three hearts.", "Cows have four stomachs."],
+    }
+
+
+def test_extract_model_tools_empty_facts_payload_uses_fallback():
+    cleaned, cards = extract_model_tools('Facts { topic: "Animals", facts: [] }')
+    assert cards == []
+    assert cleaned == FACTS_EMPTY_FALLBACK
+    assert "topic:" not in cleaned
+
+
+def test_extract_model_tools_keeps_dogs_apostrophe_card():
+    text = "Facts { topic: 'Dogs', facts: [ 'A dog's nose is wet!' ] }"
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert cards[0].type == "facts"
+    assert cards[0].data == {"topic": "Dogs", "facts": ["A dog's nose is wet!"]}
+
+
+def test_facts_from_prose_and_title():
+    assert facts_title("Tell me fun facts about animals") == "Animals"
+    prose = (
+        "Here are fun facts about animals:\n"
+        "1. Octopuses have three hearts.\n"
+        "2. Cows have four stomachs.\n"
+        "3. Blue whales are huge.\n"
+    )
+    card = facts_from_prose(prose, title=facts_title("Tell me fun facts about animals"))
+    assert card is not None
+    assert card.type == "facts"
+    assert card.data["topic"] == "Animals"
+    assert card.data["facts"] == [
+        "Octopuses have three hearts.",
+        "Cows have four stomachs.",
+        "Blue whales are huge.",
+    ]
+    assert facts_from_prose("1. Only one fact") is None
 
 
 def test_card_route_keeps_facts_for_fun_fact_prompt():

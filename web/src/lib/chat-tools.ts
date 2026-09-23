@@ -124,18 +124,77 @@ export function howtoFromProse(content: string, title = "How to"): HowToTool | n
   return { type: "howto", title: foundTitle || "How to", steps };
 }
 
+const FACT_ITEM_KEYS = [
+  "text",
+  "fact",
+  "body",
+  "content",
+  "description",
+  "info",
+  "value",
+  "summary",
+  "detail",
+] as const;
+const FACT_LIST_KEYS = ["facts", "items", "list", "entries"] as const;
+const FACT_META_KEYS = new Set(["type", "topic", "title"]);
+const FACT_META_VALUES = new Set(["facts", "type", "topic", "title", "items", "fun facts"]);
+const FACTS_TOPIC_FIELD_RE = /\btopic\s*:\s*(?:["']([^"'\n]+)["']|([A-Za-z][A-Za-z0-9 \-']*))/i;
+export const FACTS_EMPTY_FALLBACK = "I got mixed up telling those fun facts. Ask me again!";
+
+function looksLikeFactText(value: string): boolean {
+  const text = value.trim();
+  if (!text || FACT_META_VALUES.has(text.toLowerCase())) return false;
+  if (/^(type|topic|title|facts|items|word|meaning)\b/i.test(text)) return false;
+  if (!text.includes(" ")) return false;
+  return text.length >= 12;
+}
+
 function factItemText(value: unknown): string | null {
   if (typeof value === "string") {
     const text = value.trim();
     return text || null;
   }
   if (value && typeof value === "object") {
-    for (const key of ["text", "fact", "body", "content"] as const) {
-      const raw = (value as Record<string, unknown>)[key];
+    const obj = value as Record<string, unknown>;
+    for (const key of FACT_ITEM_KEYS) {
+      const raw = obj[key];
       if (typeof raw === "string" && raw.trim()) return raw.trim();
+    }
+    for (const raw of Object.values(obj)) {
+      if (typeof raw === "string" && looksLikeFactText(raw)) return raw.trim();
     }
   }
   return null;
+}
+
+function collectFactTexts(raw: unknown): string[] {
+  const facts: string[] = [];
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const fact = factItemText(item);
+      if (fact) facts.push(fact);
+    }
+    return facts;
+  }
+  if (raw && typeof raw === "object") {
+    for (const item of Object.values(raw as Record<string, unknown>)) {
+      if (item && typeof item === "object") {
+        facts.push(...collectFactTexts(item));
+      } else {
+        const fact = factItemText(item);
+        if (fact) facts.push(fact);
+      }
+    }
+    return facts;
+  }
+  if (typeof raw === "string") {
+    for (const line of raw.split(/\r?\n/)) {
+      const fact = factItemText(line.replace(/^\s*(?:\d+[.)]\s+|[-*•]\s+)/, ""));
+      if (fact) facts.push(fact);
+    }
+    if (!facts.length && raw.trim()) facts.push(raw.trim());
+  }
+  return facts;
 }
 
 function factsToolFromObject(value: unknown): FactsTool | null {
@@ -144,17 +203,17 @@ function factsToolFromObject(value: unknown): FactsTool | null {
   if (obj.type != null && obj.type !== "facts") return null;
   const rawTopic = typeof obj.topic === "string" && obj.topic.trim() ? obj.topic : obj.title;
   const topic = typeof rawTopic === "string" && rawTopic.trim() ? rawTopic.trim() : "Fun Facts";
-  const rawFacts = obj.facts ?? obj.items;
-  const facts: string[] = [];
-  if (Array.isArray(rawFacts)) {
-    for (const item of rawFacts) {
-      const fact = factItemText(item);
-      if (fact) facts.push(fact);
+  let facts: string[] = [];
+  for (const key of FACT_LIST_KEYS) {
+    if (obj[key] != null) {
+      facts = collectFactTexts(obj[key]);
+      break;
     }
-  } else if (typeof rawFacts === "string") {
-    for (const line of rawFacts.split(/\r?\n/)) {
-      const fact = factItemText(line.replace(/^\s*(?:\d+[.)]\s+|[-*•]\s+)/, ""));
-      if (fact) facts.push(fact);
+  }
+  if (!facts.length) {
+    for (const [key, item] of Object.entries(obj)) {
+      if (FACT_META_KEYS.has(key) || (FACT_LIST_KEYS as readonly string[]).includes(key)) continue;
+      facts.push(...collectFactTexts(item));
     }
   }
   if (!facts.length) return null;
@@ -171,10 +230,103 @@ export function factsToProse(tool: FactsTool): string {
   return tool.facts.map((fact) => fact.trim()).filter(Boolean).join(" ");
 }
 
+export function factsFromProse(content: string, title = "Fun Facts"): FactsTool | null {
+  const facts: string[] = [];
+  let foundTitle = title;
+  for (const line of content.split(/\r?\n/)) {
+    const heading = line.match(HOWTO_HEADING_RE);
+    if (heading && foundTitle === "Fun Facts") {
+      foundTitle = heading[1].trim();
+      continue;
+    }
+    const match = line.match(HOWTO_STEP_RE);
+    if (match) {
+      const fact = match[1].replace(/\*\*/g, "").trim();
+      if (fact) facts.push(fact);
+    }
+  }
+  if (facts.length < 2) return null;
+  return { type: "facts", topic: foundTitle || "Fun Facts", facts };
+}
+
+function topicFromFactsText(text: string): string | null {
+  const match = text.match(FACTS_TOPIC_FIELD_RE);
+  const topic = (match?.[1] || match?.[2] || "").trim();
+  return topic || null;
+}
+
+function completedQuotedStrings(text: string): string[] {
+  const strings: string[] = [];
+  let index = 0;
+  while (index < text.length) {
+    const char = text[index];
+    if (char === '"' || char === "'") {
+      const cursor: JsCursor = { s: text, i: index };
+      try {
+        strings.push(readJsString(cursor));
+        index = cursor.i;
+        continue;
+      } catch {
+        break;
+      }
+    }
+    index += 1;
+  }
+  return strings;
+}
+
+function numberedFactLines(text: string): string[] {
+  const facts: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(HOWTO_STEP_RE);
+    if (!match) continue;
+    const fact = match[1].replace(/\*\*/g, "").trim();
+    if (fact) facts.push(fact);
+  }
+  return facts;
+}
+
+function scaffoldStrippedFacts(text: string): string[] {
+  const cleaned = text
+    .replace(/```homeward/gi, " ")
+    .replace(/(^|[\n{,])\s*Facts\b/gi, "$1 ")
+    .replace(/["'`]+/g, " ")
+    .replace(/\b(?:type|topic|title|facts|items)\s*:/gi, " ")
+    .replace(/[{}\[\],]/g, "\n");
+  const facts: string[] = [];
+  for (const line of cleaned.split(/\r?\n/)) {
+    const item = line.replace(/^\s*(?:\d+[.)]\s+|[-*•]\s+)/, "").replace(/\s+/g, " ").trim();
+    if (looksLikeFactText(item)) facts.push(item);
+  }
+  return facts;
+}
+
+export function salvageFactsTool(text: string, topic?: string, opts?: { allowScaffold?: boolean }): FactsTool | null {
+  const foundTopic = topic?.trim() || topicFromFactsText(text) || "Fun Facts";
+  let facts = numberedFactLines(text);
+  if (!facts.length) {
+    for (const item of completedQuotedStrings(text)) {
+      if (item.trim() === foundTopic || !looksLikeFactText(item)) continue;
+      facts.push(item.trim());
+    }
+  }
+  if (!facts.length && opts?.allowScaffold) {
+    facts = scaffoldStrippedFacts(text).filter((item) => item !== foundTopic);
+  }
+  if (!facts.length) return null;
+  return { type: "facts", topic: foundTopic, facts };
+}
+
+function looksLikeFactsObject(value: Record<string, unknown> | null): boolean {
+  if (!value) return false;
+  if (value.type === "facts") return true;
+  return value.topic != null || value.facts != null || value.items != null;
+}
+
 function isJsQuoteCloser(source: string, index: number, quote: string): boolean {
   if (source[index] !== quote) return false;
-  // Tiny models leave possessives unescaped inside single-quoted strings.
-  if (quote === "'" && /[A-Za-z]/.test(source[index + 1] ?? "")) return false;
+  // Tiny models leave possessives and inner quotes unescaped.
+  if ((quote === "'" || quote === '"') && /[A-Za-z]/.test(source[index + 1] ?? "")) return false;
   return true;
 }
 
@@ -213,22 +365,33 @@ function extractBalancedJson(source: string, start: number): { raw: string; end:
 function pullFencedTools(content: string): { cleaned: string; tools: ChatTool[] } {
   const tools: ChatTool[] = [];
   const ranges: Array<[number, number]> = [];
+  let strippedEmptyFacts = false;
   FENCE_OPEN_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = FENCE_OPEN_RE.exec(content))) {
     const jsonStart = content.indexOf("{", match.index + match[0].length);
-    if (jsonStart < 0) continue;
+    if (jsonStart < 0) break;
     const extracted = extractBalancedJson(content, jsonStart);
-    if (!extracted) continue;
+    if (!extracted) {
+      if (looksLikeFactsStart(content, jsonStart)) {
+        const salvaged = salvageFactsTool(content.slice(match.index));
+        if (salvaged) {
+          tools.push(salvaged);
+          ranges.push([match.index, content.length]);
+        }
+      }
+      break;
+    }
     const { raw, end: jsonEnd } = extracted;
     const close = content.indexOf("```", jsonEnd);
     const end = close >= 0 ? close + 3 : jsonEnd;
-    try {
-      const parsed = asChatTool(JSON.parse(raw));
-      if (parsed) tools.push(parsed);
-    } catch {
-      /* ignore malformed cards */
-    }
+    const parsed = parseLooseRecord(raw);
+    const tool =
+      (parsed ? asChatTool(parsed) : null) ??
+      (parsed ? factsToolFromObject(parsed) : null) ??
+      (parsed && looksLikeFactsObject(parsed) ? salvageFactsTool(raw, undefined, { allowScaffold: true }) : null);
+    if (tool) tools.push(tool);
+    else if (parsed && looksLikeFactsObject(parsed)) strippedEmptyFacts = true;
     ranges.push([match.index, end]);
     FENCE_OPEN_RE.lastIndex = end;
   }
@@ -244,7 +407,23 @@ function pullFencedTools(content: string): { cleaned: string; tools: ChatTool[] 
     cleaned += content.slice(cursor);
   }
 
-  cleaned = cleaned.replace(INCOMPLETE_FENCE_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+  const incomplete = cleaned.match(INCOMPLETE_FENCE_RE);
+  if (incomplete) {
+    const brace = incomplete[0].indexOf("{");
+    if (
+      !tools.some((tool) => tool.type === "facts") &&
+      brace >= 0 &&
+      looksLikeFactsStart(incomplete[0], brace)
+    ) {
+      const salvaged = salvageFactsTool(incomplete[0]);
+      if (salvaged) tools.push(salvaged);
+    }
+    cleaned = cleaned.slice(0, incomplete.index);
+  }
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+  if (!cleaned && !tools.length && strippedEmptyFacts) {
+    cleaned = FACTS_EMPTY_FALLBACK;
+  }
   return { cleaned, tools };
 }
 
@@ -410,6 +589,7 @@ function pullFactsPayloads(content: string): { cleaned: string; tools: FactsTool
   const tools: FactsTool[] = [];
   const ranges: Array<[number, number]> = [];
   let hideFrom = content.length;
+  let strippedFacts = false;
   let cursor = 0;
 
   while (cursor < hideFrom) {
@@ -418,12 +598,30 @@ function pullFactsPayloads(content: string): { cleaned: string; tools: FactsTool
     const extracted = extractBalancedJson(content, brace);
     if (!extracted) {
       if (looksLikeFactsStart(content, brace)) {
-        hideFrom = Math.min(hideFrom, leadingFactsPrefix(content, brace) ?? brace);
+        const start = leadingFactsPrefix(content, brace) ?? brace;
+        const salvaged = salvageFactsTool(content.slice(start));
+        if (salvaged) {
+          tools.push(salvaged);
+          ranges.push([start, content.length]);
+          strippedFacts = true;
+          break;
+        }
+        hideFrom = Math.min(hideFrom, start);
       }
       break;
     }
     const parsed = parseLooseRecord(extracted.raw);
-    const tool = parsed ? factsToolFromObject(parsed) : null;
+    let tool = parsed ? factsToolFromObject(parsed) : null;
+    if (!tool && looksLikeFactsStart(content, brace)) {
+      const start = leadingFactsPrefix(content, brace) ?? brace;
+      tool = salvageFactsTool(content.slice(start, extracted.end), undefined, { allowScaffold: true });
+      if (!tool) {
+        ranges.push([start, extracted.end]);
+        strippedFacts = true;
+        cursor = extracted.end;
+        continue;
+      }
+    }
     if (!tool) {
       cursor = brace + 1;
       continue;
@@ -443,6 +641,9 @@ function pullFactsPayloads(content: string): { cleaned: string; tools: FactsTool
   }
   cleaned += content.slice(pos, hideFrom);
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+  if (!cleaned && !tools.length && strippedFacts && hideFrom === content.length) {
+    cleaned = FACTS_EMPTY_FALLBACK;
+  }
   return { cleaned, tools };
 }
 
@@ -498,6 +699,7 @@ export function extractChatTools(
   content: string,
   extra: ChatTool[] = [],
   route?: CardRoute | null,
+  complete = false,
 ): { text: string; tools: ChatTool[] } {
   const { cleaned: afterFence, tools: fromFence } = pullFencedTools(content);
   const { cleaned: afterFacts, tools: fromFacts } = pullFactsPayloads(afterFence);
@@ -509,6 +711,13 @@ export function extractChatTools(
       tools = constrainChatTools([...tools, synthesized], route);
     }
   }
+  const routeAsksFacts = Boolean(route?.allow?.includes("facts"));
+  if (routeAsksFacts && !tools.some((tool) => tool.type === "facts")) {
+    const synthesized = factsFromProse(afterFacts);
+    if (synthesized) {
+      tools = constrainChatTools([...tools, synthesized], route);
+    }
+  }
   let text = afterFacts;
   const routeAllowsFacts = !route?.allow || route.allow.includes("facts");
   if (!routeAllowsFacts && fromFacts.length) {
@@ -516,6 +725,14 @@ export function extractChatTools(
     if (prose) {
       text = [afterFacts, prose].filter((part) => part.trim()).join("\n\n").trim();
     }
+  }
+  if (
+    complete &&
+    !text.trim() &&
+    !tools.length &&
+    /\bFacts\b|```homeward/i.test(content)
+  ) {
+    text = FACTS_EMPTY_FALLBACK;
   }
   return { text, tools };
 }
