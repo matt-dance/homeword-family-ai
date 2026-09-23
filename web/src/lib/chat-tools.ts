@@ -171,6 +171,13 @@ export function factsToProse(tool: FactsTool): string {
   return tool.facts.map((fact) => fact.trim()).filter(Boolean).join(" ");
 }
 
+function isJsQuoteCloser(source: string, index: number, quote: string): boolean {
+  if (source[index] !== quote) return false;
+  // Tiny models leave possessives unescaped inside single-quoted strings.
+  if (quote === "'" && /[A-Za-z]/.test(source[index + 1] ?? "")) return false;
+  return true;
+}
+
 function extractBalancedJson(source: string, start: number): { raw: string; end: number } | null {
   if (source[start] !== "{") return null;
   let depth = 0;
@@ -187,11 +194,7 @@ function extractBalancedJson(source: string, start: number): { raw: string; end:
         escape = true;
         continue;
       }
-      if (char === quote) {
-        // Tiny models emit JS-style 'dog's' — don't end the string on a possessive.
-        if (quote === "'" && /[A-Za-z]/.test(source[i + 1] || "")) continue;
-        quote = null;
-      }
+      if (isJsQuoteCloser(source, i, quote)) quote = null;
       continue;
     }
     if (char === '"' || char === "'") {
@@ -265,12 +268,7 @@ function readJsString(p: JsCursor): string {
       p.i += 2;
       continue;
     }
-    if (ch === quote) {
-      if (quote === "'" && /[A-Za-z]/.test(p.s[p.i + 1] || "")) {
-        out += ch;
-        p.i += 1;
-        continue;
-      }
+    if (isJsQuoteCloser(p.s, p.i, quote)) {
       p.i += 1;
       return out;
     }

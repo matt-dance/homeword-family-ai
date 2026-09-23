@@ -415,6 +415,14 @@ def test_extract_model_tools_unfenced_json_facts():
     assert cards[0].data == {"topic": "dogs", "facts": ["They sniff.", "They run."]}
 
 
+def test_extract_model_tools_single_quoted_facts_with_apostrophe():
+    text = "Facts { topic: 'Dogs', facts: ['A dog's nose is unique'] }"
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert cards[0].type == "facts"
+    assert cards[0].data == {"topic": "Dogs", "facts": ["A dog's nose is unique"]}
+
+
 def test_extract_model_tools_hides_incomplete_facts_payload():
     cleaned, cards = extract_model_tools(
         'Almost ready\nFacts { topic: "Animal Fun Facts", facts: [ "Butterflies'

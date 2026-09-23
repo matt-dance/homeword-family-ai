@@ -233,6 +233,13 @@ describe("extractChatTools", () => {
     });
   });
 
+  it("maps a single-quoted Facts payload that contains apostrophes", () => {
+    const content = "Facts { topic: 'Dogs', facts: ['A dog's nose is unique'] }";
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(tools).toEqual([{ type: "facts", topic: "Dogs", facts: ["A dog's nose is unique"] }]);
+  });
+
   it("hides an incomplete Facts payload while streaming", () => {
     const { text, tools } = extractChatTools(
       'Almost ready\nFacts { topic: "Animal Fun Facts", facts: [ "Butterflies',
