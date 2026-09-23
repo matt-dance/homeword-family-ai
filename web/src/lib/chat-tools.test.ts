@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { asChatTool, constrainChatTools, extractChatTools, howtoFromProse, mergeChatTools } from "./chat-tools";
+import {
+  asChatTool,
+  constrainChatTools,
+  extractChatTools,
+  FACTS_EMPTY_FALLBACK,
+  factsFromProse,
+  howtoFromProse,
+  mergeChatTools,
+} from "./chat-tools";
 
 describe("extractChatTools", () => {
   it("strips a complete homeward fence and parses the card", () => {
@@ -290,5 +298,100 @@ describe("extractChatTools", () => {
     const { text, tools } = extractChatTools(content, extra, { allow: ["facts", "lookup"], storyPages: null });
     expect(text).toBe("");
     expect(tools).toEqual(extra);
+  });
+
+  it("maps an animals payload whose facts contain inner double quotes", () => {
+    const content =
+      'Facts { topic: "Animals", facts: [ "A group of lions is called a "pride".", "Octopuses have three hearts." ] }';
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(tools[0]?.type).toBe("facts");
+    expect(tools[0] && tools[0].type === "facts" ? tools[0].topic : "").toBe("Animals");
+    const facts = tools[0] && tools[0].type === "facts" ? tools[0].facts : [];
+    expect(facts.length).toBeGreaterThanOrEqual(2);
+    expect(facts.some((fact) => /lions|pride/i.test(fact))).toBe(true);
+    expect(facts.some((fact) => /octopus/i.test(fact))).toBe(true);
+    expect(facts.every((fact) => !fact.startsWith(","))).toBe(true);
+    expect(text).not.toContain("topic:");
+    expect(text).not.toMatch(/\{\s*topic/);
+  });
+
+  it("salvages a partial animals Facts payload with numbered lines instead of a blank bubble", () => {
+    const content = [
+      "Facts { topic: \"Animals\", facts: [",
+      "1. Octopuses have three hearts.",
+      "2. A snail can sleep for three years.",
+    ].join("\n");
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(tools).toEqual([
+      {
+        type: "facts",
+        topic: "Animals",
+        facts: ["Octopuses have three hearts.", "A snail can sleep for three years."],
+      },
+    ]);
+    expect(text).toBe("");
+    expect(text).not.toContain("Facts");
+  });
+
+  it("maps a JS-style fenced animals Facts payload instead of stripping the fence", () => {
+    const content = [
+      "```homeward",
+      "{ type: 'facts', topic: 'Animals', facts: ['Octopuses have three hearts.', 'Cows have four stomachs.'] }",
+      "```",
+    ].join("\n");
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(tools).toEqual([
+      {
+        type: "facts",
+        topic: "Animals",
+        facts: ["Octopuses have three hearts.", "Cows have four stomachs."],
+      },
+    ]);
+  });
+
+  it("maps facts stored as an object map", () => {
+    const content =
+      'Facts { type: "facts", topic: "Animals", facts: { one: "Octopuses have three hearts.", two: "Cows have four stomachs." } }';
+    const { tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(tools[0]).toEqual({
+      type: "facts",
+      topic: "Animals",
+      facts: ["Octopuses have three hearts.", "Cows have four stomachs."],
+    });
+  });
+
+  it("builds a facts card from numbered prose when the route is facts", () => {
+    const prose =
+      "Here are fun facts about animals:\n1. Octopuses have three hearts.\n2. Cows have four stomachs.\n3. Blue whales are huge.\n";
+    const { tools } = extractChatTools(prose, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(tools[0]).toMatchObject({
+      type: "facts",
+      topic: "Fun Facts",
+      facts: ["Octopuses have three hearts.", "Cows have four stomachs.", "Blue whales are huge."],
+    });
+  });
+
+  it("keeps the dogs apostrophe card path working", () => {
+    const content = "Facts { topic: 'Dogs', facts: [ 'A dog's nose is wet!' ] }";
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(tools).toEqual([{ type: "facts", topic: "Dogs", facts: ["A dog's nose is wet!"] }]);
+  });
+
+  it("uses kid-safe fallback prose for a completed empty Facts payload", () => {
+    const content = 'Facts { topic: "Animals", facts: [] }';
+    const streaming = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null }, false);
+    expect(streaming.tools).toEqual([]);
+    expect(streaming.text).toBe(FACTS_EMPTY_FALLBACK);
+    const done = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null }, true);
+    expect(done.tools).toEqual([]);
+    expect(done.text).toBe(FACTS_EMPTY_FALLBACK);
+    expect(done.text).not.toContain("topic:");
+  });
+
+  it("factsFromProse needs at least two facts", () => {
+    expect(factsFromProse("Just one sentence.")).toBeNull();
+    expect(factsFromProse("1. Only one fact")).toBeNull();
   });
 });

@@ -937,16 +937,86 @@ def howto_from_prose(text: str, *, title: str | None = None) -> ToolCard | None:
     return ToolCard("howto", {"title": (found_title or "How to").strip(), "steps": steps})
 
 
+_FACT_ITEM_KEYS = (
+    "text",
+    "fact",
+    "body",
+    "content",
+    "description",
+    "info",
+    "value",
+    "summary",
+    "detail",
+)
+_FACT_LIST_KEYS = ("facts", "items", "list", "entries")
+_FACT_META_KEYS = {"type", "topic", "title"}
+_FACT_META_VALUES = {"facts", "type", "topic", "title", "items", "fun facts"}
+_FACTS_TOPIC_FIELD_RE = re.compile(
+    r"\btopic\s*:\s*(?:[\"']([^\"'\n]+)[\"']|([A-Za-z][A-Za-z0-9 \-']*))",
+    re.IGNORECASE,
+)
+_FACTS_ABOUT_RE = re.compile(
+    r"(?:fun\s+facts?|facts)\s+about\s+(.+)$",
+    re.IGNORECASE,
+)
+FACTS_EMPTY_FALLBACK = "I got mixed up telling those fun facts. Ask me again!"
+
+
+def _clean_salvaged_fact(value: str) -> str:
+    text = re.sub(r"^[\s,;]+", "", value or "")
+    text = re.sub(r"^['\"]+|['\"]+$", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _looks_like_fact_text(value: str) -> bool:
+    text = _clean_salvaged_fact(value)
+    if not text or text.lower() in _FACT_META_VALUES:
+        return False
+    if re.match(r"^(type|topic|title|facts|items|word|meaning)\b", text, re.IGNORECASE):
+        return False
+    if " " not in text:
+        return False
+    return len(text) >= 12
+
+
 def _fact_item_text(value: Any) -> str | None:
     if isinstance(value, str):
         text = value.strip()
         return text or None
     if isinstance(value, dict):
-        for key in ("text", "fact", "body", "content"):
+        for key in _FACT_ITEM_KEYS:
             raw = value.get(key)
             if isinstance(raw, str) and raw.strip():
                 return raw.strip()
+        for raw in value.values():
+            if isinstance(raw, str) and _looks_like_fact_text(raw):
+                return raw.strip()
     return None
+
+
+def _collect_fact_texts(raw: Any) -> list[str]:
+    facts: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            text = _fact_item_text(item)
+            if text:
+                facts.append(text)
+    elif isinstance(raw, dict):
+        for item in raw.values():
+            if isinstance(item, (list, dict)):
+                facts.extend(_collect_fact_texts(item))
+            else:
+                text = _fact_item_text(item)
+                if text:
+                    facts.append(text)
+    elif isinstance(raw, str):
+        for line in raw.splitlines():
+            text = _fact_item_text(re.sub(r"^\s*(?:\d+[\.)]\s+|[-*•]\s+)", "", line))
+            if text:
+                facts.append(text)
+        if not facts and raw.strip():
+            facts.append(raw.strip())
+    return facts
 
 
 def normalize_facts_data(data: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -956,28 +1026,147 @@ def normalize_facts_data(data: dict[str, Any] | None) -> dict[str, Any] | None:
     title = payload.get("topic") or payload.get("title") or "Fun Facts"
     if not isinstance(title, str) or not title.strip():
         title = "Fun Facts"
-    raw = payload.get("facts", payload.get("items"))
     facts: list[str] = []
-    if isinstance(raw, list):
-        for item in raw:
-            text = _fact_item_text(item)
-            if text:
-                facts.append(text)
-    elif isinstance(raw, str):
-        for line in raw.splitlines():
-            text = _fact_item_text(re.sub(r"^\s*(?:\d+[\.)]\s+|[-*•]\s+)", "", line))
-            if text:
-                facts.append(text)
+    for key in _FACT_LIST_KEYS:
+        if key in payload:
+            facts = _collect_fact_texts(payload.get(key))
+            break
+    if not facts:
+        for key, value in payload.items():
+            if key in _FACT_META_KEYS or key in _FACT_LIST_KEYS:
+                continue
+            facts.extend(_collect_fact_texts(value))
     if not facts:
         return None
     return {"topic": title.strip(), "facts": facts}
 
 
+def facts_title(message: str) -> str:
+    match = _FACTS_ABOUT_RE.search((message or "").strip().rstrip(".!?"))
+    if not match:
+        return "Fun Facts"
+    topic = re.sub(r"\s+", " ", match.group(1)).strip().rstrip(".!?")
+    if not topic:
+        return "Fun Facts"
+    return topic[:1].upper() + topic[1:]
+
+
+def facts_from_prose(text: str, *, title: str | None = None) -> ToolCard | None:
+    """Turn numbered/bulleted facts into a card when the model skipped the payload."""
+    facts: list[str] = []
+    found_title = title
+    for line in (text or "").splitlines():
+        heading = _HOWTO_HEADING_RE.match(line)
+        if heading and not found_title:
+            found_title = heading.group(1).strip()
+            continue
+        match = _HOWTO_PROSE_STEP_RE.match(line)
+        if match:
+            cleaned = re.sub(r"\*\*", "", match.group(1)).strip()
+            if cleaned:
+                facts.append(cleaned)
+    if len(facts) < 2:
+        return None
+    return ToolCard("facts", {"topic": (found_title or "Fun Facts").strip(), "facts": facts})
+
+
+def _topic_from_facts_text(text: str) -> str | None:
+    match = _FACTS_TOPIC_FIELD_RE.search(text or "")
+    if not match:
+        return None
+    topic = (match.group(1) or match.group(2) or "").strip()
+    return topic or None
+
+
+def _completed_quoted_strings(text: str) -> list[str]:
+    strings: list[str] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char in "\"'":
+            cursor = _JsCursor(text)
+            cursor.i = index
+            try:
+                value = _read_js_string(cursor)
+            except ValueError:
+                break
+            strings.append(value)
+            index = cursor.i
+            continue
+        index += 1
+    return strings
+
+
+def _numbered_fact_lines(text: str) -> list[str]:
+    facts: list[str] = []
+    for line in (text or "").splitlines():
+        match = _HOWTO_PROSE_STEP_RE.match(line)
+        if not match:
+            continue
+        cleaned = re.sub(r"\*\*", "", match.group(1)).strip()
+        if cleaned:
+            facts.append(cleaned)
+    return facts
+
+
+def _scaffold_stripped_facts(text: str) -> list[str]:
+    cleaned = re.sub(r"```homeward", " ", text or "", flags=re.IGNORECASE)
+    cleaned = re.sub(r"(^|[\n{,])\s*Facts\b", r"\1 ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'["\'`]+', " ", cleaned)
+    cleaned = re.sub(r"\b(?:type|topic|title|facts|items)\s*:", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"[{}\[\],]", "\n", cleaned)
+    facts: list[str] = []
+    for line in cleaned.splitlines():
+        item = re.sub(r"^\s*(?:\d+[\.)]\s+|[-*•]\s+)", "", line)
+        item = re.sub(r"\s+", " ", item).strip()
+        if _looks_like_fact_text(item):
+            facts.append(item)
+    return facts
+
+
+def salvage_facts_data(
+    text: str,
+    *,
+    topic: str | None = None,
+    allow_scaffold: bool = False,
+) -> dict[str, Any] | None:
+    """Recover topic + fact lines from empty, partial, or prose-only Facts payloads."""
+    found_topic = (topic or "").strip() or _topic_from_facts_text(text) or "Fun Facts"
+    facts = _numbered_fact_lines(text)
+    if not facts:
+        for item in _completed_quoted_strings(text):
+            fact = _clean_salvaged_fact(item)
+            if fact == found_topic or not _looks_like_fact_text(fact):
+                continue
+            facts.append(fact)
+    if not facts and allow_scaffold:
+        facts = [
+            item
+            for item in _scaffold_stripped_facts(text)
+            if item.strip() != found_topic
+        ]
+    if not facts:
+        return None
+    return {"topic": found_topic, "facts": facts}
+
+
+def salvage_facts_card(
+    text: str,
+    *,
+    topic: str | None = None,
+    allow_scaffold: bool = False,
+) -> ToolCard | None:
+    data = salvage_facts_data(text, topic=topic, allow_scaffold=allow_scaffold)
+    if not data:
+        return None
+    return ToolCard("facts", data)
+
+
 def _is_js_quote_closer(text: str, index: int, quote: str) -> bool:
     if text[index] != quote:
         return False
-    # Tiny models leave possessives unescaped inside single-quoted strings.
-    if quote == "'" and index + 1 < len(text) and text[index + 1].isalpha():
+    # Tiny models leave possessives and inner quotes unescaped.
+    if quote in ("'", '"') and index + 1 < len(text) and text[index + 1].isalpha():
         return False
     return True
 
@@ -1022,10 +1211,7 @@ def _iter_fenced_json(text: str) -> list[tuple[int, int, dict[str, Any]]]:
         if not extracted:
             continue
         raw, json_end = extracted
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
+        payload = _parse_loose_object(raw)
         if not isinstance(payload, dict):
             continue
         close = text.find("```", json_end)
@@ -1094,6 +1280,14 @@ def _card_from_payload(payload: dict[str, Any]) -> ToolCard | None:
             return None
         return ToolCard("facts", normalized)
     return ToolCard(kind, data)
+
+
+def _looks_like_facts_object(payload: dict[str, Any] | None) -> bool:
+    if not payload:
+        return False
+    if payload.get("type") == "facts":
+        return True
+    return any(key in payload for key in ("topic", "facts", "items"))
 
 
 class _JsCursor:
@@ -1258,6 +1452,7 @@ def _pull_facts_payloads(text: str) -> tuple[str, list[ToolCard]]:
     cards: list[ToolCard] = []
     ranges: list[tuple[int, int]] = []
     hide_from = len(text)
+    stripped_facts = False
     cursor = 0
     while cursor < hide_from:
         brace = text.find("{", cursor)
@@ -1267,11 +1462,28 @@ def _pull_facts_payloads(text: str) -> tuple[str, list[ToolCard]]:
         if not extracted:
             if _looks_like_facts_start(text, brace):
                 prefix = _leading_facts_prefix(text, brace)
-                hide_from = min(hide_from, prefix if prefix is not None else brace)
+                start = prefix if prefix is not None else brace
+                salvaged = salvage_facts_card(text[start:])
+                if salvaged:
+                    cards.append(salvaged)
+                    ranges.append((start, len(text)))
+                    break
+                hide_from = min(hide_from, start)
             break
         raw, json_end = extracted
         parsed = _parse_loose_object(raw)
         data = normalize_facts_data(parsed) if parsed is not None else None
+        if not data and _looks_like_facts_start(text, brace):
+            start = _leading_facts_prefix(text, brace)
+            start = start if start is not None else brace
+            salvaged = salvage_facts_card(text[start:json_end], allow_scaffold=True)
+            if salvaged:
+                data = salvaged.data
+            else:
+                ranges.append((start, json_end))
+                stripped_facts = True
+                cursor = json_end
+                continue
         if not data:
             cursor = brace + 1
             continue
@@ -1288,6 +1500,8 @@ def _pull_facts_payloads(text: str) -> tuple[str, list[ToolCard]]:
         pos = end
     pieces.append(text[pos:hide_from])
     cleaned = re.sub(r"\n{3,}", "\n\n", "".join(pieces)).strip()
+    if not cleaned and not cards and stripped_facts:
+        cleaned = FACTS_EMPTY_FALLBACK
     return cleaned, cards
 
 
@@ -1296,22 +1510,35 @@ def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
     cleaned = text or ""
     for start, end, payload in reversed(_iter_fenced_json(cleaned)):
         card = _card_from_payload(payload)
+        if not card and _looks_like_facts_object(payload):
+            card = salvage_facts_card(cleaned[start:end], allow_scaffold=True)
         if card:
             cards.append(card)
         cleaned = cleaned[:start] + cleaned[end:]
     cards.reverse()
     if not cards:
         for match in _FENCE_RE.finditer(text or ""):
-            try:
-                payload = json.loads(match.group(1))
-            except json.JSONDecodeError:
-                continue
+            payload = _parse_loose_object(match.group(1))
             if isinstance(payload, dict):
                 card = _card_from_payload(payload)
+                if not card and _looks_like_facts_object(payload):
+                    card = salvage_facts_card(match.group(0), allow_scaffold=True)
                 if card:
                     cards.append(card)
         cleaned = _FENCE_RE.sub("", text or "")
-    cleaned = re.sub(r"```homeward[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
+    leftover = re.search(r"```homeward[\s\S]*$", cleaned, flags=re.IGNORECASE)
+    if leftover:
+        fragment = leftover.group(0)
+        brace = fragment.find("{")
+        if (
+            not any(card.type == "facts" for card in cards)
+            and brace >= 0
+            and _looks_like_facts_start(fragment, brace)
+        ):
+            salvaged = salvage_facts_card(fragment)
+            if salvaged:
+                cards.append(salvaged)
+        cleaned = cleaned[: leftover.start()]
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     cleaned, facts_cards = _pull_facts_payloads(cleaned)
     if facts_cards:
@@ -1321,6 +1548,8 @@ def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
             if key not in seen:
                 cards.append(card)
                 seen.add(key)
+    if not cleaned and not cards and re.search(r"\bFacts\b|```homeward", text or "", flags=re.IGNORECASE):
+        cleaned = FACTS_EMPTY_FALLBACK
     return cleaned, cards
 
 
