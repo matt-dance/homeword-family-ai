@@ -72,6 +72,21 @@ export interface SetupStatus {
   has_parent: boolean;
 }
 
+export interface PairedDevice {
+  id: number;
+  label: string;
+  created_at: string | null;
+  last_seen_at: string | null;
+}
+
+export interface PairingInfo {
+  house_code: string;
+  join_url: string | null;
+  lan_ip: string | null;
+  port: number;
+  devices: PairedDevice[];
+}
+
 export interface ConversationLog {
   id: number;
   child_id: number;
@@ -219,6 +234,15 @@ export const api = {
       classifier_model: string | null;
       has_recovery_code: boolean;
     }>("/auth/me"),
+  pairing: () => request<PairingInfo>("/pairing"),
+  rotateHouseCode: () => request<PairingInfo>("/pairing/rotate", { method: "POST" }),
+  forgetDevice: (deviceId: number) =>
+    request<{ ok: boolean }>(`/pairing/devices/${deviceId}`, { method: "DELETE" }),
+  joinHouse: (code: string) =>
+    request<{ ok: boolean; device_id: number }>("/pairing/join", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
   presets: () => request<Preset[]>("/presets"),
   openWebSearchStatus: () => request<{ available: boolean }>("/open-web-search"),
   children: () => request<Child[]>("/children"),

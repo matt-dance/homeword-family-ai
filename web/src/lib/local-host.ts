@@ -26,6 +26,20 @@ export function kidChatUrl(port: number = advertisedWebPort()): string {
   return `${homewardBaseUrl(HOMEWARD_HOSTNAME, port)}/chat`;
 }
 
+const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/;
+
+/** Dotted IPv4 suitable for a QR join URL — never a hostname. */
+export function isLanIpv4(value: string): boolean {
+  if (!IPV4.test(value)) return false;
+  return !value.startsWith("127.") && !value.startsWith("0.");
+}
+
+/** Kid join URL for the QR payload. Hostnames like homeward.local are rejected. */
+export function joinUrl(ip: string, port: number, code: string): string | null {
+  if (!isLanIpv4(ip) || !/^\d{4}$/.test(code)) return null;
+  return `${homewardBaseUrl(ip, port)}/join?code=${code}`;
+}
+
 export function parentLocalUrl(port: number = advertisedWebPort()): string {
   if (port === 80) return "http://localhost";
   return `http://localhost:${port}`;

@@ -38,7 +38,7 @@ Family installers (no Docker, no terminal for day-to-day use) are on **[GitHub R
 | Windows 10/11 (64-bit) | `Homeward-windows-amd64.exe` | Run the installer. SmartScreen will warn (unsigned): More info → Run anyway |
 | Linux (amd64, GNOME-style desktop) | `Homeward-linux-amd64.tar.gz` | Extract, then `./install.sh` (no root). That writes a desktop/autostart entry |
 
-Chat models are **not** inside the installer. After install, on **this computer** open **http://localhost:43123** to finish setup. Kids on the same Wi‑Fi open **http://homeward.local:43123/chat**.
+Chat models are **not** inside the installer. After install, on **this computer** open **http://localhost:43123** to finish setup. Kids on the same Wi‑Fi as the Homeward computer scan the QR (or type the house code) from **Add a phone or tablet** at the end of setup or in Settings. Do not use a guest network.
 
 macOS builds from GitHub Actions are unsigned unless a Mac builder is configured with a Developer ID; Gatekeeper may block first launch (System Settings → Privacy & Security).
 
@@ -65,23 +65,24 @@ Windows (PowerShell):
 
 Then, on **this computer**, open **http://localhost** to finish setup and use the parent dashboard.
 
-Kids on the same Wi‑Fi open **http://homeward.local/chat**.
+Kids on the same Wi‑Fi as the Homeward computer scan the QR or type the house code from **Add a phone or tablet** (end of setup, or Settings).
 
-### Who uses which URL
+### How devices connect
 
-Install does **not** edit `/etc/hosts`. On this computer, use `localhost` for setup and the dashboard. Other devices resolve `homeward.local` via mDNS when the gateway is running.
+Install does **not** edit `/etc/hosts`. On this computer, use `localhost` for setup and the dashboard. Add phones and tablets with the QR or house code — the QR uses this computer's LAN IP, not a hostname.
 
 | Who | Native installer | Docker |
 |-----|------------------|--------|
 | Parent on the Homeward computer | http://localhost:43123 | http://localhost |
-| Kids on other devices (same Wi‑Fi) | http://homeward.local:43123/chat | http://homeward.local/chat |
+| Kids on other devices (same Wi‑Fi) | Scan the QR or type the house code from Settings | Scan the QR or type the house code from Settings |
 
-Native development also uses `http://localhost:43123` instead of port 80. mDNS for other devices starts with the gateway — no separate step needed.
+`homeward.local` still resolves via mDNS if you already use it. Native development also uses `http://localhost:43123` instead of port 80. mDNS for other devices starts with the gateway — no separate step needed.
 
 ### How access is protected
 
 - **Parent dashboard is host-only.** Every parent API route requires both the parent session cookie *and* a request from this computer. Login, setup and password reset are rate limited.
 - **Child PINs are enforced by the server.** A correct PIN gives that browser a signed, `HttpOnly` cookie for that child; named-profile chat, sessions, homework, and "continue last chat" refuse without it. PINs are stored hashed.
+- **House codes are not PINs.** A 4-digit house code plus QR adds a phone or tablet on the same Wi‑Fi. `/chat` stays reachable without pairing in this version. Rotating the house code retires unused codes; already-added devices keep their cookie until a parent forgets them.
 - **Quick Chat is anonymous.** `/chat/quick` uses the household default profile's age and safety settings, but does **not** require that child's PIN and does **not** inject named-kid memory. Quick Chat sessions are stored separately from named-profile chats, so a Quick Chat request cannot attach to Avery's (or any named) history. Named profiles (`/chat/avery`, and so on) stay PIN-gated.
 - **Ports.** Only the web app is reachable from the LAN (port **43123** on a native installer, port **80** in Docker). The gateway (8000) and Ollama (11434) stay on `127.0.0.1` so kids' devices cannot bypass Homeward's filters by talking to the model directly. For native development, run the gateway with `--host 127.0.0.1` for the same effect.
 - **Chat history is server-side.** The model only sees prior turns from Homeward's own log, never text supplied by the client.
@@ -93,7 +94,7 @@ That's it — Homeward starts **Ollama automatically** and begins downloading a 
 1. Create a parent password
 2. Add your children (name, age, safety level)
 3. Pick and download an AI model (or wait if one is already downloading)
-4. Done — kids can chat, you can review from the dashboard
+4. Done — add phones with the QR or house code; kids can chat, you can review from the dashboard
 
 ### Stop
 
@@ -184,6 +185,7 @@ pytest -v
 | **Safety pipeline** | Rules, policy, classifier fallback, input/output filtering |
 | **Auth** | PBKDF2 password hashing, cookie flags, login rate limit, host-only parent routes |
 | **Child PINs** | Hashed at rest, server-enforced on named-profile chat/resume/homework, rate-limited attempts. Quick Chat on the household default skips that PIN (still no named memory). |
+| **LAN pairing** | House code join (good/bad/expired), QR join URL uses a raw LAN IP not `homeward.local`, device cookie, `/chat` still open without pairing |
 | **Setup flow** | Create/resume/complete setup, validation |
 | **Chat** | Jailbreak blocking, dangerous content, session logging |
 | **Dashboard** | Session grouping, message drill-down, blocked attempts |

@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     child_access_max_age: int = 86400  # one PIN unlock per device per day
     homework_unlock_cookie_name: str = "homeward_homework"
     homework_unlock_max_age: int = 5 * 60  # camera-only grant; not a dashboard session
+    device_cookie_name: str = "homeward_device"
+    device_cookie_max_age: int = 86400 * 365  # paired device; parent can forget it
 
     # Ollama / LLM
     ollama_base_url: str = "http://127.0.0.1:11434"

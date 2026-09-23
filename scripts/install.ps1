@@ -13,7 +13,7 @@ docker compose up -d --build
 Write-Host ""
 Write-Host "Homeward is starting up."
 Write-Host "On this computer, open http://localhost to finish setup and use the dashboard."
-Write-Host "Kids on the same Wi-Fi can open http://homeward.local/chat"
+Write-Host "Kids on the same Wi-Fi: scan the QR or type the house code from Add a phone or tablet (Settings)."
 Write-Host ""
 Write-Host "On first launch, the setup wizard will help you:"
 Write-Host "  1. Create a parent password"

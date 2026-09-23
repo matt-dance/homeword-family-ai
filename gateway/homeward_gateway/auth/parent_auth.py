@@ -82,6 +82,22 @@ def decode_session_token(token: str) -> Optional[int]:
         return None
 
 
+def dump_signed(payload: dict) -> str:
+    return _serializer().dumps(payload)
+
+
+def load_signed(token: str, *, max_age: int | None = None) -> dict | None:
+    try:
+        data = (
+            _serializer().loads(token)
+            if max_age is None
+            else _serializer().loads(token, max_age=max_age)
+        )
+    except BadSignature:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def set_session_cookie(response: Response, parent_id: int) -> None:
     token = create_session_token(parent_id)
     response.set_cookie(
