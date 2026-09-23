@@ -423,6 +423,76 @@ def test_extract_model_tools_single_quoted_facts_with_apostrophe():
     assert cards[0].data == {"topic": "Dogs", "facts": ["A dog's nose is unique"]}
 
 
+def test_extract_model_tools_plural_possessive_facts_payload():
+    text = "Facts { topic: 'Animals', facts: [ 'Many animals' homes are in trees.', 'A cat's purr is quiet.' ] }"
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert "{" not in cleaned
+    assert cards[0].type == "facts"
+    assert cards[0].data["topic"] == "Animals"
+    assert cards[0].data["facts"] == ["Many animals' homes are in trees.", "A cat's purr is quiet."]
+
+
+def test_extract_model_tools_unquoted_animals_topic():
+    text = 'Facts { topic: animals, facts: [ "Penguins swim.", "Cats purr." ] }'
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert "topic:" not in cleaned
+    assert cards[0].data == {"topic": "animals", "facts": ["Penguins swim.", "Cats purr."]}
+
+
+def test_extract_model_tools_fenced_facts_with_inner_quote_keeps_prose():
+    text = (
+        '```homeward {"type":"facts","topic":"animals","facts":["Penguins swim.","A group of flamingos is called a "flamboyance"."]}\n'
+        "Owls are quiet."
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == "Owls are quiet."
+    assert "{" not in cleaned
+    assert "topic:" not in cleaned
+    assert cards[0].type == "facts"
+    assert cards[0].data["topic"] == "animals"
+    blob = " ".join(cards[0].data["facts"])
+    assert "Penguins swim" in blob
+    assert "flamboyance" in blob
+
+
+def test_extract_model_tools_salvages_closed_facts_when_payload_is_cut_off():
+    text = (
+        '```homeward {"type":"facts","topic":"animals","facts":["Penguins swim.",'
+        '"A group of owls is called a "parliament"'
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert "{" not in cleaned
+    assert "topic:" not in cleaned
+    assert cards[0].type == "facts"
+    assert cards[0].data["topic"] == "animals"
+    assert cards[0].data["facts"] == [
+        "Penguins swim.",
+        'A group of owls is called a "parliament',
+    ]
+
+
+def test_extract_model_tools_keeps_earlier_facts_when_last_fact_is_unfinished():
+    text = '```homeward {"type":"facts","topic":"animals","facts":["Penguins swim.","Butterflies'
+    cleaned, cards = extract_model_tools(text)
+    assert "Butterflies" not in cleaned
+    assert "{" not in cleaned
+    assert cards[0].data["topic"] == "animals"
+    assert cards[0].data["facts"] == ["Penguins swim."]
+
+
+def test_extract_model_tools_fence_only_animals_payload_is_not_blank():
+    text = "```homeward {type:'facts', topic:'animals', facts:['Many animals' homes are in trees.','A cat's purr is quiet.']}"
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned.strip() or cards
+    assert "topic:" not in cleaned
+    assert "{" not in cleaned
+    assert cards[0].type == "facts"
+    assert cards[0].data["topic"] == "animals"
+    assert cards[0].data["facts"] == ["Many animals' homes are in trees.", "A cat's purr is quiet."]
+
+
 def test_extract_model_tools_hides_incomplete_facts_payload():
     cleaned, cards = extract_model_tools(
         'Almost ready\nFacts { topic: "Animal Fun Facts", facts: [ "Butterflies'

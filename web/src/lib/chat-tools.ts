@@ -64,7 +64,6 @@ const TOOL_TYPES = new Set([
   "howto",
 ]);
 const FENCE_OPEN_RE = /```homeward\s*/gi;
-const INCOMPLETE_FENCE_RE = /```homeward[\s\S]*$/i;
 const HOWTO_STEP_RE = /^\s*(?:\d+[.)]\s+|[-*•]\s+)(.+)$/;
 const HOWTO_HEADING_RE = /^\s*#{1,3}\s+(.+)$/;
 
@@ -173,9 +172,13 @@ export function factsToProse(tool: FactsTool): string {
 
 function isJsQuoteCloser(source: string, index: number, quote: string): boolean {
   if (source[index] !== quote) return false;
-  // Tiny models leave possessives unescaped inside single-quoted strings.
-  if (quote === "'" && /[A-Za-z]/.test(source[index + 1] ?? "")) return false;
-  return true;
+  // Close only before JSON structure. That keeps possessives (dog's, animals' homes)
+  // and unescaped inner quotes (a "flamboyance") inside the string instead of
+  // making a finished Facts payload look incomplete and disappear.
+  let next = index + 1;
+  while (next < source.length && /\s/.test(source[next])) next += 1;
+  const char = source[next] ?? "";
+  return char === "" || char === "," || char === "]" || char === "}" || char === ":";
 }
 
 function extractBalancedJson(source: string, start: number): { raw: string; end: number } | null {
@@ -223,12 +226,8 @@ function pullFencedTools(content: string): { cleaned: string; tools: ChatTool[] 
     const { raw, end: jsonEnd } = extracted;
     const close = content.indexOf("```", jsonEnd);
     const end = close >= 0 ? close + 3 : jsonEnd;
-    try {
-      const parsed = asChatTool(JSON.parse(raw));
-      if (parsed) tools.push(parsed);
-    } catch {
-      /* ignore malformed cards */
-    }
+    const tool = toolFromFencePayload(raw);
+    if (tool) tools.push(tool);
     ranges.push([match.index, end]);
     FENCE_OPEN_RE.lastIndex = end;
   }
@@ -244,8 +243,92 @@ function pullFencedTools(content: string): { cleaned: string; tools: ChatTool[] 
     cleaned += content.slice(cursor);
   }
 
-  cleaned = cleaned.replace(INCOMPLETE_FENCE_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+  cleaned = stripIncompleteFence(cleaned).replace(/\n{3,}/g, "\n\n").trim();
   return { cleaned, tools };
+}
+
+function toolFromFencePayload(raw: string): ChatTool | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = parseLooseRecord(raw);
+  }
+  const tool = parsed ? asChatTool(parsed) : null;
+  if (tool) return tool;
+  return parsed ? factsToolFromObject(parsed) : null;
+}
+
+function stripIncompleteFence(content: string): string {
+  const match = /```homeward/i.exec(content);
+  if (!match || match.index == null) return content;
+  const head = content.slice(0, match.index).trim();
+  const lines = content.slice(match.index).split("\n");
+  const prose: string[] = [];
+  while (lines.length > 1) {
+    const last = lines[lines.length - 1];
+    if (/[{`]/.test(last) || !/[A-Za-z]/.test(last)) break;
+    prose.unshift(lines.pop() as string);
+  }
+  return [head, prose.join("\n").trim()].filter(Boolean).join("\n\n");
+}
+
+const PLACEHOLDER_FACT_RE = /^(?:\.{1,3}|type|facts|topic|items)$/i;
+
+function closedQuotedStrings(source: string): string[] {
+  const found: string[] = [];
+  for (let i = 0; i < source.length; i += 1) {
+    const quote = source[i];
+    if (quote !== '"' && quote !== "'") continue;
+    let j = i + 1;
+    let buf = "";
+    let closed = false;
+    while (j < source.length) {
+      if (source[j] === "\\" && j + 1 < source.length) {
+        buf += source[j + 1];
+        j += 2;
+        continue;
+      }
+      if (isJsQuoteCloser(source, j, quote)) {
+        closed = true;
+        j += 1;
+        break;
+      }
+      buf += source[j];
+      j += 1;
+    }
+    if (closed) {
+      const text = buf.trim();
+      if (text) found.push(text);
+      i = j - 1;
+    }
+  }
+  return found;
+}
+
+function looseTopic(content: string): string | null {
+  const match = content.match(/\btopic\b\s*"?\s*:/i);
+  if (!match || match.index == null) return null;
+  const rest = content.slice(match.index + match[0].length).trimStart();
+  if (rest.startsWith('"') || rest.startsWith("'")) {
+    const quoted = closedQuotedStrings(rest)[0];
+    return quoted && !PLACEHOLDER_FACT_RE.test(quoted) ? quoted : null;
+  }
+  const bare = rest.match(/^[A-Za-z0-9][^,}\]]*/);
+  const topic = bare?.[0]?.trim();
+  return topic || null;
+}
+
+function salvageFactsTool(content: string): FactsTool | null {
+  const key = content.search(/\bfacts\b\s*"?\s*:/i);
+  if (key < 0) return null;
+  const after = content.slice(key);
+  const colon = after.indexOf(":");
+  const bracket = after.indexOf("[");
+  const region = bracket >= 0 ? after.slice(bracket) : after.slice(colon + 1);
+  const facts = closedQuotedStrings(region).filter((fact) => !PLACEHOLDER_FACT_RE.test(fact));
+  if (!facts.length) return null;
+  return { type: "facts", topic: looseTopic(content) || "Fun Facts", facts };
 }
 
 type JsCursor = { s: string; i: number };
@@ -305,7 +388,18 @@ function readJsValue(p: JsCursor): unknown {
   if (ident === "true") return true;
   if (ident === "false") return false;
   if (ident === "null") return null;
-  throw new Error("unexpected ident");
+  const words = [ident];
+  while (p.i < p.s.length) {
+    const save = p.i;
+    skipJsWs(p);
+    if (p.i < p.s.length && /[A-Za-z_]/.test(p.s[p.i])) {
+      words.push(readJsIdent(p));
+      continue;
+    }
+    p.i = save;
+    break;
+  }
+  return words.join(" ");
 }
 
 function readJsObject(p: JsCursor): Record<string, unknown> {
@@ -515,6 +609,17 @@ export function extractChatTools(
     const prose = fromFacts.map(factsToProse).filter(Boolean).join(" ");
     if (prose) {
       text = [afterFacts, prose].filter((part) => part.trim()).join("\n\n").trim();
+    }
+  }
+  if (!text.trim() && !tools.some((tool) => tool.type === "facts")) {
+    const salvaged = salvageFactsTool(content);
+    if (salvaged) {
+      if (routeAllowsFacts) {
+        tools = constrainChatTools(mergeChatTools(tools, [salvaged]), route);
+      } else {
+        const prose = factsToProse(salvaged);
+        if (prose) text = prose;
+      }
     }
   }
   return { text, tools };

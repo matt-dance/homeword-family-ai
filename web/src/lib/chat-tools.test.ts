@@ -240,6 +240,85 @@ describe("extractChatTools", () => {
     expect(tools).toEqual([{ type: "facts", topic: "Dogs", facts: ["A dog's nose is unique"] }]);
   });
 
+  it("maps a plural possessive inside a single-quoted facts payload", () => {
+    const content = "Facts { topic: 'Animals', facts: [ 'Many animals' homes are in trees.', 'A cat's purr is quiet.' ] }";
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(text).not.toMatch(/\{/);
+    expect(tools).toEqual([
+      {
+        type: "facts",
+        topic: "Animals",
+        facts: ["Many animals' homes are in trees.", "A cat's purr is quiet."],
+      },
+    ]);
+  });
+
+  it("maps an unquoted animals topic onto a facts card", () => {
+    const content = 'Facts { topic: animals, facts: [ "Penguins swim.", "Cats purr." ] }';
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(text).not.toContain("topic:");
+    expect(tools).toEqual([
+      { type: "facts", topic: "animals", facts: ["Penguins swim.", "Cats purr."] },
+    ]);
+  });
+
+  it("keeps a facts card when a fenced animal fact has an unescaped inner quote", () => {
+    const content = [
+      '```homeward {"type":"facts","topic":"animals","facts":["Penguins swim.","A group of flamingos is called a "flamboyance"."]}',
+      "Owls are quiet.",
+    ].join("\n");
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("Owls are quiet.");
+    expect(text).not.toMatch(/\{/);
+    expect(text).not.toContain("topic:");
+    expect(tools[0]).toMatchObject({ type: "facts", topic: "animals" });
+    const facts = tools[0] && tools[0].type === "facts" ? tools[0].facts.join(" ") : "";
+    expect(facts).toMatch(/Penguins swim/);
+    expect(facts).toMatch(/flamboyance/);
+  });
+
+  it("salvages finished fact lines when the animals payload is cut off", () => {
+    const content =
+      '```homeward {"type":"facts","topic":"animals","facts":["Penguins swim.","A group of owls is called a "parliament"';
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).not.toMatch(/\{/);
+    expect(text).not.toContain("topic:");
+    expect(tools[0]).toMatchObject({
+      type: "facts",
+      topic: "animals",
+      facts: ["Penguins swim.", 'A group of owls is called a "parliament'],
+    });
+  });
+
+  it("keeps earlier fact lines when the last animals fact is unfinished", () => {
+    const content =
+      '```homeward {"type":"facts","topic":"animals","facts":["Penguins swim.","Butterflies';
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).not.toContain("Butterflies");
+    expect(text).not.toMatch(/\{/);
+    expect(tools[0]).toMatchObject({
+      type: "facts",
+      topic: "animals",
+      facts: ["Penguins swim."],
+    });
+  });
+
+  it("does not finish a fence-only animals payload as an empty bubble", () => {
+    const content =
+      "```homeward {type:'facts', topic:'animals', facts:['Many animals' homes are in trees.','A cat's purr is quiet.']}";
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text.trim() || tools.length).toBeTruthy();
+    expect(text).not.toContain("topic:");
+    expect(text).not.toMatch(/\{/);
+    expect(tools[0]).toMatchObject({
+      type: "facts",
+      topic: "animals",
+      facts: ["Many animals' homes are in trees.", "A cat's purr is quiet."],
+    });
+  });
+
   it("hides an incomplete Facts payload while streaming", () => {
     const { text, tools } = extractChatTools(
       'Almost ready\nFacts { topic: "Animal Fun Facts", facts: [ "Butterflies',
