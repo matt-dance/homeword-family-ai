@@ -1312,6 +1312,15 @@ def _card_from_fenced_payload(payload: dict[str, Any]) -> ToolCard | None:
     return None
 
 
+def _is_fence_json_line(line: str) -> bool:
+    if re.search(r"[{}\[\]`]", line) or not re.search(r"[A-Za-z]", line):
+        return True
+    stripped = line.strip()
+    if stripped[:1] in "\"'":
+        return True
+    return bool(re.match(r"[A-Za-z0-9_]+\s*:", stripped) and re.search(r"[\"']", stripped))
+
+
 def _strip_incomplete_homeward_fence(text: str) -> str:
     """Drop an unfinished ```homeward tail, but keep a spoken sentence after it."""
     match = re.search(r"```homeward", text, flags=re.IGNORECASE)
@@ -1322,7 +1331,7 @@ def _strip_incomplete_homeward_fence(text: str) -> str:
     prose: list[str] = []
     while len(lines) > 1:
         last = lines[-1]
-        if re.search(r"[{`}]", last) or not re.search(r"[A-Za-z]", last):
+        if _is_fence_json_line(last):
             break
         prose.insert(0, lines.pop())
     parts = [part for part in (head, "\n".join(prose).strip()) if part]
@@ -1423,7 +1432,7 @@ def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
             if key not in seen:
                 cards.append(card)
                 seen.add(key)
-    if not cleaned.strip() and not any(card.type == "facts" for card in cards):
+    if not cleaned.strip() and not cards:
         salvaged = _salvage_facts_card(text or "")
         if salvaged:
             cards.append(salvaged)
