@@ -10,7 +10,7 @@ from typing import Annotated, AsyncIterator, Literal
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from homeward_gateway.auth.local_host import client_ip_from_request, require_local_request
@@ -1110,6 +1110,38 @@ def _serialize_ai_preferences(parent: ParentAccount | None) -> dict:
     }
 
 
+async def _advance_last_named_session(
+    session: AsyncSession,
+    child_id: int,
+    chat_session_id: int,
+) -> None:
+    """Point Continue last chat at this named session unless a newer one already won.
+
+    Session ids increase as Start fresh opens a new chat. A late persist from
+    an older session — the flush when a stream closes included — must not move
+    the pointer backward after that newer chat already recorded a visible turn.
+    The compare-and-set is SQL so a child row already loaded in this session
+    cannot flush a stale pointer over the newer one.
+    """
+    child = await session.get(ChildProfile, child_id)
+    if child is None:
+        return
+    # Drop any in-memory pointer so autoflush cannot write it before the compare-and-set.
+    session.expire(child, ["last_named_session_id"])
+    await session.execute(
+        update(ChildProfile)
+        .where(ChildProfile.id == child_id)
+        .where(
+            or_(
+                ChildProfile.last_named_session_id.is_(None),
+                ChildProfile.last_named_session_id <= chat_session_id,
+            )
+        )
+        .values(last_named_session_id=chat_session_id)
+        .execution_options(synchronize_session=False)
+    )
+
+
 async def _log_message(
     session: AsyncSession,
     child_id: int,
@@ -1140,13 +1172,11 @@ async def _log_message(
         # Conversation logs and blocked_attempts stay intact for parents.
         if blocked and is_hard_safety_stage(stage) and chat_session:
             chat_session.context_state = None
-        # Continue last chat follows the named session that just received a
-        # visible turn, not an older row that merely started later.
+        # Continue last chat follows the newest named session that received a
+        # visible turn. Never rewind the pointer to an older session id.
         visible = bool((content or "").strip()) and not (blocked and direction == "input")
         if chat_session and visible and not bool(chat_session.quick_chat):
-            child = await session.get(ChildProfile, child_id)
-            if child is not None:
-                child.last_named_session_id = chat_session.id
+            await _advance_last_named_session(session, child_id, chat_session.id)
 
     if blocked:
         attempt = BlockedAttempt(
@@ -1724,6 +1754,9 @@ async def chat_stream(
                 finally:
                     # GeneratorExit (client gone mid-token) skips except CancelledError.
                     # Only flush a turn the safety check already accepted.
+                    # This late persist still stores the turn, but it must not
+                    # point Continue last chat back at this session when Start
+                    # fresh has already recorded a newer visible turn.
                     if input_logged or collected:
                         try:
                             await persist_turn()

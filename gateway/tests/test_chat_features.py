@@ -1,10 +1,12 @@
 """Tests for Tier 1/2 chat features."""
 
+import asyncio
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 
-from homeward_gateway.api.routes import _latest_recovery_turn
+from homeward_gateway.api.routes import _latest_recovery_turn, _log_message
 from homeward_gateway.chat.quiet_hours import is_chat_available
 from homeward_gateway.chat.starters import get_conversation_starters
 from homeward_gateway.db import database as db_module
@@ -285,6 +287,131 @@ class TestChatFeaturesAPI:
         contents = " ".join(m["content"] for m in data["messages"])
         assert "purple dragon" in contents
         assert "Tell me a very short joke." not in contents
+
+    @pytest.mark.asyncio
+    async def test_late_persist_from_older_session_does_not_rewind_pointer(
+        self, authenticated_client: AsyncClient, monkeypatch
+    ):
+        """A visible log for an older session must not steal Continue last chat."""
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+        replies = iter(["A short joke.", "The purple dragon is noted."])
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content=next(replies))
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+
+        first = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        old_id = first.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={"message": "Tell me a very short joke.", "child_id": child["id"], "session_id": old_id},
+        )
+        fresh = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        fresh_id = fresh.json()["session_id"]
+        await authenticated_client.post(
+            "/api/v1/chat",
+            json={
+                "message": "remember the purple dragon",
+                "child_id": child["id"],
+                "session_id": fresh_id,
+            },
+        )
+
+        async with db_module.async_session_factory() as db:
+            await _log_message(
+                db,
+                child["id"],
+                "output",
+                "late reply from the older joke",
+                chat_session_id=old_id,
+            )
+
+        resume = await authenticated_client.get(f"/api/v1/children/{child['id']}/sessions/resume")
+        assert resume.status_code == 200
+        assert resume.json()["session_id"] == fresh_id
+
+    @pytest.mark.asyncio
+    async def test_stream_close_flush_does_not_rewind_start_fresh(
+        self, authenticated_client: AsyncClient, monkeypatch
+    ):
+        """A late flush of an older stream must not rewind Continue last chat."""
+        child = authenticated_client.test_child  # type: ignore[attr-defined]
+        old_stream_started = asyncio.Event()
+        fresh_turn_saved = asyncio.Event()
+
+        async def fake_process_chat(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="The purple dragon is noted.")
+
+        async def fake_stream(*_args, **_kwargs):
+            yield StatusEvent(message="Writing a reply…", phase="generating")
+            yield "still telling the joke"
+            old_stream_started.set()
+            await fresh_turn_saved.wait()
+            return
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat", fake_process_chat)
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat_stream", fake_stream)
+
+        first = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        old_id = first.json()["session_id"]
+
+        async def read_old_stream() -> None:
+            async with authenticated_client.stream(
+                "POST",
+                "/api/v1/chat/stream",
+                json={
+                    "message": "Tell me a very short joke.",
+                    "child_id": child["id"],
+                    "session_id": old_id,
+                },
+            ) as response:
+                assert response.status_code == 200
+                async for _line in response.aiter_lines():
+                    pass
+
+        reader = asyncio.create_task(read_old_stream())
+        await asyncio.wait_for(old_stream_started.wait(), timeout=5)
+
+        fresh = await authenticated_client.post(
+            "/api/v1/chat/sessions",
+            json={"child_id": child["id"]},
+        )
+        fresh_id = fresh.json()["session_id"]
+        noted = await authenticated_client.post(
+            "/api/v1/chat",
+            json={
+                "message": "remember the purple dragon",
+                "child_id": child["id"],
+                "session_id": fresh_id,
+            },
+        )
+        assert noted.status_code == 200
+        fresh_turn_saved.set()
+        await asyncio.wait_for(reader, timeout=5)
+
+        async with db_module.async_session_factory() as db:
+            rows = await db.execute(
+                text(
+                    "SELECT content FROM conversation_logs "
+                    "WHERE session_id = :session_id AND direction = 'output'"
+                ),
+                {"session_id": old_id},
+            )
+            assert "still telling the joke" in " ".join(row[0] for row in rows.all())
+
+        resume = await authenticated_client.get(f"/api/v1/children/{child['id']}/sessions/resume")
+        assert resume.status_code == 200
+        assert resume.json()["session_id"] == fresh_id
 
     @pytest.mark.asyncio
     async def test_stream_start_fresh_is_the_resume_target(
