@@ -16,7 +16,7 @@ Public web port is **43123** on every native install (not port 80).
 
 ## GitHub Releases
 
-`.github/workflows/release.yml` runs on version tags (`v*`) and publishes those three artifacts from GitHub-hosted runners (`ubuntu-latest`, `windows-latest`, `macos-latest`). The Windows `.exe` is **unsigned** (no SignTool, PFX, or Azure Artifact Signing); SmartScreen is expected. A GitHub Release is published only when the Linux, Windows, and macOS jobs all succeed.
+`.github/workflows/release.yml` runs on version tags (`v*`) and publishes those three artifacts from GitHub-hosted runners (`ubuntu-latest`, `windows-latest`, `macos-latest`). The Windows `.exe` is **unsigned** (no SignTool, PFX, or Azure Artifact Signing); SmartScreen is expected. macOS is unsigned unless the Developer ID + App Store Connect API key secrets below are present. A GitHub Release is published only when the Linux, Windows, and macOS jobs all succeed.
 
 To cut a release from `main`:
 
@@ -65,9 +65,33 @@ A family DMG cannot be produced except on a Mac. The packer writes a compressed 
 
 Output: `dist/macos/Homeward-macos-arm64.dmg`.
 
-`./desktop/scripts/dmg-macos.sh arm64 --sign` wraps the bundle, codesigns with hardened runtime + `desktop/pack/homeward.entitlements`, notarizes, and staples.
+`./desktop/scripts/dmg-macos.sh arm64 --sign` wraps the bundle, codesigns **leaf-first** (every nested Mach-O under `Contents/Resources/runtime` and `Contents/Frameworks`, then the `.app`), codesigns the DMG, notarizes, and staples.
 
-Set `HOMEWARD_CODESIGN_IDENTITY` and `HOMEWARD_NOTARY_PROFILE`. Entitlements allow JIT / unsigned executable memory / disable-library-validation plus network client+server so the bundled Python, Node, and Ollama runtimes can start. App Sandbox is not enabled.
+Set `HOMEWARD_CODESIGN_IDENTITY` and notary credentials:
+
+- **CI / headless:** `APPLE_API_KEY` (or `APPLE_API_KEY_PATH`) + `APPLE_API_KEY_ID` + `APPLE_API_ISSUER` (aliases `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_ISSUER`). `notarytool` is invoked with `--key` / `--key-id` / `--issuer`. Do not use `store-credentials`; it fails with “User interaction is not allowed”.
+- **Local keychain profile:** `HOMEWARD_NOTARY_PROFILE`.
+
+Entitlements (`desktop/pack/homeward.entitlements`) apply to the main app and bundled Python/Node (JIT / unsigned executable memory / disable-library-validation plus network client+server). Helper tools and dylibs get hardened runtime + timestamp only. App Sandbox is not enabled.
+
+### Release CI secrets (Matt)
+
+GitHub-hosted `macos-latest` (already in `release.yml`) can notarize when **all** of these repository secrets are set. No self-hosted Mac runner is required. If any required secret is missing, the job still writes an unsigned UDZO DMG and stays green.
+
+| Secret | What to put in GitHub |
+|---|---|
+| `MACOS_CERTIFICATE_P12` | base64 of the Developer ID Application `.p12` (`base64 -i developer-id.p12 \| pbcopy`) |
+| `MACOS_CERTIFICATE_PASSWORD` | PKCS#12 password for that `.p12` |
+| `HOMEWARD_CODESIGN_IDENTITY` | exact `codesign` identity, e.g. `Developer ID Application: Name (TEAMID)` |
+| `APPLE_API_KEY` | full `AuthKey_XXXXXXXXXX.p8` PEM (App Store Connect API key, Developer access) |
+| `APPLE_API_KEY_ID` | 10-character key id |
+| `APPLE_API_ISSUER` | issuer UUID from App Store Connect → Users and Access → Integrations → App Store Connect API |
+
+Aliases accepted for the issuer UUID: `APPLE_API_ISSUER_ID` or `APPLE_API_KEY_ISSUER`.
+
+After the secrets exist: `workflow_dispatch` Release or push a `v*` tag. The job (1) assembles `Homeward.app` **without** those secrets in the environment, (2) imports the P12 into a temporary keychain, (3) leaf-signs nested Mach-O + the DMG, (4) `notarytool submit --key --key-id --issuer --wait`, (5) `stapler staple`, (6) verifies Developer ID + timestamp + hardened runtime on nested runtime binaries. Then it deletes the temporary keychain.
+
+A live Apple notary run cannot be completed in this repo without those secrets. Local Mac: `HOMEWARD_CODESIGN_IDENTITY` plus either the API-key env or `HOMEWARD_NOTARY_PROFILE`.
 
 `HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1` is a layout helper for CI and Linux; it cannot produce a family DMG.
 
@@ -79,7 +103,7 @@ Creates the Contents tree and copies `policies/`. Skips Node / uv / Ollama / Hom
 
 ## Troubleshooting (macOS)
 
-**Gatekeeper blocks an unsigned local build.** Expected for contributor `.app` / DMG builds without `--sign`. macOS may refuse to open or quarantine the bundle. For family machines, build with `./desktop/scripts/dmg-macos.sh <arch> --sign` after setting `HOMEWARD_CODESIGN_IDENTITY` and `HOMEWARD_NOTARY_PROFILE`.
+**Gatekeeper blocks an unsigned local build.** Expected for contributor `.app` / DMG builds without `--sign`. macOS may refuse to open or quarantine the bundle. For family machines, build with `./desktop/scripts/dmg-macos.sh <arch> --sign` after setting `HOMEWARD_CODESIGN_IDENTITY` and notary credentials (API key or `HOMEWARD_NOTARY_PROFILE`).
 
 ## Windows installer (Inno Setup `.exe`, amd64)
 
