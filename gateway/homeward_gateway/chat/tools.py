@@ -937,26 +937,66 @@ def howto_from_prose(text: str, *, title: str | None = None) -> ToolCard | None:
     return ToolCard("howto", {"title": (found_title or "How to").strip(), "steps": steps})
 
 
+def _fact_item_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, dict):
+        for key in ("text", "fact", "body", "content"):
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+    return None
+
+
+def normalize_facts_data(data: dict[str, Any] | None) -> dict[str, Any] | None:
+    payload = data or {}
+    if payload.get("type") not in (None, "facts"):
+        return None
+    title = payload.get("topic") or payload.get("title") or "Fun Facts"
+    if not isinstance(title, str) or not title.strip():
+        title = "Fun Facts"
+    raw = payload.get("facts", payload.get("items"))
+    facts: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            text = _fact_item_text(item)
+            if text:
+                facts.append(text)
+    elif isinstance(raw, str):
+        for line in raw.splitlines():
+            text = _fact_item_text(re.sub(r"^\s*(?:\d+[\.)]\s+|[-*•]\s+)", "", line))
+            if text:
+                facts.append(text)
+    if not facts:
+        return None
+    return {"topic": title.strip(), "facts": facts}
+
+
 def _extract_balanced_json(text: str, start: int) -> tuple[str, int] | None:
     if start < 0 or start >= len(text) or text[start] != "{":
         return None
     depth = 0
-    in_string = False
+    quote: str | None = None
     escape = False
     for index in range(start, len(text)):
         char = text[index]
-        if in_string:
+        if quote:
             if escape:
                 escape = False
                 continue
             if char == "\\":
                 escape = True
                 continue
-            if char == '"':
-                in_string = False
+            if char == quote:
+                # Tiny models emit JS-style 'dog's' — don't end the string on a possessive.
+                nxt = text[index + 1] if index + 1 < len(text) else ""
+                if quote == "'" and nxt.isalpha():
+                    continue
+                quote = None
             continue
-        if char == '"':
-            in_string = True
+        if char in "\"'":
+            quote = char
             continue
         if char == "{":
             depth += 1
@@ -1043,7 +1083,212 @@ def _card_from_payload(payload: dict[str, Any]) -> ToolCard | None:
         if not normalized:
             return None
         return ToolCard("howto", normalized)
+    if kind == "facts":
+        normalized = normalize_facts_data(payload)
+        if not normalized:
+            return None
+        return ToolCard("facts", normalized)
     return ToolCard(kind, data)
+
+
+class _JsCursor:
+    def __init__(self, source: str) -> None:
+        self.s = source
+        self.i = 0
+
+    def skip_ws(self) -> None:
+        while self.i < len(self.s) and self.s[self.i].isspace():
+            self.i += 1
+
+
+def _read_js_string(cur: _JsCursor) -> str:
+    quote = cur.s[cur.i]
+    cur.i += 1
+    out: list[str] = []
+    while cur.i < len(cur.s):
+        ch = cur.s[cur.i]
+        if ch == "\\":
+            nxt = cur.s[cur.i + 1] if cur.i + 1 < len(cur.s) else ""
+            mapping = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "'": "'", "\\": "\\"}
+            out.append(mapping.get(nxt, nxt))
+            cur.i += 2
+            continue
+        if ch == quote:
+            nxt = cur.s[cur.i + 1] if cur.i + 1 < len(cur.s) else ""
+            if quote == "'" and nxt.isalpha():
+                out.append(ch)
+                cur.i += 1
+                continue
+            cur.i += 1
+            return "".join(out)
+        out.append(ch)
+        cur.i += 1
+    raise ValueError("unterminated string")
+
+
+def _read_js_ident(cur: _JsCursor) -> str:
+    cur.skip_ws()
+    if cur.i >= len(cur.s) or not (cur.s[cur.i].isalpha() or cur.s[cur.i] == "_"):
+        raise ValueError("ident")
+    start = cur.i
+    cur.i += 1
+    while cur.i < len(cur.s) and (cur.s[cur.i].isalnum() or cur.s[cur.i] == "_"):
+        cur.i += 1
+    return cur.s[start:cur.i]
+
+
+def _read_js_value(cur: _JsCursor) -> Any:
+    cur.skip_ws()
+    if cur.i >= len(cur.s):
+        raise ValueError("eof")
+    ch = cur.s[cur.i]
+    if ch in "\"'":
+        return _read_js_string(cur)
+    if ch == "{":
+        return _read_js_object(cur)
+    if ch == "[":
+        return _read_js_array(cur)
+    if ch == "-" or ch.isdigit():
+        start = cur.i
+        if ch == "-":
+            cur.i += 1
+        while cur.i < len(cur.s) and cur.s[cur.i] in "0123456789.eE+-":
+            cur.i += 1
+        return json.loads(cur.s[start:cur.i])
+    ident = _read_js_ident(cur)
+    if ident == "true":
+        return True
+    if ident == "false":
+        return False
+    if ident == "null":
+        return None
+    raise ValueError("unexpected ident")
+
+
+def _read_js_object(cur: _JsCursor) -> dict[str, Any]:
+    if cur.s[cur.i] != "{":
+        raise ValueError("object")
+    cur.i += 1
+    obj: dict[str, Any] = {}
+    cur.skip_ws()
+    if cur.i < len(cur.s) and cur.s[cur.i] == "}":
+        cur.i += 1
+        return obj
+    while cur.i < len(cur.s):
+        cur.skip_ws()
+        key = _read_js_string(cur) if cur.s[cur.i] in "\"'" else _read_js_ident(cur)
+        cur.skip_ws()
+        if cur.i >= len(cur.s) or cur.s[cur.i] != ":":
+            raise ValueError("colon")
+        cur.i += 1
+        obj[key] = _read_js_value(cur)
+        cur.skip_ws()
+        if cur.i < len(cur.s) and cur.s[cur.i] == ",":
+            cur.i += 1
+            cur.skip_ws()
+            if cur.i < len(cur.s) and cur.s[cur.i] == "}":
+                cur.i += 1
+                return obj
+            continue
+        if cur.i < len(cur.s) and cur.s[cur.i] == "}":
+            cur.i += 1
+            return obj
+        raise ValueError("object end")
+    raise ValueError("unterminated object")
+
+
+def _read_js_array(cur: _JsCursor) -> list[Any]:
+    if cur.s[cur.i] != "[":
+        raise ValueError("array")
+    cur.i += 1
+    arr: list[Any] = []
+    cur.skip_ws()
+    if cur.i < len(cur.s) and cur.s[cur.i] == "]":
+        cur.i += 1
+        return arr
+    while cur.i < len(cur.s):
+        arr.append(_read_js_value(cur))
+        cur.skip_ws()
+        if cur.i < len(cur.s) and cur.s[cur.i] == ",":
+            cur.i += 1
+            cur.skip_ws()
+            if cur.i < len(cur.s) and cur.s[cur.i] == "]":
+                cur.i += 1
+                return arr
+            continue
+        if cur.i < len(cur.s) and cur.s[cur.i] == "]":
+            cur.i += 1
+            return arr
+        raise ValueError("array end")
+    raise ValueError("unterminated array")
+
+
+def _parse_loose_object(raw: str) -> dict[str, Any] | None:
+    trimmed = (raw or "").strip()
+    if not trimmed:
+        return None
+    try:
+        payload = json.loads(trimmed)
+        if isinstance(payload, dict):
+            return payload
+    except json.JSONDecodeError:
+        pass
+    try:
+        payload = _read_js_value(_JsCursor(trimmed))
+    except (ValueError, IndexError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _leading_facts_prefix(text: str, brace: int) -> int | None:
+    match = re.search(r"\b[Ff]acts\s*$", text[:brace])
+    return match.start() if match else None
+
+
+def _looks_like_facts_start(text: str, brace: int) -> bool:
+    if _leading_facts_prefix(text, brace) is not None:
+        return True
+    peek = text[brace : brace + 96]
+    if re.search(r'"type"\s*:\s*"facts"', peek):
+        return True
+    return bool(re.search(r"\btopic\s*:", peek) and re.search(r"\bfacts\s*:", peek))
+
+
+def _pull_facts_payloads(text: str) -> tuple[str, list[ToolCard]]:
+    cards: list[ToolCard] = []
+    ranges: list[tuple[int, int]] = []
+    hide_from = len(text)
+    cursor = 0
+    while cursor < hide_from:
+        brace = text.find("{", cursor)
+        if brace < 0 or brace >= hide_from:
+            break
+        extracted = _extract_balanced_json(text, brace)
+        if not extracted:
+            if _looks_like_facts_start(text, brace):
+                prefix = _leading_facts_prefix(text, brace)
+                hide_from = min(hide_from, prefix if prefix is not None else brace)
+            break
+        raw, json_end = extracted
+        parsed = _parse_loose_object(raw)
+        data = normalize_facts_data(parsed) if parsed is not None else None
+        if not data:
+            cursor = brace + 1
+            continue
+        start = _leading_facts_prefix(text, brace)
+        ranges.append((start if start is not None else brace, json_end))
+        cards.append(ToolCard("facts", data))
+        cursor = json_end
+    pieces: list[str] = []
+    pos = 0
+    for start, end in ranges:
+        if start >= hide_from:
+            break
+        pieces.append(text[pos:start])
+        pos = end
+    pieces.append(text[pos:hide_from])
+    cleaned = re.sub(r"\n{3,}", "\n\n", "".join(pieces)).strip()
+    return cleaned, cards
 
 
 def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
@@ -1068,13 +1313,21 @@ def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
         cleaned = _FENCE_RE.sub("", text or "")
     cleaned = re.sub(r"```homeward[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    cleaned, facts_cards = _pull_facts_payloads(cleaned)
+    if facts_cards:
+        seen = {json.dumps(card.to_dict(), sort_keys=True) for card in cards}
+        for card in facts_cards:
+            key = json.dumps(card.to_dict(), sort_keys=True)
+            if key not in seen:
+                cards.append(card)
+                seen.add(key)
     return cleaned, cards
 
 
 _MODEL_CARD_SHAPES = {
     "define": "define {word, meaning, example}",
     "quiz": "quiz {title, questions:[{q, choices, answer, explain}]}",
-    "facts": "facts {topic, facts}",
+    "facts": '{"type":"facts","topic":"...","facts":["..."]}',
     "story": "story {title, pages:[{text, choices?:[{label, message}]}]}",
     "riddle": "riddle {riddle, answer, hint?}",
     "practice": "practice {title, kind, items:[{prompt, answer}]}",

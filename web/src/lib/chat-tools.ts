@@ -124,14 +124,61 @@ export function howtoFromProse(content: string, title = "How to"): HowToTool | n
   return { type: "howto", title: foundTitle || "How to", steps };
 }
 
+function factItemText(value: unknown): string | null {
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text || null;
+  }
+  if (value && typeof value === "object") {
+    for (const key of ["text", "fact", "body", "content"] as const) {
+      const raw = (value as Record<string, unknown>)[key];
+      if (typeof raw === "string" && raw.trim()) return raw.trim();
+    }
+  }
+  return null;
+}
+
+function factsToolFromObject(value: unknown): FactsTool | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const obj = value as Record<string, unknown>;
+  if (obj.type != null && obj.type !== "facts") return null;
+  const rawTopic = typeof obj.topic === "string" && obj.topic.trim() ? obj.topic : obj.title;
+  const topic = typeof rawTopic === "string" && rawTopic.trim() ? rawTopic.trim() : "Fun Facts";
+  const rawFacts = obj.facts ?? obj.items;
+  const facts: string[] = [];
+  if (Array.isArray(rawFacts)) {
+    for (const item of rawFacts) {
+      const fact = factItemText(item);
+      if (fact) facts.push(fact);
+    }
+  } else if (typeof rawFacts === "string") {
+    for (const line of rawFacts.split(/\r?\n/)) {
+      const fact = factItemText(line.replace(/^\s*(?:\d+[.)]\s+|[-*•]\s+)/, ""));
+      if (fact) facts.push(fact);
+    }
+  }
+  if (!facts.length) return null;
+  return { type: "facts", topic, facts };
+}
+
+export function normalizeFactsTool(value: unknown): FactsTool | null {
+  if (!value || typeof value !== "object") return null;
+  if ((value as { type?: unknown }).type !== "facts") return null;
+  return factsToolFromObject(value);
+}
+
+export function factsToProse(tool: FactsTool): string {
+  return tool.facts.map((fact) => fact.trim()).filter(Boolean).join(" ");
+}
+
 function extractBalancedJson(source: string, start: number): { raw: string; end: number } | null {
   if (source[start] !== "{") return null;
   let depth = 0;
-  let inString = false;
+  let quote: string | null = null;
   let escape = false;
   for (let i = start; i < source.length; i += 1) {
     const char = source[i];
-    if (inString) {
+    if (quote) {
       if (escape) {
         escape = false;
         continue;
@@ -140,11 +187,15 @@ function extractBalancedJson(source: string, start: number): { raw: string; end:
         escape = true;
         continue;
       }
-      if (char === '"') inString = false;
+      if (char === quote) {
+        // Tiny models emit JS-style 'dog's' — don't end the string on a possessive.
+        if (quote === "'" && /[A-Za-z]/.test(source[i + 1] || "")) continue;
+        quote = null;
+      }
       continue;
     }
-    if (char === '"') {
-      inString = true;
+    if (char === '"' || char === "'") {
+      quote = char;
       continue;
     }
     if (char === "{") depth += 1;
@@ -194,11 +245,215 @@ function pullFencedTools(content: string): { cleaned: string; tools: ChatTool[] 
   return { cleaned, tools };
 }
 
+type JsCursor = { s: string; i: number };
+
+function skipJsWs(p: JsCursor) {
+  while (p.i < p.s.length && /\s/.test(p.s[p.i])) p.i += 1;
+}
+
+function readJsString(p: JsCursor): string {
+  const quote = p.s[p.i];
+  p.i += 1;
+  let out = "";
+  while (p.i < p.s.length) {
+    const ch = p.s[p.i];
+    if (ch === "\\") {
+      const next = p.s[p.i + 1];
+      if (!next) break;
+      const map: Record<string, string> = { n: "\n", t: "\t", r: "\r", '"': '"', "'": "'", "\\": "\\" };
+      out += map[next] ?? next;
+      p.i += 2;
+      continue;
+    }
+    if (ch === quote) {
+      if (quote === "'" && /[A-Za-z]/.test(p.s[p.i + 1] || "")) {
+        out += ch;
+        p.i += 1;
+        continue;
+      }
+      p.i += 1;
+      return out;
+    }
+    out += ch;
+    p.i += 1;
+  }
+  throw new Error("unterminated string");
+}
+
+function readJsIdent(p: JsCursor): string {
+  skipJsWs(p);
+  const start = p.i;
+  if (!/[A-Za-z_]/.test(p.s[p.i] || "")) throw new Error("ident");
+  p.i += 1;
+  while (p.i < p.s.length && /[A-Za-z0-9_]/.test(p.s[p.i])) p.i += 1;
+  return p.s.slice(start, p.i);
+}
+
+function readJsValue(p: JsCursor): unknown {
+  skipJsWs(p);
+  const ch = p.s[p.i];
+  if (ch === '"' || ch === "'") return readJsString(p);
+  if (ch === "{") return readJsObject(p);
+  if (ch === "[") return readJsArray(p);
+  if (ch === "-" || (ch >= "0" && ch <= "9")) {
+    const start = p.i;
+    if (ch === "-") p.i += 1;
+    while (p.i < p.s.length && /[0-9.eE+-]/.test(p.s[p.i])) p.i += 1;
+    const num = Number(p.s.slice(start, p.i));
+    if (Number.isNaN(num)) throw new Error("bad number");
+    return num;
+  }
+  const ident = readJsIdent(p);
+  if (ident === "true") return true;
+  if (ident === "false") return false;
+  if (ident === "null") return null;
+  throw new Error("unexpected ident");
+}
+
+function readJsObject(p: JsCursor): Record<string, unknown> {
+  if (p.s[p.i] !== "{") throw new Error("object");
+  p.i += 1;
+  const obj: Record<string, unknown> = {};
+  skipJsWs(p);
+  if (p.s[p.i] === "}") {
+    p.i += 1;
+    return obj;
+  }
+  while (p.i < p.s.length) {
+    skipJsWs(p);
+    const key = p.s[p.i] === '"' || p.s[p.i] === "'" ? readJsString(p) : readJsIdent(p);
+    skipJsWs(p);
+    if (p.s[p.i] !== ":") throw new Error("colon");
+    p.i += 1;
+    obj[key] = readJsValue(p);
+    skipJsWs(p);
+    if (p.s[p.i] === ",") {
+      p.i += 1;
+      skipJsWs(p);
+      if (p.s[p.i] === "}") {
+        p.i += 1;
+        return obj;
+      }
+      continue;
+    }
+    if (p.s[p.i] === "}") {
+      p.i += 1;
+      return obj;
+    }
+    throw new Error("object end");
+  }
+  throw new Error("unterminated object");
+}
+
+function readJsArray(p: JsCursor): unknown[] {
+  if (p.s[p.i] !== "[") throw new Error("array");
+  p.i += 1;
+  const arr: unknown[] = [];
+  skipJsWs(p);
+  if (p.s[p.i] === "]") {
+    p.i += 1;
+    return arr;
+  }
+  while (p.i < p.s.length) {
+    arr.push(readJsValue(p));
+    skipJsWs(p);
+    if (p.s[p.i] === ",") {
+      p.i += 1;
+      skipJsWs(p);
+      if (p.s[p.i] === "]") {
+        p.i += 1;
+        return arr;
+      }
+      continue;
+    }
+    if (p.s[p.i] === "]") {
+      p.i += 1;
+      return arr;
+    }
+    throw new Error("array end");
+  }
+  throw new Error("unterminated array");
+}
+
+function parseLooseRecord(raw: string): Record<string, unknown> | null {
+  const trimmed = raw.trim();
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* tiny models echo JS-style objects instead of JSON */
+  }
+  try {
+    const parsed = readJsValue({ s: trimmed, i: 0 });
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function leadingFactsPrefix(content: string, brace: number): number | null {
+  const match = content.slice(0, brace).match(/\b[Ff]acts\s*$/);
+  return match && match.index != null ? match.index : null;
+}
+
+function looksLikeFactsStart(content: string, brace: number): boolean {
+  if (leadingFactsPrefix(content, brace) != null) return true;
+  const peek = content.slice(brace, brace + 96);
+  if (/"type"\s*:\s*"facts"/.test(peek)) return true;
+  return /\btopic\s*:/.test(peek) && /\bfacts\s*:/.test(peek);
+}
+
+function pullFactsPayloads(content: string): { cleaned: string; tools: FactsTool[] } {
+  const tools: FactsTool[] = [];
+  const ranges: Array<[number, number]> = [];
+  let hideFrom = content.length;
+  let cursor = 0;
+
+  while (cursor < hideFrom) {
+    const brace = content.indexOf("{", cursor);
+    if (brace < 0 || brace >= hideFrom) break;
+    const extracted = extractBalancedJson(content, brace);
+    if (!extracted) {
+      if (looksLikeFactsStart(content, brace)) {
+        hideFrom = Math.min(hideFrom, leadingFactsPrefix(content, brace) ?? brace);
+      }
+      break;
+    }
+    const parsed = parseLooseRecord(extracted.raw);
+    const tool = parsed ? factsToolFromObject(parsed) : null;
+    if (!tool) {
+      cursor = brace + 1;
+      continue;
+    }
+    const start = leadingFactsPrefix(content, brace) ?? brace;
+    ranges.push([start, extracted.end]);
+    tools.push(tool);
+    cursor = extracted.end;
+  }
+
+  let cleaned = "";
+  let pos = 0;
+  for (const [start, end] of ranges) {
+    if (start >= hideFrom) break;
+    cleaned += content.slice(pos, start);
+    pos = end;
+  }
+  cleaned += content.slice(pos, hideFrom);
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+  return { cleaned, tools };
+}
+
 export function asChatTool(value: unknown): ChatTool | null {
   if (!value || typeof value !== "object") return null;
   const type = (value as { type?: unknown }).type;
   if (typeof type !== "string" || !TOOL_TYPES.has(type)) return null;
   if (type === "howto") return normalizeHowToTool(value);
+  if (type === "facts") return normalizeFactsTool(value);
   return value as ChatTool;
 }
 
@@ -246,14 +501,23 @@ export function extractChatTools(
   extra: ChatTool[] = [],
   route?: CardRoute | null,
 ): { text: string; tools: ChatTool[] } {
-  const { cleaned, tools: fromFence } = pullFencedTools(content);
-  let tools = constrainChatTools(mergeChatTools(extra, fromFence), route);
+  const { cleaned: afterFence, tools: fromFence } = pullFencedTools(content);
+  const { cleaned: afterFacts, tools: fromFacts } = pullFactsPayloads(afterFence);
+  let tools = constrainChatTools(mergeChatTools(extra, [...fromFence, ...fromFacts]), route);
   const routeAllowsHowto = Boolean(route?.allow?.includes("howto"));
   if (routeAllowsHowto && !tools.some((tool) => tool.type === "howto")) {
-    const synthesized = howtoFromProse(cleaned);
+    const synthesized = howtoFromProse(afterFacts);
     if (synthesized) {
       tools = constrainChatTools([...tools, synthesized], route);
     }
   }
-  return { text: cleaned, tools };
+  let text = afterFacts;
+  const routeAllowsFacts = !route?.allow || route.allow.includes("facts");
+  if (!routeAllowsFacts && fromFacts.length) {
+    const prose = fromFacts.map(factsToProse).filter(Boolean).join(" ");
+    if (prose) {
+      text = [afterFacts, prose].filter((part) => part.trim()).join("\n\n").trim();
+    }
+  }
+  return { text, tools };
 }

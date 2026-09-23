@@ -202,4 +202,86 @@ describe("extractChatTools", () => {
     expect(howtoFromProse("Just mix it.")).toBeNull();
     expect(howtoFromProse("1. Only one step")).toBeNull();
   });
+
+  it("maps an unfenced Facts payload to a fact card and strips it from the bubble", () => {
+    const content = 'Facts { topic: "Animal Fun Facts", facts: [ "Butterflies taste with their feet!" ] }';
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(tools).toEqual([
+      { type: "facts", topic: "Animal Fun Facts", facts: ["Butterflies taste with their feet!"] },
+    ]);
+    expect(text).not.toContain("topic:");
+    expect(text).not.toMatch(/\{\s*topic/);
+  });
+
+  it("maps a single-quoted Facts payload that contains a possessive apostrophe", () => {
+    const content = "Facts { topic: 'Dogs', facts: [ 'A dog's nose is wet!' ] }";
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(tools).toEqual([{ type: "facts", topic: "Dogs", facts: ["A dog's nose is wet!"] }]);
+  });
+
+  it("keeps spoken prose and still maps a trailing Facts payload", () => {
+    const content =
+      'Here is a fun one!\n\nFacts { topic: "Animal Fun Facts", facts: [ "Butterflies taste with their feet!" ] }\n';
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("Here is a fun one!");
+    expect(tools[0]).toMatchObject({
+      type: "facts",
+      topic: "Animal Fun Facts",
+      facts: ["Butterflies taste with their feet!"],
+    });
+  });
+
+  it("hides an incomplete Facts payload while streaming", () => {
+    const { text, tools } = extractChatTools(
+      'Almost ready\nFacts { topic: "Animal Fun Facts", facts: [ "Butterflies',
+      [],
+      { allow: ["facts", "lookup"], storyPages: null },
+    );
+    expect(text).toBe("Almost ready");
+    expect(tools).toEqual([]);
+    expect(text).not.toContain("Facts");
+  });
+
+  it("renders unfenced JSON facts as a card", () => {
+    const content =
+      '{"type":"facts","topic":"dogs","facts":["They sniff.","They run."]}';
+    const { text, tools } = extractChatTools(content);
+    expect(text).toBe("");
+    expect(tools).toEqual([{ type: "facts", topic: "dogs", facts: ["They sniff.", "They run."] }]);
+  });
+
+  it("turns a Facts payload into prose when the route does not allow a facts card", () => {
+    const content = 'Facts { topic: "Animal Fun Facts", facts: [ "Butterflies taste with their feet!" ] }';
+    const extra = [{ type: "timer" as const, seconds: 10, label: "10 seconds" }];
+    const { text, tools } = extractChatTools(content, extra, { allow: ["timer", "lookup"], storyPages: null });
+    expect(tools).toEqual(extra);
+    expect(text).toBe("Butterflies taste with their feet!");
+    expect(text).not.toContain("topic:");
+  });
+
+  it("normalizes nested fact objects from a fence", () => {
+    const content = [
+      "```homeward",
+      JSON.stringify({
+        type: "facts",
+        topic: "Dogs",
+        facts: [{ text: "They sniff." }, { fact: "They run." }],
+      }),
+      "```",
+    ].join("\n");
+    const { tools } = extractChatTools(content);
+    expect(tools[0]).toEqual({ type: "facts", topic: "Dogs", facts: ["They sniff.", "They run."] });
+  });
+
+  it("strips a raw Facts payload even when the stream already sent a facts card", () => {
+    const extra = [
+      { type: "facts" as const, topic: "Animal Fun Facts", facts: ["Butterflies taste with their feet!"] },
+    ];
+    const content = 'Facts { topic: "Animal Fun Facts", facts: [ "Butterflies taste with their feet!" ] }';
+    const { text, tools } = extractChatTools(content, extra, { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(tools).toEqual(extra);
+  });
 });
