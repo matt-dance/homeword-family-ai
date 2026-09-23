@@ -974,12 +974,17 @@ def normalize_facts_data(data: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def _is_js_quote_closer(text: str, index: int, quote: str) -> bool:
-    if text[index] != quote:
+    if index >= len(text) or text[index] != quote:
         return False
-    # Tiny models leave possessives unescaped inside single-quoted strings.
-    if quote == "'" and index + 1 < len(text) and text[index + 1].isalpha():
-        return False
-    return True
+    # Close only before JSON structure. That keeps possessives (dog's, animals' homes)
+    # and unescaped inner quotes (a "flamboyance") inside the string instead of
+    # making a finished Facts payload look incomplete and disappear.
+    nxt = index + 1
+    while nxt < len(text) and text[nxt].isspace():
+        nxt += 1
+    if nxt >= len(text):
+        return True
+    return text[nxt] in ",]}:"
 
 
 def _extract_balanced_json(text: str, start: int) -> tuple[str, int] | None:
@@ -1022,12 +1027,9 @@ def _iter_fenced_json(text: str) -> list[tuple[int, int, dict[str, Any]]]:
         if not extracted:
             continue
         raw, json_end = extracted
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
+        payload = _parse_loose_object(raw)
         if not isinstance(payload, dict):
-            continue
+            payload = {}
         close = text.find("```", json_end)
         end = close + 3 if close >= 0 else json_end
         found.append((match.start(), end, payload))
@@ -1162,7 +1164,16 @@ def _read_js_value(cur: _JsCursor) -> Any:
         return False
     if ident == "null":
         return None
-    raise ValueError("unexpected ident")
+    words = [ident]
+    while cur.i < len(cur.s):
+        save = cur.i
+        cur.skip_ws()
+        if cur.i < len(cur.s) and (cur.s[cur.i].isalpha() or cur.s[cur.i] == "_"):
+            words.append(_read_js_ident(cur))
+            continue
+        cur.i = save
+        break
+    return " ".join(words)
 
 
 def _read_js_object(cur: _JsCursor) -> dict[str, Any]:
@@ -1291,27 +1302,118 @@ def _pull_facts_payloads(text: str) -> tuple[str, list[ToolCard]]:
     return cleaned, cards
 
 
+def _card_from_fenced_payload(payload: dict[str, Any]) -> ToolCard | None:
+    card = _card_from_payload(payload) if payload else None
+    if card:
+        return card
+    data = normalize_facts_data(payload)
+    if data:
+        return ToolCard("facts", data)
+    return None
+
+
+def _strip_incomplete_homeward_fence(text: str) -> str:
+    """Drop an unfinished ```homeward tail, but keep a spoken sentence after it."""
+    match = re.search(r"```homeward", text, flags=re.IGNORECASE)
+    if not match:
+        return text
+    head = text[: match.start()].strip()
+    lines = text[match.start() :].split("\n")
+    prose: list[str] = []
+    while len(lines) > 1:
+        last = lines[-1]
+        if re.search(r"[{`}]", last) or not re.search(r"[A-Za-z]", last):
+            break
+        prose.insert(0, lines.pop())
+    parts = [part for part in (head, "\n".join(prose).strip()) if part]
+    return re.sub(r"\n{3,}", "\n\n", "\n\n".join(parts)).strip()
+
+
+_PLACEHOLDER_FACT_RE = re.compile(r"^(?:\.{1,3}|type|facts|topic|items)$", re.IGNORECASE)
+
+
+def _closed_quoted_strings(source: str) -> list[str]:
+    found: list[str] = []
+    index = 0
+    while index < len(source):
+        quote = source[index]
+        if quote not in "\"'":
+            index += 1
+            continue
+        cursor = index + 1
+        buf: list[str] = []
+        closed = False
+        while cursor < len(source):
+            if source[cursor] == "\\" and cursor + 1 < len(source):
+                buf.append(source[cursor + 1])
+                cursor += 2
+                continue
+            if _is_js_quote_closer(source, cursor, quote):
+                closed = True
+                cursor += 1
+                break
+            buf.append(source[cursor])
+            cursor += 1
+        if closed:
+            text = "".join(buf).strip()
+            if text:
+                found.append(text)
+            index = cursor
+            continue
+        index += 1
+    return found
+
+
+def _loose_topic(content: str) -> str | None:
+    match = re.search(r"\btopic\b\s*\"?\s*:", content, flags=re.IGNORECASE)
+    if not match:
+        return None
+    rest = content[match.end() :].lstrip()
+    if rest[:1] in "\"'":
+        quoted = _closed_quoted_strings(rest)
+        if quoted and not _PLACEHOLDER_FACT_RE.match(quoted[0]):
+            return quoted[0]
+        return None
+    bare = re.match(r"[A-Za-z0-9][^,}\]]*", rest)
+    if not bare:
+        return None
+    topic = bare.group(0).strip()
+    return topic or None
+
+
+def _salvage_facts_card(content: str) -> ToolCard | None:
+    match = re.search(r"\bfacts\b\s*\"?\s*:", content, flags=re.IGNORECASE)
+    if not match:
+        return None
+    after = content[match.start() :]
+    colon = after.find(":")
+    bracket = after.find("[")
+    region = after[bracket:] if bracket >= 0 else after[colon + 1 :]
+    facts = [fact for fact in _closed_quoted_strings(region) if not _PLACEHOLDER_FACT_RE.match(fact)]
+    if not facts:
+        return None
+    return ToolCard("facts", {"topic": _loose_topic(content) or "Fun Facts", "facts": facts})
+
+
 def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
     cards: list[ToolCard] = []
     cleaned = text or ""
     for start, end, payload in reversed(_iter_fenced_json(cleaned)):
-        card = _card_from_payload(payload)
+        card = _card_from_fenced_payload(payload)
         if card:
             cards.append(card)
         cleaned = cleaned[:start] + cleaned[end:]
     cards.reverse()
     if not cards:
         for match in _FENCE_RE.finditer(text or ""):
-            try:
-                payload = json.loads(match.group(1))
-            except json.JSONDecodeError:
-                continue
+            payload = _parse_loose_object(match.group(1))
             if isinstance(payload, dict):
-                card = _card_from_payload(payload)
+                card = _card_from_fenced_payload(payload)
                 if card:
                     cards.append(card)
-        cleaned = _FENCE_RE.sub("", text or "")
-    cleaned = re.sub(r"```homeward[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
+        if cards:
+            cleaned = _FENCE_RE.sub("", text or "")
+    cleaned = _strip_incomplete_homeward_fence(cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     cleaned, facts_cards = _pull_facts_payloads(cleaned)
     if facts_cards:
@@ -1321,6 +1423,10 @@ def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
             if key not in seen:
                 cards.append(card)
                 seen.add(key)
+    if not cleaned.strip() and not any(card.type == "facts" for card in cards):
+        salvaged = _salvage_facts_card(text or "")
+        if salvaged:
+            cards.append(salvaged)
     return cleaned, cards
 
 
