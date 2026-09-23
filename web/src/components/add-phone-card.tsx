@@ -116,10 +116,9 @@ export function AddPhoneCard({ showParentNote = false }: { showParentNote?: bool
                 <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
                   Say it as digits. This is not a profile PIN.
                 </p>
-                {pairing.lan_ip && (
-                  <p className="text-xs text-muted-foreground font-mono">
-                    Can&apos;t scan? Last resort address: {pairing.lan_ip}
-                    {pairing.port && pairing.port !== 80 ? `:${pairing.port}` : ""}
+                {joinUrl && (
+                  <p className="text-xs text-muted-foreground font-mono break-all">
+                    Can&apos;t scan? Last resort address: {joinUrl.replace(/^https?:\/\//, "")}
                   </p>
                 )}
               </div>

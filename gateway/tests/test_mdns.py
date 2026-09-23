@@ -1,5 +1,6 @@
 """Tests for mDNS helpers."""
 
+from homeward_gateway.config import settings
 from homeward_gateway.network import mdns
 
 
@@ -17,3 +18,31 @@ def test_join_url_never_uses_mdns_hostname():
 def test_lan_ip_returns_string_or_none():
     ip = mdns.lan_ip()
     assert ip is None or ("." in ip and not ip.startswith("127."))
+
+
+def test_lan_ip_prefers_sidecar_published_address(tmp_path, monkeypatch):
+    path = tmp_path / "lan_ip"
+    path.write_text("192.168.1.40\n")
+    monkeypatch.setenv("HOMEWARD_LAN_IP_FILE", str(path))
+    monkeypatch.setattr(mdns, "_probe_namespace_ip", lambda: "172.18.0.2")
+    assert mdns.lan_ip() == "192.168.1.40"
+
+
+def test_lan_ip_skips_docker_bridge_probe_without_sidecar(monkeypatch):
+    original = settings.docker_mode
+    monkeypatch.setattr(mdns, "published_lan_ip", lambda: None)
+    monkeypatch.setattr(mdns, "_probe_namespace_ip", lambda: "172.18.0.2")
+    try:
+        settings.docker_mode = True
+        assert mdns.lan_ip() is None
+    finally:
+        settings.docker_mode = original
+
+
+def test_publish_lan_ip_round_trip(tmp_path, monkeypatch):
+    path = tmp_path / "lan_ip"
+    monkeypatch.setenv("HOMEWARD_LAN_IP_FILE", str(path))
+    mdns.publish_lan_ip("10.0.0.12")
+    assert mdns.published_lan_ip() == "10.0.0.12"
+    mdns.publish_lan_ip("127.0.0.1")
+    assert mdns.published_lan_ip() == "10.0.0.12"

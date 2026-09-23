@@ -109,6 +109,10 @@ services:
     network_mode: host
     environment:
       - HOMEWARD_MDNS_PORT=80
+      - HOMEWARD_DATA_DIR=/data
+    volumes:
+      # Same data volume as the gateway: publish the host LAN IP for QR join URLs.
+      - homeward_data:/data
     command: ["python", "-m", "homeward_gateway.network.mdns"]
     restart: unless-stopped
 
