@@ -962,8 +962,14 @@ _FACTS_ABOUT_RE = re.compile(
 FACTS_EMPTY_FALLBACK = "I got mixed up telling those fun facts. Ask me again!"
 
 
+def _clean_salvaged_fact(value: str) -> str:
+    text = re.sub(r"^[\s,;]+", "", value or "")
+    text = re.sub(r"^['\"]+|['\"]+$", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _looks_like_fact_text(value: str) -> bool:
-    text = (value or "").strip()
+    text = _clean_salvaged_fact(value)
     if not text or text.lower() in _FACT_META_VALUES:
         return False
     if re.match(r"^(type|topic|title|facts|items|word|meaning)\b", text, re.IGNORECASE):
@@ -1129,9 +1135,10 @@ def salvage_facts_data(
     facts = _numbered_fact_lines(text)
     if not facts:
         for item in _completed_quoted_strings(text):
-            if item.strip() == found_topic or not _looks_like_fact_text(item):
+            fact = _clean_salvaged_fact(item)
+            if fact == found_topic or not _looks_like_fact_text(fact):
                 continue
-            facts.append(item.strip())
+            facts.append(fact)
     if not facts and allow_scaffold:
         facts = [
             item

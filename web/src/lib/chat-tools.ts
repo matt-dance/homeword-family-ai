@@ -141,8 +141,16 @@ const FACT_META_VALUES = new Set(["facts", "type", "topic", "title", "items", "f
 const FACTS_TOPIC_FIELD_RE = /\btopic\s*:\s*(?:["']([^"'\n]+)["']|([A-Za-z][A-Za-z0-9 \-']*))/i;
 export const FACTS_EMPTY_FALLBACK = "I got mixed up telling those fun facts. Ask me again!";
 
+function cleanSalvagedFact(value: string): string {
+  return value
+    .replace(/^[\s,;]+/, "")
+    .replace(/^["']+|["']+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function looksLikeFactText(value: string): boolean {
-  const text = value.trim();
+  const text = cleanSalvagedFact(value);
   if (!text || FACT_META_VALUES.has(text.toLowerCase())) return false;
   if (/^(type|topic|title|facts|items|word|meaning)\b/i.test(text)) return false;
   if (!text.includes(" ")) return false;
@@ -306,8 +314,9 @@ export function salvageFactsTool(text: string, topic?: string, opts?: { allowSca
   let facts = numberedFactLines(text);
   if (!facts.length) {
     for (const item of completedQuotedStrings(text)) {
-      if (item.trim() === foundTopic || !looksLikeFactText(item)) continue;
-      facts.push(item.trim());
+      const fact = cleanSalvagedFact(item);
+      if (fact === foundTopic || !looksLikeFactText(fact)) continue;
+      facts.push(fact);
     }
   }
   if (!facts.length && opts?.allowScaffold) {

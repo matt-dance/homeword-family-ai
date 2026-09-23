@@ -306,7 +306,11 @@ describe("extractChatTools", () => {
     const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
     expect(tools[0]?.type).toBe("facts");
     expect(tools[0] && tools[0].type === "facts" ? tools[0].topic : "").toBe("Animals");
-    expect(tools[0] && tools[0].type === "facts" ? tools[0].facts.length : 0).toBeGreaterThanOrEqual(1);
+    const facts = tools[0] && tools[0].type === "facts" ? tools[0].facts : [];
+    expect(facts.length).toBeGreaterThanOrEqual(2);
+    expect(facts.some((fact) => /lions|pride/i.test(fact))).toBe(true);
+    expect(facts.some((fact) => /octopus/i.test(fact))).toBe(true);
+    expect(facts.every((fact) => !fact.startsWith(","))).toBe(true);
     expect(text).not.toContain("topic:");
     expect(text).not.toMatch(/\{\s*topic/);
   });

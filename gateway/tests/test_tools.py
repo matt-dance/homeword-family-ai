@@ -445,7 +445,11 @@ def test_extract_model_tools_animals_inner_quotes():
     assert cards
     assert cards[0].type == "facts"
     assert cards[0].data["topic"] == "Animals"
-    assert len(cards[0].data["facts"]) >= 1
+    facts = cards[0].data["facts"]
+    assert len(facts) >= 2
+    assert any("lion" in fact.lower() or "pride" in fact.lower() for fact in facts)
+    assert any("octopus" in fact.lower() for fact in facts)
+    assert all(not fact.startswith(",") for fact in facts)
     assert "topic:" not in cleaned
     assert "{" not in cleaned
 
