@@ -30,6 +30,7 @@ import { StreamComposerHint, StreamWorkingBubble } from "@/components/stream-wor
 import {
   actionAfterPinUnlock,
   isResumableSession,
+  messagesBelongToSession,
   preferCanonicalLastChat,
   readRememberedLastChat,
   resumeTranscript,
@@ -143,6 +144,9 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
   const conversationActiveRef = useRef(false);
   const pendingChoiceRef = useRef<ResumeChoice | null>(null);
   const offeredSessionRef = useRef<ResumeSessionLike | null>(null);
+  const messagesOwnerRef = useRef<number | null>(null);
+  const messagesRef = useRef<Message[]>([]);
+  messagesRef.current = messages;
 
   const handleVoiceTranscript = useCallback((text: string) => {
     autoReadNextRef.current = true;
@@ -214,6 +218,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     stopConversationRef.current();
     pendingChoiceRef.current = null;
     offeredSessionRef.current = null;
+    messagesOwnerRef.current = null;
     setPinVerified(!pinRequired);
     setPin("");
     setPinError("");
@@ -244,6 +249,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
   const applyResumedSession = useCallback((session: ResumeSessionLike) => {
     const history = resumeTranscript(session);
     if (typeof session.session_id !== "number" || history.length === 0) return false;
+    messagesOwnerRef.current = session.session_id;
     setChatSessionId(session.session_id);
     setMessages(history);
     setResumeOffered(false);
@@ -295,8 +301,12 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       try {
         const session = await api.createChatSession(selectedChild.id, undefined, quickChat);
         pendingChoiceRef.current = null;
+        messagesOwnerRef.current = session.session_id;
         setChatSessionId(session.session_id);
         setMessages([]);
+        // Explicit Start fresh drops the previous transcript. A failed Continue
+        // that falls through must keep it for the next resume.
+        if (!quickChat && !resume) writeRememberedLastChat(selectedChild.id, null);
         setSessionReady(true);
       } catch (error) {
         if (isPinAccessError(error)) {
@@ -374,6 +384,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
 
   useEffect(() => {
     if (quickChat || !sessionReady) return;
+    if (!messagesBelongToSession(chatSessionId, messagesOwnerRef.current)) return;
     const snapshot = snapshotLastChat(
       chatSessionId,
       messages.map((message) => ({
@@ -402,8 +413,10 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
     try {
       const session = await api.createChatSession(selectedChild.id, previousSessionId ?? undefined, quickChat);
       pendingChoiceRef.current = null;
+      messagesOwnerRef.current = session.session_id;
       setChatSessionId(session.session_id);
       setMessages([]);
+      if (!quickChat) writeRememberedLastChat(selectedChild.id, null);
       setSessionReady(true);
     } catch (error) {
       if (isPinAccessError(error)) {
@@ -422,6 +435,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       setPinError("");
       setPin("");
       setPinVerified(true);
+      messagesOwnerRef.current = null;
       setChatSessionId(null);
       setMessages([]);
       setSessionReady(false);
@@ -473,7 +487,15 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
       setPinError("");
       stopReadAloud();
       cardRouteRef.current = null;
-      setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
+      const nextMessages: Message[] = [...messagesRef.current, { role: "user", content: userMsg }];
+      messagesOwnerRef.current = chatSessionId;
+      if (!quickChat && chatSessionId) {
+        writeRememberedLastChat(
+          selectedChild.id,
+          snapshotLastChat(chatSessionId, nextMessages),
+        );
+      }
+      setMessages(nextMessages);
       setStreaming(true);
       setStreamStatus("Checking your message…");
 

@@ -311,7 +311,9 @@ export const api = {
   wipeChildMemory: (childId: number) =>
     request<{ ok: boolean }>(`/children/${childId}/memory`, { method: "DELETE" }),
   resumeSession: (childId: number) =>
-    request<ResumableSession>(`/children/${childId}/sessions/resume`),
+    request<ResumableSession>(
+      `/children/${childId}/sessions/resume?_=${Date.now()}`,
+    ),
   verifyPin: (childId: number, pin: string) =>
     request<{ ok: boolean; child_id: number; name: string }>(
       `/children/${childId}/verify-pin`,
