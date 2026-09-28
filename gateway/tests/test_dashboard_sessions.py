@@ -198,6 +198,59 @@ class TestDashboardSessions:
         assert "can't help" not in row["content"].lower()
 
     @pytest.mark.asyncio
+    async def test_sessionless_stored_refusal_quote_uses_preceding_kid_turn(
+        self, client: AsyncClient
+    ):
+        from homeward_gateway.db import database as db_module
+        from homeward_gateway.db.database import BlockedAttempt, ConversationLog
+
+        await setup_parent(client)
+        child = await create_child(client, name="Avery", age=7)
+        kid = "Tell me about the old west"
+        when = datetime(2026, 9, 24, 8, 33, 53, tzinfo=timezone.utc)
+        async with db_module.async_session_factory() as session:
+            session.add(
+                ConversationLog(
+                    child_id=child["id"],
+                    session_id=None,
+                    direction="input",
+                    content=kid,
+                    blocked=False,
+                    created_at=when - timedelta(seconds=20),
+                )
+            )
+            session.add(
+                ConversationLog(
+                    child_id=child["id"],
+                    session_id=None,
+                    direction="output",
+                    content=REFUSAL,
+                    blocked=True,
+                    block_reason="keyword: gun",
+                    stage="output_rules",
+                    created_at=when,
+                )
+            )
+            session.add(
+                BlockedAttempt(
+                    child_id=child["id"],
+                    content=REFUSAL,
+                    reason="keyword: gun",
+                    stage="output_rules",
+                    created_at=when,
+                )
+            )
+            await session.commit()
+
+        blocked = await client.get("/api/v1/dashboard/blocked")
+        assert blocked.status_code == 200
+        row = blocked.json()[0]
+        assert row["reason"] == "keyword: gun"
+        assert row["stage"] == "output_rules"
+        assert row["content"] == kid
+        assert "can't help" not in row["content"].lower()
+
+    @pytest.mark.asyncio
     async def test_delete_one_session_leaves_others(self, client: AsyncClient):
         await setup_parent(client)
         child = await create_child(client)
