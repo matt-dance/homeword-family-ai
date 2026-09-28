@@ -44,6 +44,9 @@ class PipelineResult:
     stage: str | None = None
     session_state: SessionState | None = None
     tools: list[dict] | None = None
+    # Text the safety check actually classified. Parent quotes use this.
+    # Kid-facing replies stay on the canned refusal path and must not read it.
+    audit_text: str | None = None
 
 
 def _is_llm_timeout(exc: BaseException) -> bool:
@@ -61,6 +64,17 @@ def _blocked_result(result: PipelineResult) -> PipelineResult:
         block_reason=result.block_reason,
         stage=result.stage,
         tools=result.tools or [ask_parent_card(result.block_reason).to_dict()],
+        audit_text=result.audit_text,
+    )
+
+
+def _blocked_filter(reason: str | None, stage: str, checked: str) -> PipelineResult:
+    """Fail-closed result that keeps the text the check actually saw."""
+    return PipelineResult(
+        allowed=False,
+        block_reason=reason,
+        stage=stage,
+        audit_text=checked,
     )
 
 
@@ -107,10 +121,10 @@ async def filter_input(
     try:
         normalized = normalize(text)
     except Exception:
-        return PipelineResult(allowed=False, block_reason="normalize error", stage="normalize")
+        return _blocked_filter("normalize error", "normalize", text or "")
 
     if not normalized:
-        return PipelineResult(allowed=False, block_reason="empty message", stage="normalize")
+        return _blocked_filter("empty message", "normalize", text or "")
 
     # Stage 2: Fast rules
     try:
@@ -120,13 +134,9 @@ async def filter_input(
             extra_jailbreaks=preset.jailbreak_patterns,
         )
         if not rule_result.allowed:
-            return PipelineResult(
-                allowed=False,
-                block_reason=rule_result.reason,
-                stage=rule_result.stage,
-            )
+            return _blocked_filter(rule_result.reason, rule_result.stage, normalized)
     except Exception:
-        return PipelineResult(allowed=False, block_reason="rules error", stage="rules")
+        return _blocked_filter("rules error", "rules", normalized)
 
     # Stage 3: Classifier
     if classifier_enabled:
@@ -138,21 +148,21 @@ async def filter_input(
                 rules_only=rules_only_classifier,
             )
             if not classifier_result.allowed:
-                return PipelineResult(
-                    allowed=False,
-                    block_reason=classifier_result.reason,
-                    stage=classifier_result.stage,
+                return _blocked_filter(
+                    classifier_result.reason,
+                    classifier_result.stage,
+                    normalized,
                 )
         except Exception:
-            return PipelineResult(allowed=False, block_reason="classifier error", stage="classifier")
+            return _blocked_filter("classifier error", "classifier", normalized)
 
     # Stage 4: Policy match
     try:
         policy_ok, policy_reason = check_policy_match(normalized, preset, strictness)
         if not policy_ok:
-            return PipelineResult(allowed=False, block_reason=policy_reason, stage="policy")
+            return _blocked_filter(policy_reason, "policy", normalized)
     except Exception:
-        return PipelineResult(allowed=False, block_reason="policy error", stage="policy")
+        return _blocked_filter("policy error", "policy", normalized)
 
     return PipelineResult(allowed=True, content=normalized)
 
@@ -169,8 +179,9 @@ async def filter_output(
     try:
         normalized = normalize_output(text)
     except Exception:
-        return PipelineResult(allowed=False, block_reason="output normalize error", stage="normalize")
+        return _blocked_filter("output normalize error", "normalize", text or "")
 
+    checked = normalized or text or ""
     try:
         rule_result = check_rules(
             normalized,
@@ -178,13 +189,13 @@ async def filter_output(
             extra_jailbreaks=preset.jailbreak_patterns,
         )
         if not rule_result.allowed:
-            return PipelineResult(
-                allowed=False,
-                block_reason=rule_result.reason,
-                stage=f"output_{rule_result.stage}",
+            return _blocked_filter(
+                rule_result.reason,
+                f"output_{rule_result.stage}",
+                checked,
             )
     except Exception:
-        return PipelineResult(allowed=False, block_reason="output rules error", stage="rules")
+        return _blocked_filter("output rules error", "rules", checked)
 
     if classifier_enabled:
         try:
@@ -195,20 +206,20 @@ async def filter_output(
                 rules_only=rules_only_classifier,
             )
             if not classifier_result.allowed:
-                return PipelineResult(
-                    allowed=False,
-                    block_reason=classifier_result.reason,
-                    stage=f"output_{classifier_result.stage}",
+                return _blocked_filter(
+                    classifier_result.reason,
+                    f"output_{classifier_result.stage}",
+                    checked,
                 )
         except Exception:
-            return PipelineResult(allowed=False, block_reason="output classifier error", stage="classifier")
+            return _blocked_filter("output classifier error", "classifier", checked)
 
     try:
         policy_ok, policy_reason = check_policy_match(normalized, preset, strictness)
         if not policy_ok:
-            return PipelineResult(allowed=False, block_reason=policy_reason, stage="output_policy")
+            return _blocked_filter(policy_reason, "output_policy", checked)
     except Exception:
-        return PipelineResult(allowed=False, block_reason="output policy error", stage="policy")
+        return _blocked_filter("output policy error", "policy", checked)
 
     return PipelineResult(allowed=True, content=normalized)
 

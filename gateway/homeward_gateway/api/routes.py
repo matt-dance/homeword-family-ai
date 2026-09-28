@@ -33,6 +33,12 @@ from homeward_gateway.auth.recovery import (
     hash_recovery_code,
     verify_recovery_code,
 )
+from homeward_gateway.chat.blocked_quote import (
+    KID_FACING_REFUSAL_PREFIXES,
+    is_kid_facing_refusal,
+    parent_blocked_quote,
+    quotes_for_stored_refusals,
+)
 from homeward_gateway.chat.history import is_hard_safety_stage, model_visible_history
 from homeward_gateway.chat.lookups import coerce_open_web_search, open_web_search_available
 from homeward_gateway.chat.quiet_hours import is_chat_available
@@ -1151,6 +1157,7 @@ async def _log_message(
     block_reason: str | None = None,
     stage: str | None = None,
     chat_session_id: int | None = None,
+    attempt_content: str | None = None,
 ) -> None:
     log = ConversationLog(
         child_id=child_id,
@@ -1179,9 +1186,13 @@ async def _log_message(
             await _advance_last_named_session(session, child_id, chat_session.id)
 
     if blocked:
+        # Conversation logs keep the kid-facing text (often the canned refusal).
+        # The parent quote is the classified text or the kid's own turn.
+        snippet = content if attempt_content is None else attempt_content
+        snippet = (snippet or "").strip() or content
         attempt = BlockedAttempt(
             child_id=child_id,
-            content=content[:2000],
+            content=(snippet or "")[:2000],
             reason=block_reason or "unknown",
             stage=stage or "unknown",
         )
@@ -1518,6 +1529,11 @@ async def chat(
             session, child.id, "input", body.message,
             blocked=True, block_reason=result.block_reason, stage=result.stage,
             chat_session_id=chat_session_id,
+            attempt_content=parent_blocked_quote(
+                body.message,
+                user_text=body.message,
+                audit_text=getattr(result, "audit_text", None),
+            ),
         )
         return {
             "blocked": True,
@@ -1693,11 +1709,18 @@ async def chat_stream(
                             if not item.allowed:
                                 blocked_early = True
                                 kid_message = user_facing_message(item.stage, item.block_reason)
+                                quote = parent_blocked_quote(
+                                    kid_message if input_logged else body.message,
+                                    user_text=body.message,
+                                    audit_text=getattr(item, "audit_text", None),
+                                    streamed_text="".join(collected) if input_logged else None,
+                                )
                                 if not input_logged:
                                     await _log_message(
                                         log_session, child.id, "input", body.message,
                                         blocked=True, block_reason=item.block_reason, stage=item.stage,
                                         chat_session_id=chat_session_id,
+                                        attempt_content=quote,
                                     )
                                     input_logged = True
                                 else:
@@ -1710,6 +1733,7 @@ async def chat_stream(
                                         block_reason=item.block_reason,
                                         stage=item.stage,
                                         chat_session_id=chat_session_id,
+                                        attempt_content=quote,
                                     )
                                 event_type = "error" if item.stage and item.stage.startswith("llm") else "blocked"
                                 payload = json.dumps({
@@ -1742,12 +1766,21 @@ async def chat_stream(
                             log_session, child.id, "input", body.message,
                             blocked=True, block_reason="stream exception", stage="llm",
                             chat_session_id=chat_session_id,
+                            attempt_content=parent_blocked_quote(
+                                body.message,
+                                user_text=body.message,
+                            ),
                         )
                     else:
                         await _log_message(
                             log_session, child.id, "output", kid_message,
                             blocked=True, block_reason="stream exception", stage="llm",
                             chat_session_id=chat_session_id,
+                            attempt_content=parent_blocked_quote(
+                                kid_message,
+                                user_text=body.message,
+                                streamed_text="".join(collected),
+                            ),
                         )
                     yield f"data: {json.dumps({'type': 'error', 'message': kid_message})}\n\n"
                     return
@@ -2000,6 +2033,42 @@ async def dashboard_blocked_stats(
     }
 
 
+async def _kid_quotes_for_stored_refusals(
+    session: AsyncSession,
+    attempts: list[BlockedAttempt],
+) -> dict[int, str]:
+    """Older output blocks stored the canned refusal. Pair those with the kid turn."""
+    refusal_attempts = [attempt for attempt in attempts if is_kid_facing_refusal(attempt.content)]
+    if not refusal_attempts:
+        return {}
+    child_ids = {attempt.child_id for attempt in refusal_attempts}
+    output_result = await session.execute(
+        select(ConversationLog)
+        .where(ConversationLog.child_id.in_(child_ids))
+        .where(ConversationLog.direction == "output")
+        .where(ConversationLog.blocked.is_(True))
+        .where(
+            or_(
+                *[
+                    ConversationLog.content.startswith(prefix)
+                    for prefix in KID_FACING_REFUSAL_PREFIXES
+                ]
+            )
+        )
+    )
+    outputs = list(output_result.scalars().all())
+    session_ids = {log.session_id for log in outputs if log.session_id}
+    inputs: list[ConversationLog] = []
+    if session_ids:
+        input_result = await session.execute(
+            select(ConversationLog)
+            .where(ConversationLog.session_id.in_(session_ids))
+            .where(ConversationLog.direction == "input")
+        )
+        inputs = list(input_result.scalars().all())
+    return quotes_for_stored_refusals(refusal_attempts, [*outputs, *inputs])
+
+
 @router.get("/dashboard/blocked")
 async def dashboard_blocked(
     parent: Annotated[ParentAccount, Depends(require_parent)],
@@ -2020,12 +2089,13 @@ async def dashboard_blocked(
         .order_by(BlockedAttempt.created_at.desc())
         .limit(limit)
     )
-    attempts = result.scalars().all()
+    attempts = list(result.scalars().all())
+    kid_quotes = await _kid_quotes_for_stored_refusals(session, attempts)
     return [
         {
             "id": a.id,
             "child_id": a.child_id,
-            "content": a.content,
+            "content": parent_blocked_quote(a.content, user_text=kid_quotes.get(a.id)),
             "reason": a.reason,
             "stage": a.stage,
             "created_at": a.created_at.isoformat(),
