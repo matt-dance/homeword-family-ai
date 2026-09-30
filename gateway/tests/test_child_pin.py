@@ -643,6 +643,13 @@ class TestServerSideHistory:
         contents = [row["content"] for row in dashboard.json()]
         assert harm in contents
         assert any(row.get("blocked") for row in dashboard.json())
+        assert any("can't help" in row["content"] for row in dashboard.json())
+
+        blocked_rows = (await client.get("/api/v1/dashboard/blocked")).json()
+        assert blocked_rows
+        quote = blocked_rows[0]["content"]
+        assert "can't help" not in quote.lower()
+        assert "Here is how you" in quote or harm in quote
 
     @pytest.mark.asyncio
     async def test_llm_error_does_not_wipe_safe_history_or_session_topic(self, client: AsyncClient, monkeypatch):

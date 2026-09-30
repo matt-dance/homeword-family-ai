@@ -257,6 +257,21 @@ class TestPipeline:
         assert not result.allowed
 
     @pytest.mark.asyncio
+    async def test_output_keyword_block_keeps_classified_text(self):
+        checked = "A ranger carried a gun."
+        result = await filter_output(
+            checked,
+            YOUNG,
+            strictness=4,
+            classifier_enabled=False,
+        )
+        assert not result.allowed
+        assert result.stage == "output_rules"
+        assert result.block_reason == "keyword: gun"
+        assert result.audit_text == checked
+        assert "can't help" not in (result.audit_text or "").lower()
+
+    @pytest.mark.asyncio
     async def test_empty_message_blocked(self):
         result = await filter_input("", YOUNG, strictness=3)
         assert not result.allowed
@@ -738,6 +753,41 @@ class TestPipeline:
         ]
         assert blocked
         assert blocked[0].stage == "output_rules"
+
+    @pytest.mark.asyncio
+    async def test_stream_output_keyword_block_keeps_classified_text(self, monkeypatch):
+        checked = "A ranger carried a gun."
+
+        async def fake_filter_input(*_args, **_kwargs):
+            return PipelineResult(allowed=True, content="Tell me about horses")
+
+        async def fake_stream(*_args, **_kwargs):
+            yield checked
+
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_input", fake_filter_input)
+        monkeypatch.setattr("homeward_gateway.pipeline.pipeline.stream_response", fake_stream)
+
+        events = []
+        async for item in process_chat_stream(
+            "Tell me about horses",
+            [],
+            YOUNG,
+            4,
+            "Avery",
+            7,
+            classifier_enabled=False,
+        ):
+            events.append(item)
+
+        blocked = [
+            item
+            for item in events
+            if isinstance(item, PipelineResult) and not item.allowed
+        ]
+        assert blocked
+        assert blocked[0].block_reason == "keyword: gun"
+        assert blocked[0].audit_text == checked
+        assert "can't help" not in (blocked[0].audit_text or "").lower()
 
     @pytest.mark.asyncio
     async def test_stream_native_final_yields_only_after_allow(self, monkeypatch):

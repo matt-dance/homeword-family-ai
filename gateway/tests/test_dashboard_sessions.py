@@ -1,9 +1,16 @@
 """Dashboard session grouping and drill-down tests."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from httpx import AsyncClient
 
 from tests.conftest import create_child, setup_parent
+
+REFUSAL = (
+    "I can't help with that question right now. "
+    "Let's talk about something fun instead — like animals, space, or a hobby you enjoy!"
+)
 
 
 class TestDashboardSessions:
@@ -87,6 +94,161 @@ class TestDashboardSessions:
         attempts = blocked.json()
         assert len(attempts) >= 1
         assert attempts[0]["child_id"] == child["id"]
+        assert "can't help" not in (attempts[0].get("content") or "").lower()
+        assert "bomb" in (attempts[0].get("content") or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_output_block_quote_is_classified_text_not_refusal(self, client: AsyncClient, monkeypatch):
+        from homeward_gateway.pipeline.pipeline import PipelineResult, StatusEvent
+
+        await setup_parent(client)
+        child = await create_child(client, name="Avery", age=7)
+        kid = "Tell me about horses"
+        classified = "A ranger carried a gun."
+
+        async def fake_stream(*_args, **_kwargs):
+            yield StatusEvent(message="Writing a reply…", phase="generating")
+            yield classified
+            yield PipelineResult(
+                allowed=False,
+                block_reason="keyword: gun",
+                stage="output_rules",
+                audit_text=classified,
+            )
+
+        monkeypatch.setattr("homeward_gateway.api.routes.process_chat_stream", fake_stream)
+        session_id = (
+            await client.post("/api/v1/chat/sessions", json={"child_id": child["id"]})
+        ).json()["session_id"]
+
+        streamed = await client.post(
+            "/api/v1/chat/stream",
+            json={"message": kid, "child_id": child["id"], "session_id": session_id},
+        )
+        assert streamed.status_code == 200
+        assert "can't help" in streamed.text
+
+        blocked = await client.get("/api/v1/dashboard/blocked")
+        assert blocked.status_code == 200
+        row = blocked.json()[0]
+        assert row["reason"] == "keyword: gun"
+        assert row["stage"] == "output_rules"
+        assert row["content"] == classified
+        assert "can't help" not in row["content"].lower()
+
+        messages = (
+            await client.get(f"/api/v1/dashboard/sessions/{session_id}/messages")
+        ).json()
+        assert any(item["content"] == kid for item in messages)
+        assert any("can't help" in item["content"] for item in messages)
+        assert not any("gun" in item["content"].lower() for item in messages)
+
+    @pytest.mark.asyncio
+    async def test_stored_refusal_quote_uses_preceding_kid_turn(self, client: AsyncClient):
+        from homeward_gateway.db import database as db_module
+        from homeward_gateway.db.database import BlockedAttempt, ChatSession, ConversationLog
+
+        await setup_parent(client)
+        child = await create_child(client, name="Avery", age=7)
+        kid = "Tell me about the old west"
+        when = datetime(2026, 9, 24, 8, 33, 53, tzinfo=timezone.utc)
+        async with db_module.async_session_factory() as session:
+            chat = ChatSession(child_id=child["id"], preview=kid[:200])
+            session.add(chat)
+            await session.flush()
+            session.add(
+                ConversationLog(
+                    child_id=child["id"],
+                    session_id=chat.id,
+                    direction="input",
+                    content=kid,
+                    blocked=False,
+                    created_at=when - timedelta(seconds=20),
+                )
+            )
+            session.add(
+                ConversationLog(
+                    child_id=child["id"],
+                    session_id=chat.id,
+                    direction="output",
+                    content=REFUSAL,
+                    blocked=True,
+                    block_reason="keyword: gun",
+                    stage="output_rules",
+                    created_at=when,
+                )
+            )
+            session.add(
+                BlockedAttempt(
+                    child_id=child["id"],
+                    content=REFUSAL,
+                    reason="keyword: gun",
+                    stage="output_rules",
+                    created_at=when,
+                )
+            )
+            await session.commit()
+
+        blocked = await client.get("/api/v1/dashboard/blocked")
+        assert blocked.status_code == 200
+        row = blocked.json()[0]
+        assert row["reason"] == "keyword: gun"
+        assert row["stage"] == "output_rules"
+        assert row["content"] == kid
+        assert "can't help" not in row["content"].lower()
+
+    @pytest.mark.asyncio
+    async def test_sessionless_stored_refusal_quote_uses_preceding_kid_turn(
+        self, client: AsyncClient
+    ):
+        from homeward_gateway.db import database as db_module
+        from homeward_gateway.db.database import BlockedAttempt, ConversationLog
+
+        await setup_parent(client)
+        child = await create_child(client, name="Avery", age=7)
+        kid = "Tell me about the old west"
+        when = datetime(2026, 9, 24, 8, 33, 53, tzinfo=timezone.utc)
+        async with db_module.async_session_factory() as session:
+            session.add(
+                ConversationLog(
+                    child_id=child["id"],
+                    session_id=None,
+                    direction="input",
+                    content=kid,
+                    blocked=False,
+                    created_at=when - timedelta(seconds=20),
+                )
+            )
+            session.add(
+                ConversationLog(
+                    child_id=child["id"],
+                    session_id=None,
+                    direction="output",
+                    content=REFUSAL,
+                    blocked=True,
+                    block_reason="keyword: gun",
+                    stage="output_rules",
+                    created_at=when,
+                )
+            )
+            session.add(
+                BlockedAttempt(
+                    child_id=child["id"],
+                    content=REFUSAL,
+                    reason="keyword: gun",
+                    stage="output_rules",
+                    created_at=when,
+                )
+            )
+            await session.commit()
+
+        blocked = await client.get("/api/v1/dashboard/blocked")
+        assert blocked.status_code == 200
+        row = blocked.json()[0]
+        assert row["reason"] == "keyword: gun"
+        assert row["stage"] == "output_rules"
+        assert row["content"] == kid
+        assert "can't help" not in row["content"].lower()
 
     @pytest.mark.asyncio
     async def test_delete_one_session_leaves_others(self, client: AsyncClient):
