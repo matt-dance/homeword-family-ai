@@ -202,6 +202,8 @@ jobs:
                 -n "$issuer" ]]; then
             envf="${RUNNER_TEMP}/homeward-codesign.env"
             bash desktop/scripts/ci-macos-codesign-setup.sh --env-file "$envf"
+            # env-file includes HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN
+            # captured before the temp keychain became default.
             # shellcheck disable=SC1090
             source "$envf"
             cleanup_codesign() {

@@ -148,6 +148,7 @@ if [[ ! -f "$APPLE_API_KEY_PATH" ]]; then
 fi
 
 PREV_DEFAULT_KEYCHAIN="${HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN:-}"
+SECURITY_BIN="${HOMEWARD_SECURITY_CMD:-security}"
 
 write_exports() {
   cat <<EOF
@@ -159,24 +160,46 @@ export HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN=$(printf '%q' "$PREV_DEFAULT_KEYC
 EOF
 }
 
+write_env_file() {
+  if [[ -n "$ENV_FILE" ]]; then
+    write_exports > "$ENV_FILE"
+  fi
+}
+
+# Read the runner's current default keychain BEFORE we create or select the
+# temporary signing keychain, then persist it to --env-file so --cleanup can
+# restore it. Dry-run without HOMEWARD_SECURITY_CMD keeps an env-provided value.
+capture_prev_default_keychain() {
+  local raw
+  if [[ "${HOMEWARD_CI_CODESIGN_DRY_RUN:-0}" == "1" && -z "${HOMEWARD_SECURITY_CMD:-}" ]]; then
+    PREV_DEFAULT_KEYCHAIN="${HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN:-$PREV_DEFAULT_KEYCHAIN}"
+    return 0
+  fi
+  raw="$("$SECURITY_BIN" default-keychain -d user 2>/dev/null || true)"
+  PREV_DEFAULT_KEYCHAIN="$(printf '%s' "$raw" | tr -d '"' | awk '{$1=$1;print}')"
+}
+
 print_security_plan() {
   cat <<EOF
+security default-keychain -d user   # capture previous default into HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN
 security create-keychain -p <redacted> $(printf '%q' "$KEYCHAIN_PATH")
 security set-keychain-settings -lut 21600 $(printf '%q' "$KEYCHAIN_PATH")
 security unlock-keychain -p <redacted> $(printf '%q' "$KEYCHAIN_PATH")
 security import $(printf '%q' "$P12_PATH") -P <redacted> -t cert -f pkcs12 -k $(printf '%q' "$KEYCHAIN_PATH") -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k <redacted> $(printf '%q' "$KEYCHAIN_PATH")
 security list-keychains -d user -s $(printf '%q' "$KEYCHAIN_PATH") <existing-user-keychains>
+security default-keychain -s $(printf '%q' "$KEYCHAIN_PATH")
 security find-identity -v -p codesigning $(printf '%q' "$KEYCHAIN_PATH")
 EOF
 }
 
-if [[ -n "$ENV_FILE" ]]; then
-  write_exports > "$ENV_FILE"
-fi
+# Capture previous default, then write --env-file. Do not write the env file
+# before this: wrap-step `source` must see HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN.
+capture_prev_default_keychain
+write_env_file
 
 if [[ "${HOMEWARD_CI_CODESIGN_DRY_RUN:-0}" == "1" ]]; then
-  echo "dry-run: skip security(1); notarytool uses API key flags (not --keychain-profile)"
+  echo "dry-run: skip security(1) mutation; notarytool uses API key flags (not --keychain-profile)"
   print_security_plan
   write_exports
   exit 0
@@ -189,7 +212,6 @@ fi
 
 # Do not call `xcrun notarytool store-credentials` — it prompts and fails
 # headless with "User interaction is not allowed".
-PREV_DEFAULT_KEYCHAIN="$(security default-keychain -d user 2>/dev/null | tr -d '"' | awk '{$1=$1;print}')"
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
 security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -224,6 +246,7 @@ fi
 
 rm -f "$P12_PATH"
 
+write_env_file
 write_exports
 if [[ -n "${GITHUB_ENV:-}" ]]; then
   {

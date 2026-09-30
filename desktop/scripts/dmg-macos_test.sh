@@ -329,11 +329,38 @@ if grep -q -- '--deep' "$WORK/verify-out.txt"; then
   exit 1
 fi
 
-# CI setup: write API key + print security plan without calling security(1).
+# --env-file must persist the previous default keychain captured before
+# the temp keychain is selected, so wrap-step --cleanup can restore it.
+python3 - "$SETUP" <<'PY'
+from pathlib import Path
+import sys
+
+src = Path(sys.argv[1]).read_text(encoding="utf-8")
+lines = src.splitlines()
+try:
+    call_cap = next(i for i, ln in enumerate(lines) if ln.strip() == "capture_prev_default_keychain")
+    call_write = next(i for i, ln in enumerate(lines) if ln.strip() == "write_env_file")
+    mutate = next(
+        i
+        for i, ln in enumerate(lines)
+        if ln.strip() == 'security default-keychain -s "$KEYCHAIN_PATH"'
+    )
+except StopIteration as exc:
+    raise SystemExit("setup missing capture/write_env_file/default-keychain -s $KEYCHAIN_PATH") from exc
+if call_cap > call_write:
+    raise SystemExit("must capture previous default keychain before writing --env-file")
+if call_write > mutate:
+    raise SystemExit("--env-file write must happen before selecting the temp default keychain")
+if "HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN=$(printf '%q' \"$PREV_DEFAULT_KEYCHAIN\")" not in src:
+    raise SystemExit("write_exports must include captured HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN")
+print("previous default keychain captured before --env-file")
+PY
 P12_B64="$(python3 -c 'import base64; print(base64.b64encode(b"\x30" + b"\x00" * 24).decode())')"
 ENVF="$WORK/codesign.env"
+PREV_KC="$WORK/login.keychain-db"
 HOMEWARD_CI_CODESIGN_DRY_RUN=1 \
 HOMEWARD_CI_CODESIGN_DIR="$WORK/ci" \
+HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN="$PREV_KC" \
 MACOS_CERTIFICATE_P12="$P12_B64" \
 MACOS_CERTIFICATE_PASSWORD="p12-pass" \
 APPLE_API_KEY=$'-----BEGIN PRIVATE KEY-----\nMII-TEST\n-----END PRIVATE KEY-----' \
@@ -354,6 +381,8 @@ grep -q 'APPLE_API_KEY_PATH=' "$ENVF"
 grep -q 'KEYID123' "$ENVF"
 grep -q 'issuer-uuid-from-alias' "$ENVF"
 grep -q 'HOMEWARD_CODESIGN_KEYCHAIN=' "$ENVF"
+grep -q 'HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN=' "$ENVF"
+grep -F -q "$PREV_KC" "$ENVF"
 # shellcheck disable=SC1090
 source "$ENVF"
 test -f "$APPLE_API_KEY_PATH"
@@ -364,16 +393,41 @@ if grep -q 'store-credentials' "$WORK/setup-out.txt"; then
   exit 1
 fi
 test -s "$WORK/ci/developer-id.p12"
+test "$HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN" = "$PREV_KC"
 
+# Cleanup must restore the previous default from the sourced env-file.
 HOMEWARD_CI_CODESIGN_DRY_RUN=1 \
-HOMEWARD_CODESIGN_KEYCHAIN="$WORK/ci/homeward-signing.keychain-db" \
-HOMEWARD_CODESIGN_PREV_DEFAULT_KEYCHAIN="$WORK/login.keychain-db" \
   "$SETUP" --cleanup > "$WORK/cleanup-out.txt"
 grep -q 'delete-keychain' "$WORK/cleanup-out.txt"
 grep -q 'default-keychain' "$WORK/cleanup-out.txt"
+grep -F -q "$PREV_KC" "$WORK/cleanup-out.txt"
 if grep -q 'store-credentials' "$WORK/cleanup-out.txt"; then
   echo "cleanup must not store a notary keychain profile" >&2
   exit 1
 fi
+
+# Capture via a stub security(1) even when PREV is unset — same as a Mac runner.
+FAKE_SEC="$WORK/fake-security"
+cat > "$FAKE_SEC" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "default-keychain" ]]; then
+  echo '"/Users/runner/Library/Keychains/login.keychain-db"'
+  exit 0
+fi
+echo "unexpected security argv: $*" >&2
+exit 1
+EOF
+chmod +x "$FAKE_SEC"
+ENVF2="$WORK/codesign-from-security.env"
+HOMEWARD_CI_CODESIGN_DRY_RUN=1 \
+HOMEWARD_CI_CODESIGN_DIR="$WORK/ci2" \
+HOMEWARD_SECURITY_CMD="$FAKE_SEC" \
+MACOS_CERTIFICATE_P12="$P12_B64" \
+MACOS_CERTIFICATE_PASSWORD="p12-pass" \
+APPLE_API_KEY=$'-----BEGIN PRIVATE KEY-----\nMII-TEST\n-----END PRIVATE KEY-----' \
+APPLE_API_KEY_ID="KEYID123" \
+APPLE_API_ISSUER="issuer-uuid" \
+  "$SETUP" --env-file "$ENVF2" > "$WORK/setup-security-out.txt"
+grep -F -q '/Users/runner/Library/Keychains/login.keychain-db' "$ENVF2"
 
 echo "dmg-macos nested codesign / notarytool wiring ok"
