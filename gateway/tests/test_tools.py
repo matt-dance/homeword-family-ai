@@ -473,6 +473,31 @@ def test_extract_model_tools_salvages_closed_facts_when_payload_is_cut_off():
     ]
 
 
+def test_extract_model_tools_salvages_topic_facts_shape_without_type():
+    text = '```homeward {"topic":"animals","facts":["Penguins swim.","Butterflies'
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert cards[0].type == "facts"
+    assert cards[0].data == {"topic": "animals", "facts": ["Penguins swim."]}
+
+
+def test_extract_model_tools_salvages_facts_when_a_fact_mentions_type():
+    text = 'Facts { topic: "animals", facts: ["Lions are type: predator", "Penguins swim."'
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert cards[0].type == "facts"
+    assert cards[0].data["topic"] == "animals"
+    assert cards[0].data["facts"] == ["Lions are type: predator", "Penguins swim."]
+
+
+def test_extract_model_tools_salvages_lowercase_facts_prefix():
+    text = 'facts { topic: "animals", facts: ["Penguins swim.", "Butterflies'
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert cards[0].type == "facts"
+    assert cards[0].data == {"topic": "animals", "facts": ["Penguins swim."]}
+
+
 def test_incomplete_pretty_facts_fence_hides_json_lines_and_salvages():
     text = "\n".join(
         [

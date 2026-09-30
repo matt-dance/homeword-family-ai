@@ -327,14 +327,19 @@ function looseTopic(content: string): string | null {
 }
 
 function declaredPayloadType(content: string): string | null {
-  const match = content.match(/\btype\b\s*["']?\s*:\s*["']?([A-Za-z_]+)/i);
+  const match = content.match(/(?:^|[{,])\s*["']?type["']?\s*:\s*["']?([A-Za-z_]+)/i);
   return match ? match[1].toLowerCase() : null;
 }
 
+function hasObjectKey(content: string, key: string): boolean {
+  const pattern = new RegExp(`(?:^|[{,])\\s*["']?${key}["']?\\s*:`, "i");
+  return pattern.test(content);
+}
+
 function isFactsPayload(content: string): boolean {
-  const kind = declaredPayloadType(content);
-  if (kind) return kind === "facts";
-  return /\bFacts\s*\{/.test(content);
+  if (/\bfacts\s*\{/i.test(content)) return true;
+  if (hasObjectKey(content, "topic") && hasObjectKey(content, "facts")) return true;
+  return declaredPayloadType(content) === "facts";
 }
 
 function salvageFactsTool(content: string): FactsTool | null {

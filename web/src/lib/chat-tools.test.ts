@@ -292,6 +292,39 @@ describe("extractChatTools", () => {
     });
   });
 
+  it("salvages a cut-off topic/facts fence that omits type", () => {
+    const content = '```homeward {"topic":"animals","facts":["Penguins swim.","Butterflies';
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(tools[0]).toMatchObject({
+      type: "facts",
+      topic: "animals",
+      facts: ["Penguins swim."],
+    });
+  });
+
+  it("salvages Facts payloads when a fact mentions type", () => {
+    const content = 'Facts { topic: "animals", facts: ["Lions are type: predator", "Penguins swim."';
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(tools[0]).toMatchObject({
+      type: "facts",
+      topic: "animals",
+      facts: ["Lions are type: predator", "Penguins swim."],
+    });
+  });
+
+  it("salvages a lowercase facts prefix when the payload is cut off", () => {
+    const content = 'facts { topic: "animals", facts: ["Penguins swim.", "Butterflies';
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(tools[0]).toMatchObject({
+      type: "facts",
+      topic: "animals",
+      facts: ["Penguins swim."],
+    });
+  });
+
   it("hides pretty-printed facts fields on an incomplete fence and still salvages", () => {
     const content = [
       "```homeward",

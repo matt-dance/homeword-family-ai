@@ -1339,17 +1339,33 @@ def _strip_incomplete_homeward_fence(text: str) -> str:
 
 
 def _declared_payload_type(content: str) -> str | None:
-    match = re.search(r"""\btype\b\s*["']?\s*:\s*["']?([A-Za-z_]+)""", content, flags=re.IGNORECASE)
+    match = re.search(
+        r"""(?:^|[{,])\s*["']?type["']?\s*:\s*["']?([A-Za-z_]+)""",
+        content,
+        flags=re.IGNORECASE,
+    )
     if not match:
         return None
     return match.group(1).lower()
 
 
+def _has_object_key(content: str, key: str) -> bool:
+    return bool(
+        re.search(
+            r"""(?:^|[{,])\s*["']?""" + re.escape(key) + r"""["']?\s*:""",
+            content,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _is_facts_payload(content: str) -> bool:
-    kind = _declared_payload_type(content)
-    if kind:
-        return kind == "facts"
-    return bool(re.search(r"\bFacts\s*\{", content))
+    text = content or ""
+    if re.search(r"\bfacts\s*\{", text, flags=re.IGNORECASE):
+        return True
+    if _has_object_key(text, "topic") and _has_object_key(text, "facts"):
+        return True
+    return _declared_payload_type(text) == "facts"
 
 
 _PLACEHOLDER_FACT_RE = re.compile(r"^(?:\.{1,3}|type|facts|topic|items)$", re.IGNORECASE)
