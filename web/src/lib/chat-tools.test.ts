@@ -292,6 +292,96 @@ describe("extractChatTools", () => {
     });
   });
 
+  it("hides pretty-printed facts fields on an incomplete fence and still salvages", () => {
+    const content = [
+      "```homeward",
+      "{",
+      '  "type": "facts",',
+      '  "topic": "animals",',
+      '  "facts": [',
+      '    "Penguins swim."',
+    ].join("\n");
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("");
+    expect(text).not.toContain("topic");
+    expect(text).not.toContain("Penguins");
+    expect(text).not.toContain("}");
+    expect(tools[0]).toMatchObject({
+      type: "facts",
+      topic: "animals",
+      facts: ["Penguins swim."],
+    });
+  });
+
+  it("does not treat a closing-brace line as spoken prose", () => {
+    const content = [
+      "```homeward",
+      '{"type":"facts","topic":"animals","facts":["Penguins swim.',
+      "} still streaming",
+    ].join("\n");
+    const { text } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).not.toContain("still streaming");
+    expect(text).not.toContain("}");
+    expect(text).not.toContain("Penguins");
+  });
+
+  it("keeps a spoken sentence after an incomplete fence", () => {
+    const content = [
+      "```homeward",
+      '{"type":"facts","topic":"animals","facts":["Penguins swim.',
+      "Owls are quiet.",
+    ].join("\n");
+    const { text, tools } = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null });
+    expect(text).toBe("Owls are quiet.");
+    expect(text).not.toContain("{");
+    expect(text).not.toContain("Penguins");
+    expect(tools).toEqual([]);
+  });
+
+  it("does not invent a facts card from a fence-only quiz, story, or define", () => {
+    const quiz = [
+      "```homeward",
+      JSON.stringify({
+        type: "quiz",
+        title: "Animal facts: quiz",
+        questions: [{ q: "Which facts: are true?", choices: ["Wings", "Gills"], answer: 0 }],
+      }),
+      "```",
+    ].join("\n");
+    const story = [
+      "```homeward",
+      JSON.stringify({
+        type: "story",
+        title: "Moon",
+        pages: [{ text: "The facts: are hidden." }],
+      }),
+      "```",
+    ].join("\n");
+    const define = [
+      "```homeward",
+      JSON.stringify({
+        type: "define",
+        word: "habitat",
+        meaning: "A home. The facts: are simple.",
+      }),
+      "```",
+    ].join("\n");
+    for (const content of [quiz, story, define]) {
+      const { text, tools } = extractChatTools(content);
+      expect(tools.some((tool) => tool.type === "facts")).toBe(false);
+      expect(tools).toHaveLength(1);
+      expect(text).not.toContain("facts:");
+    }
+    const incompleteQuiz = [
+      "```homeward",
+      '{"type":"quiz","title":"Animal facts: quiz","questions":[{"q":"Which facts: are true?","choices":["Wings","Gills"]',
+    ].join("\n");
+    const hidden = extractChatTools(incompleteQuiz);
+    expect(hidden.tools).toEqual([]);
+    expect(hidden.text).not.toContain("Wings");
+    expect(hidden.text).not.toContain("facts:");
+  });
+
   it("keeps earlier fact lines when the last animals fact is unfinished", () => {
     const content =
       '```homeward {"type":"facts","topic":"animals","facts":["Penguins swim.","Butterflies';

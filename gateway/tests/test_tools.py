@@ -473,6 +473,91 @@ def test_extract_model_tools_salvages_closed_facts_when_payload_is_cut_off():
     ]
 
 
+def test_incomplete_pretty_facts_fence_hides_json_lines_and_salvages():
+    text = "\n".join(
+        [
+            "```homeward",
+            "{",
+            '  "type": "facts",',
+            '  "topic": "animals",',
+            '  "facts": [',
+            '    "Penguins swim."',
+        ]
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == ""
+    assert "topic" not in cleaned
+    assert "Penguins" not in cleaned
+    assert "}" not in cleaned
+    assert cards[0].type == "facts"
+    assert cards[0].data["topic"] == "animals"
+    assert cards[0].data["facts"] == ["Penguins swim."]
+
+
+def test_incomplete_fence_does_not_leak_closing_brace_line():
+    text = "\n".join(
+        [
+            "```homeward",
+            '{"type":"facts","topic":"animals","facts":["Penguins swim.',
+            "} still streaming",
+        ]
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert "still streaming" not in cleaned
+    assert "}" not in cleaned
+    assert "Penguins" not in cleaned
+    assert cards == []
+
+
+def test_incomplete_fence_keeps_spoken_sentence():
+    text = "\n".join(
+        [
+            "```homeward",
+            '{"type":"facts","topic":"animals","facts":["Penguins swim.',
+            "Owls are quiet.",
+        ]
+    )
+    cleaned, cards = extract_model_tools(text)
+    assert cleaned == "Owls are quiet."
+    assert "{" not in cleaned
+    assert "Penguins" not in cleaned
+    assert cards == []
+
+
+def test_fence_only_other_cards_do_not_grow_a_facts_card():
+    quiz = (
+        "```homeward\n"
+        '{"type":"quiz","title":"Animal facts: quiz",'
+        '"questions":[{"q":"Which facts: are true?","choices":["Wings","Gills"],"answer":0}]}\n'
+        "```"
+    )
+    story = (
+        "```homeward\n"
+        '{"type":"story","title":"Moon","pages":[{"text":"The facts: are hidden."}]}\n'
+        "```"
+    )
+    define = (
+        "```homeward\n"
+        '{"type":"define","word":"habitat","meaning":"A home. The facts: are simple."}\n'
+        "```"
+    )
+    for text in (quiz, story, define):
+        cleaned, cards = extract_model_tools(text)
+        assert cards
+        assert all(card.type != "facts" for card in cards)
+        assert len(cards) == 1
+        assert "facts:" not in cleaned
+    incomplete = (
+        "```homeward\n"
+        '{"type":"quiz","title":"Animal facts: quiz","questions":'
+        '[{"q":"Which facts: are true?","choices":["Wings","Gills"]'
+    )
+    cleaned, cards = extract_model_tools(incomplete)
+    assert cards == []
+    assert "Wings" not in cleaned
+    assert "facts:" not in cleaned
+
+
 def test_extract_model_tools_keeps_earlier_facts_when_last_fact_is_unfinished():
     text = '```homeward {"type":"facts","topic":"animals","facts":["Penguins swim.","Butterflies'
     cleaned, cards = extract_model_tools(text)

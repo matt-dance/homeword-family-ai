@@ -259,6 +259,13 @@ function toolFromFencePayload(raw: string): ChatTool | null {
   return parsed ? factsToolFromObject(parsed) : null;
 }
 
+function isFenceJsonLine(line: string): boolean {
+  if (/[{}\[\]`]/.test(line) || !/[A-Za-z]/.test(line)) return true;
+  const trimmed = line.trim();
+  if (/^["']/.test(trimmed)) return true;
+  return /^[A-Za-z0-9_]+\s*:/.test(trimmed) && /["']/.test(trimmed);
+}
+
 function stripIncompleteFence(content: string): string {
   const match = /```homeward/i.exec(content);
   if (!match || match.index == null) return content;
@@ -267,7 +274,7 @@ function stripIncompleteFence(content: string): string {
   const prose: string[] = [];
   while (lines.length > 1) {
     const last = lines[lines.length - 1];
-    if (/[{`]/.test(last) || !/[A-Za-z]/.test(last)) break;
+    if (isFenceJsonLine(last)) break;
     prose.unshift(lines.pop() as string);
   }
   return [head, prose.join("\n").trim()].filter(Boolean).join("\n\n");
@@ -317,6 +324,17 @@ function looseTopic(content: string): string | null {
   const bare = rest.match(/^[A-Za-z0-9][^,}\]]*/);
   const topic = bare?.[0]?.trim();
   return topic || null;
+}
+
+function declaredPayloadType(content: string): string | null {
+  const match = content.match(/\btype\b\s*["']?\s*:\s*["']?([A-Za-z_]+)/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function isFactsPayload(content: string): boolean {
+  const kind = declaredPayloadType(content);
+  if (kind) return kind === "facts";
+  return /\bFacts\s*\{/.test(content);
 }
 
 function salvageFactsTool(content: string): FactsTool | null {
@@ -611,7 +629,7 @@ export function extractChatTools(
       text = [afterFacts, prose].filter((part) => part.trim()).join("\n\n").trim();
     }
   }
-  if (!text.trim() && !tools.some((tool) => tool.type === "facts")) {
+  if (!text.trim() && tools.length === 0 && isFactsPayload(content)) {
     const salvaged = salvageFactsTool(content);
     if (salvaged) {
       if (routeAllowsFacts) {
