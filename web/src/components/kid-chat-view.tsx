@@ -85,12 +85,13 @@ function simpleModeKey(childId: number) {
   return `homeward-simple-mode-${childId}`;
 }
 
-function safeAssistantParse(msg: Message) {
+function safeAssistantParse(msg: Message, complete = true) {
   try {
     return extractChatTools(
       typeof msg.content === "string" ? msg.content : "",
       msg.tools,
       msg.cardRoute,
+      complete,
     );
   } catch (error) {
     reportKidChatStreamFailure(error, "extract-chat-tools");
@@ -986,7 +987,9 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             const isAssistant = msg.role === "assistant";
             const isReading = isSpeakingMessage(messageKey);
             const parsed =
-              isAssistant && !msg.blocked ? safeAssistantParse(msg) : null;
+              isAssistant && !msg.blocked
+                ? safeAssistantParse(msg, !(streaming && i === lastAssistantIndex))
+                : null;
             const displayText = parsed?.text ?? (typeof msg.content === "string" ? msg.content : "");
             const tools = parsed?.tools ?? msg.tools ?? [];
             const listenText = storyPageText[i] || displayText;
