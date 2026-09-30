@@ -960,6 +960,12 @@ _FACTS_ABOUT_RE = re.compile(
     re.IGNORECASE,
 )
 FACTS_EMPTY_FALLBACK = "I got mixed up telling those fun facts. Ask me again!"
+_FACTS_ATTEMPT_RE = re.compile(r"\bFacts\b", re.IGNORECASE)
+
+
+def is_facts_attempt(text: str) -> bool:
+    """True when the model output itself looks like a Facts card attempt."""
+    return bool(_FACTS_ATTEMPT_RE.search(text or ""))
 
 
 def _clean_salvaged_fact(value: str) -> str:
@@ -1548,7 +1554,7 @@ def extract_model_tools(text: str) -> tuple[str, list[ToolCard]]:
             if key not in seen:
                 cards.append(card)
                 seen.add(key)
-    if not cleaned and not cards and re.search(r"\bFacts\b|```homeward", text or "", flags=re.IGNORECASE):
+    if not cleaned and not cards and is_facts_attempt(text):
         cleaned = FACTS_EMPTY_FALLBACK
     return cleaned, cards
 

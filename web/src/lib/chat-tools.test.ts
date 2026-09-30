@@ -390,6 +390,33 @@ describe("extractChatTools", () => {
     expect(done.text).not.toContain("topic:");
   });
 
+  it("still falls back for a completed empty fenced facts card", () => {
+    const content = '```homeward\n{"type":"facts","topic":"Animals","facts":[]}\n```\n';
+    const done = extractChatTools(content, [], { allow: ["facts", "lookup"], storyPages: null }, true);
+    expect(done.tools).toEqual([]);
+    expect(done.text).toBe(FACTS_EMPTY_FALLBACK);
+  });
+
+  it("does not use the facts fallback for completed empty story, howto, or quiz fences", () => {
+    const cases: Array<[string, string[]]> = [
+      ['```homeward\n{"type":"story","title":"Moon hike","pages":[]}\n```\n', ["story", "lookup"]],
+      ['```homeward\n{"type":"howto","title":"Toast","steps":[]}\n```\n', ["howto", "lookup"]],
+      ['```homeward\n{"type":"quiz","title":"Animal Quiz Time!","questions":[]}\n```\n', ["quiz", "lookup"]],
+    ];
+    for (const [content, allow] of cases) {
+      const done = extractChatTools(content, [], { allow, storyPages: null }, true);
+      expect(done.text).not.toBe(FACTS_EMPTY_FALLBACK);
+    }
+    const emptyHowto = extractChatTools(
+      '```homeward\n{"type":"howto","title":"Toast","steps":[]}\n```\n',
+      [],
+      { allow: ["howto", "lookup"], storyPages: null },
+      true,
+    );
+    expect(emptyHowto.tools).toEqual([]);
+    expect(emptyHowto.text).toBe("");
+  });
+
   it("factsFromProse needs at least two facts", () => {
     expect(factsFromProse("Just one sentence.")).toBeNull();
     expect(factsFromProse("1. Only one fact")).toBeNull();

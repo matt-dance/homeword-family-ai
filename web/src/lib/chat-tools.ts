@@ -140,6 +140,12 @@ const FACT_META_KEYS = new Set(["type", "topic", "title"]);
 const FACT_META_VALUES = new Set(["facts", "type", "topic", "title", "items", "fun facts"]);
 const FACTS_TOPIC_FIELD_RE = /\btopic\s*:\s*(?:["']([^"'\n]+)["']|([A-Za-z][A-Za-z0-9 \-']*))/i;
 export const FACTS_EMPTY_FALLBACK = "I got mixed up telling those fun facts. Ask me again!";
+const FACTS_ATTEMPT_RE = /\bFacts\b/i;
+
+export function isFactsAttempt(content: string, route?: CardRoute | null): boolean {
+  if (route?.allow?.includes("facts")) return true;
+  return FACTS_ATTEMPT_RE.test(content);
+}
 
 function cleanSalvagedFact(value: string): string {
   return value
@@ -735,12 +741,7 @@ export function extractChatTools(
       text = [afterFacts, prose].filter((part) => part.trim()).join("\n\n").trim();
     }
   }
-  if (
-    complete &&
-    !text.trim() &&
-    !tools.length &&
-    /\bFacts\b|```homeward/i.test(content)
-  ) {
+  if (complete && !text.trim() && !tools.length && isFactsAttempt(content, route)) {
     text = FACTS_EMPTY_FALLBACK;
   }
   return { text, tools };
