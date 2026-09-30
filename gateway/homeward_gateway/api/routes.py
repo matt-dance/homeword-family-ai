@@ -2058,6 +2058,7 @@ async def _kid_quotes_for_stored_refusals(
     )
     outputs = list(output_result.scalars().all())
     session_ids = {log.session_id for log in outputs if log.session_id}
+    sessionless_child_ids = {log.child_id for log in outputs if not log.session_id}
     inputs: list[ConversationLog] = []
     if session_ids:
         input_result = await session.execute(
@@ -2066,6 +2067,14 @@ async def _kid_quotes_for_stored_refusals(
             .where(ConversationLog.direction == "input")
         )
         inputs = list(input_result.scalars().all())
+    if sessionless_child_ids:
+        sessionless_result = await session.execute(
+            select(ConversationLog)
+            .where(ConversationLog.child_id.in_(sessionless_child_ids))
+            .where(ConversationLog.session_id.is_(None))
+            .where(ConversationLog.direction == "input")
+        )
+        inputs.extend(sessionless_result.scalars().all())
     return quotes_for_stored_refusals(refusal_attempts, [*outputs, *inputs])
 
 

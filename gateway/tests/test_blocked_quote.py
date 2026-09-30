@@ -85,3 +85,34 @@ def test_refusal_pairing_does_not_steal_another_childs_turn():
     ]
     attempt = _row(id=9, child_id=1, content=REFUSAL, blocked=True, created_at=when)
     assert quotes_for_stored_refusals([attempt], logs) == {}
+
+
+def test_stored_refusal_pairs_sessionless_logs_by_child():
+    when = datetime(2026, 9, 24, 8, 33, 53, tzinfo=timezone.utc)
+    logs = [
+        _row(
+            id=1,
+            session_id=None,
+            direction="input",
+            content="Tell me about the old west",
+            created_at=when - timedelta(seconds=20),
+        ),
+        _row(
+            id=2,
+            session_id=None,
+            direction="output",
+            content=REFUSAL,
+            blocked=True,
+            created_at=when,
+        ),
+    ]
+    attempt = _row(
+        id=10,
+        session_id=None,
+        direction="output",
+        content=REFUSAL,
+        blocked=True,
+        created_at=when,
+    )
+    quotes = quotes_for_stored_refusals([attempt], logs)
+    assert quotes[10] == "Tell me about the old west"
