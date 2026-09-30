@@ -40,7 +40,7 @@ Family installers (no Docker, no terminal for day-to-day use) are on **[GitHub R
 
 Chat models are **not** inside the installer. After install, on **this computer** open **http://localhost:43123** to finish setup. Kids on the same Wi‑Fi as the Homeward computer scan the QR (or type the house code) from **Add a phone or tablet** at the end of setup or in Settings. Do not use a guest network.
 
-macOS builds from GitHub Actions are unsigned unless a Mac builder is configured with a Developer ID; Gatekeeper may block first launch (System Settings → Privacy & Security).
+macOS GitHub Release DMGs are Developer ID signed and notarized when repository secrets are set (`MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD`, `HOMEWARD_CODESIGN_IDENTITY`, `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` — see `desktop/README.md`). Without those secrets the Actions DMG is unsigned and Gatekeeper may block first launch.
 
 ### Docker (contributors and alternative)
 
