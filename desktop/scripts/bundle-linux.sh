@@ -353,8 +353,7 @@ install_ollama() {
 }
 
 ffmpeg_linux_urls() {
-  # GitHub release assets first: johnvansickle.com returned a non-xz (HTML)
-  # body to GitHub-hosted Linux runners (Release v0.1.1, ~0.6s, xz failed).
+  # GitHub release assets first: johnvansickle.com can return HTML, not xz.
   if [[ -n "${HOMEWARD_FFMPEG_LINUX_URL:-}" ]]; then
     printf '%s\n' "$HOMEWARD_FFMPEG_LINUX_URL"
   fi
@@ -508,7 +507,6 @@ if [[ "$SKIP" != "1" ]]; then
   install_espeak
 else
   echo "skip Node/uv/Ollama/ffmpeg/espeak downloads (HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1)"
-  echo "A family Linux tarball cannot be produced in skip mode."
   if [[ ! -d "$REPO/web/node_modules" ]]; then
     echo "skip npm (web/node_modules missing; HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1)"
   fi
@@ -544,7 +542,6 @@ if [[ "$SKIP" == "1" ]]; then
     test -f "$RES/web/server.js"
   fi
   echo "skip ffmpeg verify (HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1)"
-  echo "A family Linux tarball cannot be produced in skip mode."
 else
   "$RUNTIME/ffmpeg/bin/ffmpeg" -version >/dev/null
   test -x "$STAGE/homeward"

@@ -7,10 +7,7 @@
 #   You may not specify more than one script filename.
 #
 # Do not invoke via `cmd.exe //c "$cmd_str"` with a pre-quoted string.
-# MSYS escapes inner quotes when that one argv is handed to cmd, so cmd
-# sees literal \"C:\Program Files (x86)\ISCC.exe\" as the program name
-# (Release v0.1.2):
-#   '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"' is not recognized…
+# MSYS escapes inner quotes when that one argv is handed to cmd.
 #
 # Call ISCC with separate argv entries and MSYS2_ARG_CONV_EXCL so /D
 # defines stay /D and the compiler path stays one argument. Keep exactly

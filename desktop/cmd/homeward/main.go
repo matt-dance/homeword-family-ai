@@ -80,7 +80,7 @@ func run(openFlag, uninstallFlag, wipeFlag bool) error {
 	marker := dataDir + "/.browser_opened"
 
 	if uninstallFlag {
-		return runUninstall(home, dataDir, wipeFlag, nil)
+		return runUninstall(home, dataDir, wipeFlag)
 	}
 
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
@@ -190,15 +190,11 @@ func maybeOpenBrowser(openFlag, firstRun, webOK, holder bool, marker string) {
 // SIGTERMs the login-item supervisor; on Linux, other `homeward` processes
 // are signaled. The handler Stop()s gateway/web (and bundled ollama only).
 // Adopted system Ollama is not signaled.
-func runUninstall(home, dataDir string, wipe bool, manager *proc.Manager) error {
-	if manager != nil {
-		_ = manager.Stop()
-	} else {
-		_ = quitreq.Request(dataDir)
-		_ = quitreq.WaitCleared(dataDir, 3*time.Second)
-		signalOtherSupervisors()
-		time.Sleep(time.Second)
-	}
+func runUninstall(home, dataDir string, wipe bool) error {
+	_ = quitreq.Request(dataDir)
+	_ = quitreq.WaitCleared(dataDir, 3*time.Second)
+	signalOtherSupervisors()
+	time.Sleep(time.Second)
 	removeLoginItem(home)
 	if wipe {
 		return os.RemoveAll(dataDir)
@@ -244,12 +240,8 @@ func removeLoginItem(home string) {
 	switch runtime.GOOS {
 	case "linux":
 		_ = autostart.Remove(home)
-		signalOtherSupervisors()
-		time.Sleep(time.Second)
 	case "windows":
 		_ = winrun.Remove()
-		signalOtherSupervisors()
-		time.Sleep(time.Second)
 	default:
 		_ = launchd.Kill()
 		time.Sleep(time.Second)

@@ -2,8 +2,7 @@
 # Pipefail-safe checks for the family Linux tarball (Release CI).
 #
 # Do not `tar -xOf … | python3 -c 'read(4)'` under `set -o pipefail`:
-# python exits after the ELF magic, tar gets SIGPIPE, and the step fails
-# even when the assert passed (v0.1.0 Release, #77).
+# python exits after the ELF magic and tar gets SIGPIPE.
 set -euo pipefail
 
 usage() {

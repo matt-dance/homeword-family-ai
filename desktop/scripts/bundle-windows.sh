@@ -2,10 +2,9 @@
 # Assemble dist/windows/amd64/Homeward-windows-amd64 (Windows family payload).
 # Windows family v1 is amd64 only. Never embeds Ollama model weights.
 #
-# A family installer must be produced on Windows (Git Bash) so the
-# supervisor can link the tray (CGO) and CPython/gateway are Windows
-# binaries. HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1 is a layout helper; it
-# cannot produce a family installer.
+# A family installer must be produced on Windows (Git Bash) so
+# CPython/gateway are Windows binaries. HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1
+# is a layout helper; it cannot produce a family installer.
 set -euo pipefail
 
 usage() {
@@ -409,7 +408,6 @@ if [[ "$SKIP" != "1" ]]; then
   install_espeak
 else
   echo "skip Node/uv/Ollama/ffmpeg/espeak downloads (HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1)"
-  echo "A family Windows installer cannot be produced in skip mode."
   if [[ ! -d "$REPO/web/node_modules" ]]; then
     echo "skip npm (web/node_modules missing; HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1)"
   fi
@@ -427,7 +425,6 @@ if [[ "$SKIP" == "1" ]]; then
     test -f "$RES/web/server.js"
   fi
   echo "skip ffmpeg verify (HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1)"
-  echo "A family Windows installer cannot be produced in skip mode."
 else
   test -f "$STAGE/Homeward.exe"
   test -f "$RUNTIME/ffmpeg/bin/ffmpeg.exe"

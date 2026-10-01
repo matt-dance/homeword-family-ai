@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reject HTML/error bodies that Release CI v0.1.1 piped into xz.
+# Reject HTML/error bodies.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -25,7 +25,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# HTML error page with a .tar.xz name (the v0.1.1 CI body).
+# HTML error page with a .tar.xz name.
 printf '%s\n' '<!DOCTYPE html><html><body>cloudflare</body></html>' > "$WORK/ffmpeg.tar.xz"
 if "$CHECK" --min-bytes 1 "$WORK/ffmpeg.tar.xz" >/dev/null 2>"$WORK/html.err"; then
   echo "HTML body must not be treated as an ffmpeg archive" >&2

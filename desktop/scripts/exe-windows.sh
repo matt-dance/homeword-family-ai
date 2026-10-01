@@ -95,27 +95,19 @@ find_iscc() {
 }
 
 run_iscc() {
-  local source_dir output_dir iss_path iscc_bin st
-  local -a defs def_args
+  local source_dir output_dir iscc_bin st
+  local -a def_args
   local iscc_cmd="$SCRIPT_DIR/iscc-windows-cmd.sh"
   source_dir="$(unix_to_iss_path "$STAGE")"
   output_dir="$(unix_to_iss_path "$OUT_DIR")"
-  iss_path="$(unix_to_iss_path "$ISS")"
-  defs=(
-    "/DMyAppVersion=$VERSION"
-    "/DHomewardSourceDir=$source_dir"
-    "/DHomewardOutputDir=$output_dir"
-  )
   def_args=(
     --define "MyAppVersion=$VERSION"
     --define "HomewardSourceDir=$source_dir"
     --define "HomewardOutputDir=$output_dir"
   )
   if [[ -f "$REPO/desktop/pack/icon.ico" ]]; then
-    defs+=( "/DHomewardIcon=$(unix_to_iss_path "$REPO/desktop/pack/icon.ico")" )
     def_args+=( --define "HomewardIcon=$(unix_to_iss_path "$REPO/desktop/pack/icon.ico")" )
   elif [[ -f "$STAGE/resources/icon.ico" ]]; then
-    defs+=( "/DHomewardIcon=$(unix_to_iss_path "$STAGE/resources/icon.ico")" )
     def_args+=( --define "HomewardIcon=$(unix_to_iss_path "$STAGE/resources/icon.ico")" )
   fi
 
@@ -123,31 +115,9 @@ run_iscc() {
     echo "compiling Inno Setup with $iscc_bin"
     # Git Bash splits "Program Files (x86)" and rewrites /D* into extra
     # script filenames. Do not wrap a pre-quoted ISCC command line for
-    # cmd.exe: MSYS escapes inner quotes so cmd sees a literal
-    # backslash-quote before C:\Program Files (x86)\ISCC.exe (v0.1.2).
-    # Invoke ISCC with argv + MSYS2_ARG_CONV_EXCL (see iscc-windows-cmd.sh).
+    # cmd.exe: MSYS escapes inner quotes. Invoke ISCC with argv +
+    # MSYS2_ARG_CONV_EXCL (see iscc-windows-cmd.sh).
     "$iscc_cmd" --exec --iscc "$iscc_bin" --iss "$ISS" "${def_args[@]}"
-    st=$?
-    return "$st"
-  fi
-
-  if command -v wine >/dev/null 2>&1 && [[ -n "${HOMEWARD_WINE_ISCC:-}" && -f "$HOMEWARD_WINE_ISCC" ]]; then
-    echo "compiling Inno Setup with wine"
-    wine "$HOMEWARD_WINE_ISCC" "${defs[@]}" "$iss_path"
-    st=$?
-    return "$st"
-  fi
-
-  if command -v docker >/dev/null 2>&1; then
-    echo "compiling Inno Setup with docker amake/innosetup"
-    docker run --rm \
-      -v "$REPO:/work" \
-      -v "$OUT_DIR:/out" \
-      amake/innosetup \
-      "/DMyAppVersion=$VERSION" \
-      "/DHomewardSourceDir=/out/Homeward-windows-amd64" \
-      "/DHomewardOutputDir=/out" \
-      /work/desktop/pack/homeward.iss
     st=$?
     return "$st"
   fi
@@ -174,7 +144,7 @@ fi
 
 if ! run_iscc; then
   echo "Inno Setup compile failed (ISCC missing, or the .iss was not a single argument)." >&2
-  echo "Install Inno Setup 6 on Windows, or set docker, or HOMEWARD_EXE_SKIP_COMPILE=1 for payload-only." >&2
+  echo "Install Inno Setup 6 on Windows, or HOMEWARD_EXE_SKIP_COMPILE=1 for payload-only." >&2
   exit 1
 fi
 

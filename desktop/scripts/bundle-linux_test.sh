@@ -15,7 +15,6 @@ ENSURE="$ROOT/desktop/scripts/ensure-transcribe-fixtures.sh"
 test -x "$ENSURE"
 
 # Family packs must ship JFK clips at homeward_gateway/fixtures (self-test path).
-# Missing files used to 503 GET /api/v1/chat/transcribe/self-test (#71).
 "$ENSURE" source "$ROOT/gateway"
 test -s "$ROOT/gateway/homeward_gateway/fixtures/jfk-sample.flac"
 test -s "$ROOT/gateway/homeward_gateway/fixtures/jfk-sample.webm"
@@ -38,7 +37,7 @@ fi
 grep -q 'ollama-linux-amd64.tar.zst' "$SCRIPT"
 grep -q 'tar --zstd' "$SCRIPT"
 
-# Static ffmpeg: validate magic/size before tar -xJf (Release v0.1.1 HTML body).
+# Static ffmpeg: validate magic/size before tar -xJf; reject HTML bodies.
 CHECK_ARCHIVE="$ROOT/desktop/scripts/check-download-archive.sh"
 test -x "$CHECK_ARCHIVE"
 grep -q 'check-download-archive.sh' "$SCRIPT"
@@ -167,7 +166,7 @@ if [[ -n "$TIP_CKSUM" ]]; then
 fi
 
 # Pack-time install copies clips into site-packages/homeward_gateway/fixtures
-# even when hatch did not include them (the #71 503 path).
+# even when hatch did not include them.
 FAKE_SITE="$WORK/fake-site"
 mkdir -p "$FAKE_SITE/homeward_gateway"
 printf '%s\n' '"""fake installed gateway"""' > "$FAKE_SITE/homeward_gateway/__init__.py"
