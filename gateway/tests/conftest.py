@@ -37,8 +37,8 @@ async def fresh_db():
 
 
 @pytest.fixture(autouse=True)
-def stub_lookup_structured_router(monkeypatch):
-    """CI never calls a live LLM for lookup routing; tests inject fakes when needed."""
+def stub_lookup_judge(monkeypatch):
+    """CI never calls a live LLM for lookup planning; tests inject fakes when needed."""
     async def skip(*_args, **_kwargs):
         return None
 
@@ -51,10 +51,6 @@ def stub_lookup_structured_router(monkeypatch):
     )
     monkeypatch.setattr(
         "homeward_gateway.chat.tool_loop.call_grounding_judge",
-        skip,
-    )
-    monkeypatch.setattr(
-        "homeward_gateway.chat.tool_loop.call_structured_router",
         skip,
     )
     monkeypatch.setattr(

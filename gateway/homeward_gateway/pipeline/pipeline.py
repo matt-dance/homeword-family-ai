@@ -1,4 +1,4 @@
-"""Safety pipeline orchestration — fail-closed on every stage."""
+"""Safety pipeline orchestration."""
 
 import asyncio
 from dataclasses import dataclass
@@ -8,7 +8,6 @@ from homeward_gateway.pipeline.classifier import classify
 from homeward_gateway.pipeline.normalize import normalize, normalize_output
 from homeward_gateway.pipeline.policy import PolicyPreset, check_policy_match
 from homeward_gateway.pipeline.rules import check_rules
-from homeward_gateway.chat.lookups import LookupIntent, LookupResult
 from homeward_gateway.chat.session_state import (
     SessionState,
     format_user_turn,
@@ -103,7 +102,6 @@ async def filter_input(
     rules_only_classifier: bool = False,
 ) -> PipelineResult:
     """Run input through all safety stages. Fail-closed on any error."""
-    # Stage 1: Normalize
     try:
         normalized = normalize(text)
     except Exception:
@@ -112,7 +110,6 @@ async def filter_input(
     if not normalized:
         return PipelineResult(allowed=False, block_reason="empty message", stage="normalize")
 
-    # Stage 2: Fast rules
     try:
         rule_result = check_rules(
             normalized,
@@ -128,7 +125,6 @@ async def filter_input(
     except Exception:
         return PipelineResult(allowed=False, block_reason="rules error", stage="rules")
 
-    # Stage 3: Classifier
     if classifier_enabled:
         try:
             classifier_result = await classify(
@@ -146,7 +142,6 @@ async def filter_input(
         except Exception:
             return PipelineResult(allowed=False, block_reason="classifier error", stage="classifier")
 
-    # Stage 4: Policy match
     try:
         policy_ok, policy_reason = check_policy_match(normalized, preset, strictness)
         if not policy_ok:
@@ -235,45 +230,6 @@ def _lookup_filter_notes(
         return safety.content or text
 
     return filter_notes
-
-
-async def resolve_live_lookup(
-    user_message: str,
-    *,
-    live_lookups: bool,
-    preset: PolicyPreset,
-    strictness: int,
-    classifier_model: str | None = None,
-    history: list[dict] | None = None,
-    home: HomeContext | None = None,
-    session_state: SessionState | None = None,
-    rules_only_classifier: bool = False,
-    open_web_search: bool = False,
-    chat_model: str | None = None,
-    classifier_enabled: bool = True,
-) -> tuple[str, list[dict], LookupIntent | None, LookupResult | None]:
-    """Run the allowlisted lookup loop and return notes, cards, and the last result."""
-    loop = await run_lookup_tool_loop(
-        user_message,
-        history,
-        live_lookups=live_lookups,
-        open_web_search=open_web_search,
-        chat_model=chat_model or "llama3.2:3b",
-        filter_notes=_lookup_filter_notes(
-            preset,
-            strictness,
-            classifier_model,
-            classifier_enabled=classifier_enabled,
-            rules_only_classifier=rules_only_classifier,
-        ),
-        home_location=home.location if home else None,
-        context=session_state.to_context() if session_state else None,
-        classifier_model=classifier_model,
-    )
-    notes = "\n".join(
-        str(item.get("content") or "") for item in loop.extra_messages if item.get("content")
-    )
-    return notes, loop.cards, loop.intent, loop.result
 
 
 def _kid_system_prompt(
@@ -391,12 +347,7 @@ async def process_chat(
         return _blocked_result(input_result)
 
     history = _messages_for_model(messages)
-    resolved = resolve_turn(
-        user_message,
-        history,
-        session_state,
-        home_location=home.location if home else None,
-    )
+    resolved = resolve_turn(user_message, history, session_state)
     tz = home.timezone if home else None
     local_cards = run_local_tools(user_message, timezone=tz)
     updated_state = resolved.state.with_topic(user_message)
@@ -553,12 +504,7 @@ async def process_chat_stream(
         return
 
     history = _messages_for_model(messages)
-    resolved = resolve_turn(
-        user_message,
-        history,
-        session_state,
-        home_location=home.location if home else None,
-    )
+    resolved = resolve_turn(user_message, history, session_state)
     # Tell the client the safety check finished so Thinking is not a silent hang.
     yield StatusEvent(message="Writing a reply…", phase="generating")
     route = card_route_for_message(user_message)
