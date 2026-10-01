@@ -33,7 +33,7 @@ You can also run the packagers below on a Windows PC or a Mac with no workflow c
 
 ## Prerequisites (macOS)
 
-- Go 1.23+
+- Go 1.22+
 - Node 22+
 - uv (CPython 3.12 + the gateway venv)
 - Homebrew: `ffmpeg`, `espeak-ng`, `dylibbundler`

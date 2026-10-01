@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
 # Confirm a downloaded file is a real archive, not an HTML/error page.
-#
-# Release CI v0.1.1 piped a non-xz johnvansickle.com body into tar -xJf:
-#   xz: (stdin): File format not recognized
 set -euo pipefail
 
 usage() {

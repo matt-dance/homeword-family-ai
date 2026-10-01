@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prove ELF verify stays pipefail-safe (Release CI #77).
+# Prove ELF verify stays pipefail-safe.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -48,7 +48,7 @@ tar -C "$WORK" -czf "$TARBALL" Homeward-linux-amd64
 # Helper must succeed with the same bash flags GitHub Actions uses.
 bash --noprofile --norc -e -o pipefail "$SCRIPT" "$TARBALL"
 
-# The class that failed v0.1.0: python exits after 4 bytes → tar SIGPIPE.
+# Short python read of tar -xOf SIGPIPEs under pipefail.
 set +e
 bash --noprofile --norc -e -o pipefail -c \
   'tar -xOf "$1" Homeward-linux-amd64/homeward | python3 -c "import sys; d=sys.stdin.buffer.read(4); assert d==b\"\\x7fELF\", d"' \

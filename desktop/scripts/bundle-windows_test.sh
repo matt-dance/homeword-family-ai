@@ -90,7 +90,7 @@ grep -q 'iscc-windows-cmd.sh' "$EXE_SCRIPT"
 grep -q -- '--exec' "$EXE_SCRIPT"
 grep -q 'MSYS2_ARG_CONV_EXCL' "$ISCC_CMD"
 if grep -vE '^[[:space:]]*#' "$EXE_SCRIPT" | grep -qE 'cmd\.exe[[:space:]]+//c'; then
-  echo "exe-windows.sh must not invoke ISCC via cmd.exe (v0.1.2 quote escape)" >&2
+  echo "exe-windows.sh must not invoke ISCC via cmd.exe" >&2
   exit 1
 fi
 

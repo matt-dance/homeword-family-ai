@@ -597,7 +597,6 @@ if [[ "$SKIP" != "1" ]]; then
   install_ffmpeg_espeak
 else
   echo "skip Node/uv/Ollama/ffmpeg/espeak downloads (HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1)"
-  echo "A family DMG cannot be produced in skip mode."
 fi
 
 install_icons
@@ -634,7 +633,6 @@ if [[ "$SKIP" == "1" ]]; then
     test -f "$RES/web/server.js"
   fi
   echo "skip ffmpeg verify (HOMEWARD_BUNDLE_SKIP_DOWNLOADS=1)"
-  echo "A family DMG cannot be produced in skip mode."
 else
   "$RUNTIME/ffmpeg/bin/ffmpeg" -version >/dev/null
   test -x "$MACOS_DIR/Homeward"

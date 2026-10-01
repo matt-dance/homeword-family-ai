@@ -16,7 +16,6 @@ grep -q -- '--exec' "$EXE"
 grep -q 'MSYS2_ARG_CONV_EXCL' "$CMD"
 grep -q 'MSYS_NO_PATHCONV' "$CMD"
 
-# The v0.1.2 handoff (pre-quoted string to cmd.exe) must be gone.
 if grep -vE '^[[:space:]]*#' "$EXE" | grep -nE 'cmd\.exe[[:space:]]+//c[[:space:]]+"\$cmd_str"'; then
   echo "exe-windows.sh must not pass a pre-quoted ISCC string through cmd.exe" >&2
   exit 1
@@ -25,43 +24,6 @@ if grep -vE '^[[:space:]]*#' "$EXE" | grep -nE 'cmd\.exe'; then
   echo "exe-windows.sh must not invoke ISCC via cmd.exe" >&2
   exit 1
 fi
-
-# Unquoted Git Bash argv (the v0.1.1 failure class).
-python3 <<'PY'
-# Simulate Git Bash leaving the ISCC path unquoted AND MSYS turning /D into D:\.
-argv = [
-    "/c/Program",
-    "Files",
-    "(x86)/Inno",
-    "Setup",
-    "6/ISCC",
-    r"D:\MyAppVersion=0.1.1",
-    r"D:\HomewardSourceDir=C:\stage",
-    r"C:\pack\homeward.iss",
-]
-scripts = [a for a in argv if not a.startswith("/") and not a.startswith("-")]
-if len(scripts) <= 1:
-    raise SystemExit("expected the unquoted/MSYS-converted argv to look like several scripts")
-if sum(1 for a in argv if a.lower().endswith(".iss")) < 1:
-    raise SystemExit("fixture missing .iss")
-print("old argv script-like tokens:", scripts)
-PY
-
-# v0.1.2 failure class: a correctly quoted command line, handed as ONE argv
-# to cmd.exe /c, is escaped by MSYS so cmd sees literal \" before ISCC.
-python3 <<'PY'
-cmd_str = (
-    '"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" '
-    '"/DMyAppVersion=0.1.2" '
-    '"C:\\pack\\homeward.iss"'
-)
-# Git Bash/MSYS escapes inner quotes when this is a single CreateProcess argv.
-msys_inner = cmd_str.replace('"', '\\"')
-want = '\\"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe\\"'
-if not msys_inner.startswith(want):
-    raise SystemExit(f"expected backslash-quote before ISCC path, got {msys_inner!r}")
-print("v0.1.2 msys one-arg handoff (must not use):", msys_inner[:72] + "...")
-PY
 
 WORK="$(mktemp -d)"
 cleanup() {
