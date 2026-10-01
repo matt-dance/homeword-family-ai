@@ -107,7 +107,6 @@ function spokenTextForMessage(msg: Message) {
   return story?.pages?.[0]?.text || parsed.text;
 }
 
-const CHAT_ERROR_MESSAGE = "Oops — something got tangled up. Please try again in a moment!";
 const SESSION_ERROR_MESSAGE = "We couldn't start a chat right now. Try again, or pick a different profile.";
 
 interface KidChatViewProps {
@@ -554,7 +553,7 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
               autoReadNextRef.current = false;
               if (text) speakMessage(messageKey, text);
             };
-            if (!assistantContent || assistantContent === CHAT_ERROR_MESSAGE) {
+            if (!assistantContent) {
               if (conversationActiveRef.current) notifyAssistantDone("");
               return;
             }
@@ -828,7 +827,6 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
 
   return (
     <div className={`flex min-h-screen flex-col transition-colors duration-300 ${ageConfig.ambientGradient}`}>
-      {/* Top Header */}
       <header className="sticky top-0 z-20 border-b border-slate-100 bg-white/90 backdrop-blur-md px-4 py-3 dark:border-border dark:bg-card/90">
         <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
@@ -917,7 +915,6 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
         </div>
       </header>
 
-      {/* Message Stream */}
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <KidChatErrorBoundary
           onReset={() => {
@@ -929,7 +926,6 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
           }}
         >
         <div className={`mx-auto space-y-4 ${simpleMode ? "max-w-xl space-y-6" : "max-w-2xl"}`}>
-          {/* Empty State / Conversation Starters */}
           {messages.length === 0 && (
             <div className="text-center py-6 sm:py-10 space-y-6 animate-fade-in">
               <div className="space-y-2">
@@ -980,7 +976,6 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
             </div>
           )}
 
-          {/* Messages */}
           {displayedMessages.map(({ message: msg, index: i }) => {
             const messageKey = `msg-${i}`;
             const isAssistant = msg.role === "assistant";
@@ -1003,7 +998,6 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                   msg.role === "user" ? "justify-end" : "justify-start"
                 }`}
               >
-                {/* Assistant avatar badge */}
                 {isAssistant && (
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl accent-gradient text-primary-foreground text-xs font-bold shadow-xs mt-1">
                     <Sparkles className="h-4 w-4" />
@@ -1042,7 +1036,6 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                     </div>
                   ) : null}
 
-                  {/* Tool Cards */}
                   {isAssistant && tools.length > 0 && (
                     <ChatToolCards
                       tools={tools}
@@ -1070,7 +1063,6 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
                       />
                     )}
 
-                  {/* Speaking indicator / audio player */}
                   {isReading && readAloudState.isSpeaking && (
                     <SpeakingIndicator simpleMode={simpleMode} />
                   )}
@@ -1134,7 +1126,6 @@ export function KidChatView({ selectedChild, onSwitchProfile, displayName, quick
         </KidChatErrorBoundary>
       </div>
 
-      {/* Input Dock */}
       <div className="sticky bottom-0 z-20 border-t border-border/60 bg-card/90 backdrop-blur-md p-3 sm:p-4 shadow-lg transition-colors">
         <div className={`mx-auto space-y-2.5 ${simpleMode ? "max-w-xl" : "max-w-2xl"}`}>
           {(speechError || pinError || readAloudError) && (

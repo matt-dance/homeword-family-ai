@@ -156,7 +156,6 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* Local AI Card */}
       <Card className="border-border/80 shadow-xs">
         <CardHeader className="pb-4">
           <CardTitle className="text-lg font-bold flex items-center gap-2">
@@ -192,7 +191,6 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Parent Password */}
       <Card className="border-border/80 shadow-xs">
         <CardHeader className="pb-4">
           <CardTitle className="text-lg font-bold flex items-center gap-2">
@@ -251,7 +249,6 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Home location */}
       <Card className="border-border/80 shadow-xs">
         <CardHeader className="pb-4">
           <CardTitle className="text-lg font-bold flex items-center gap-2">
@@ -303,7 +300,6 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Advanced AI & safety controls */}
       <Card className="border-border/80 shadow-xs">
         <CardHeader className="pb-4">
           <button

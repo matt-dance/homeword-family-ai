@@ -14,8 +14,3 @@ export function shouldShowStreamThinking(
   if (!streaming) return false;
   return !lastAssistantHasText(lastMessage);
 }
-
-export function streamComposerHint(status: string | null | undefined): string {
-  const phase = (status || "Still working on your answer…").trim();
-  return `${phase} Tap Stop if you want to ask something else.`;
-}

@@ -2,12 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   advertisedWebPort,
   clientIpFromRequest,
-  homewardBaseUrl,
   isLocalDashboardClient,
   isLoopbackHostname,
-  isLanIpv4,
-  joinUrl,
-  kidChatUrl,
   normalizeHostname,
   parentLocalUrl,
 } from "./local-host";
@@ -44,36 +40,18 @@ describe("local-host", () => {
     expect(normalizeHostname("Homeward.local:80")).toBe("homeward.local");
   });
 
-  it("omits port 80 from default URL", () => {
-    expect(homewardBaseUrl()).toBe("http://homeward.local");
-    expect(homewardBaseUrl("homeward.local", 43123)).toBe("http://homeward.local:43123");
-  });
-
   it("treats missing or port 80 as the default HTTP port", () => {
     expect(advertisedWebPort("")).toBe(80);
     expect(advertisedWebPort("80")).toBe(80);
     expect(advertisedWebPort(undefined)).toBe(80);
   });
 
-  it("keeps non-80 ports for kid and parent URLs", () => {
+  it("keeps non-80 ports for parent URLs", () => {
     expect(advertisedWebPort("43123")).toBe(43123);
-    expect(kidChatUrl(43123)).toBe("http://homeward.local:43123/chat");
     expect(parentLocalUrl(43123)).toBe("http://localhost:43123");
   });
 
-  it("omits port 80 from kid and parent URLs", () => {
-    expect(kidChatUrl(80)).toBe("http://homeward.local/chat");
+  it("omits port 80 from parent URLs", () => {
     expect(parentLocalUrl(80)).toBe("http://localhost");
-  });
-
-  it("builds a join URL from a raw IPv4 address, not a hostname", () => {
-    expect(joinUrl("192.168.1.10", 43123, "4821")).toBe(
-      "http://192.168.1.10:43123/join?code=4821",
-    );
-    expect(joinUrl("192.168.1.10", 80, "4821")).toBe("http://192.168.1.10/join?code=4821");
-    expect(joinUrl("homeward.local", 43123, "4821")).toBeNull();
-    expect(joinUrl("127.0.0.1", 43123, "4821")).toBeNull();
-    expect(isLanIpv4("10.0.0.5")).toBe(true);
-    expect(isLanIpv4("homeward.local")).toBe(false);
   });
 });

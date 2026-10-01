@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  isForceProfilePick,
   resolveChatSlug,
   slugFromParams,
   slugFromPathname,
@@ -22,14 +21,5 @@ describe("chat route params", () => {
     expect(slugFromPathname(null)).toBe("");
     expect(resolveChatSlug(null, "/chat/avery")).toBe("avery");
     expect(resolveChatSlug({ slug: "jordan" }, "/chat/avery")).toBe("jordan");
-  });
-
-  it("treats pick=1 as force-pick even when useSearchParams is null", () => {
-    expect(isForceProfilePick(new URLSearchParams("pick=1"))).toBe(true);
-    expect(isForceProfilePick(null, "?pick=1")).toBe(true);
-    expect(isForceProfilePick(null, "pick=1")).toBe(true);
-    expect(isForceProfilePick(null, "")).toBe(false);
-    expect(isForceProfilePick(null, "?pick=0")).toBe(false);
-    expect(isForceProfilePick(null)).toBe(false);
   });
 });

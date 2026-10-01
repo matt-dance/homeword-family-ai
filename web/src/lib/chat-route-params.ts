@@ -26,13 +26,3 @@ export function resolveChatSlug(
 ): string {
   return slugFromParams(params) || slugFromPathname(pathname);
 }
-
-export function isForceProfilePick(
-  searchParams: { get: (key: string) => string | null } | null | undefined,
-  search?: string | null,
-): boolean {
-  if (searchParams?.get("pick") === "1") return true;
-  if (!search) return false;
-  const query = search.startsWith("?") ? search.slice(1) : search;
-  return new URLSearchParams(query).get("pick") === "1";
-}
