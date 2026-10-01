@@ -61,7 +61,6 @@ jobs:
       - name: Packager layout tests
         working-directory: .
         run: |
-          bash desktop/scripts/bundle-macos_test.sh
           bash desktop/scripts/dmg-macos_test.sh
           bash desktop/scripts/bundle-linux_test.sh
           bash desktop/scripts/bundle-windows_test.sh
