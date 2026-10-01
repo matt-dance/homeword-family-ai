@@ -17,8 +17,8 @@ from homeward_gateway.chat.lookups import (
 )
 from homeward_gateway.chat.lookup_tools import LookupToolCall, execute_lookup_tool
 from homeward_gateway.chat.tool_loop import (
-    decide_lookup_tool,
     lookup_tool_fact_hint,
+    resolve_lookup_plan,
     run_lookup_tool_loop,
 )
 from homeward_gateway.pipeline.pipeline import (
@@ -187,13 +187,13 @@ class TestToolCallFromGrounding:
         assert decision.needs_grounding is True
 
 
-class TestDecideLookupToolJudge:
+class TestResolveLookupPlanJudge:
     @pytest.mark.asyncio
     async def test_boise_tell_me_about_grounds_sports(self):
         async def judge(_message, _history=None, **_kwargs):
             return _sports_decision()
 
-        call = await decide_lookup_tool(
+        _decision, call = await resolve_lookup_plan(
             "tell me about boise state football",
             None,
             open_web_search=True,
@@ -213,7 +213,7 @@ class TestDecideLookupToolJudge:
             assert "qb" in message.lower()
             return GroundingDecision(True, "days", "Boise State quarterback", "sports")
 
-        call = await decide_lookup_tool(
+        _decision, call = await resolve_lookup_plan(
             "who was the QB",
             BOISE_HISTORY,
             open_web_search=True,
@@ -232,7 +232,7 @@ class TestDecideLookupToolJudge:
             "what is a black hole",
             "tell me a story about a curious fox",
         ):
-            call = await decide_lookup_tool(
+            _decision, call = await resolve_lookup_plan(
                 question,
                 None,
                 open_web_search=True,
@@ -247,7 +247,7 @@ class TestDecideLookupToolJudge:
             assert "boise" in topic.lower()
             return _sports_decision()
 
-        call = await decide_lookup_tool(
+        _decision, call = await resolve_lookup_plan(
             "tell me more",
             BOISE_HISTORY,
             open_web_search=True,
@@ -263,7 +263,7 @@ class TestDecideLookupToolJudge:
             assert "black hole" in topic.lower()
             return _no_grounding()
 
-        call = await decide_lookup_tool(
+        _decision, call = await resolve_lookup_plan(
             "tell me more",
             NEWS_THEN_BLACK_HOLES,
             open_web_search=True,
@@ -276,7 +276,7 @@ class TestDecideLookupToolJudge:
         async def judge(_message, _history=None, **_kwargs):
             return _no_grounding()
 
-        call = await decide_lookup_tool(
+        _decision, call = await resolve_lookup_plan(
             "what are some news stories from today",
             None,
             open_web_search=True,
@@ -289,7 +289,7 @@ class TestDecideLookupToolJudge:
         async def judge(_message, _history=None, **_kwargs):
             return None
 
-        call = await decide_lookup_tool(
+        _decision, call = await resolve_lookup_plan(
             "what are some news stories from today",
             None,
             open_web_search=True,
@@ -573,29 +573,6 @@ class TestHonestWebOff:
 
 
 class TestJudgeIsPrimary:
-    @pytest.mark.asyncio
-    async def test_structured_tool_router_is_not_consulted(self, monkeypatch):
-        called = False
-
-        async def judge(*_args, **_kwargs):
-            return _sports_decision()
-
-        async def old_router(*_args, **_kwargs):
-            nonlocal called
-            called = True
-            return LookupToolCall("get_current_events", {})
-
-        monkeypatch.setattr("homeward_gateway.chat.tool_loop.call_structured_router", old_router)
-        call = await decide_lookup_tool(
-            "tell me about boise state football",
-            None,
-            open_web_search=True,
-            judge=judge,
-        )
-        assert called is False
-        assert call is not None
-        assert call.name == "get_sports"
-
     @pytest.mark.asyncio
     async def test_native_model_uses_judge_not_model_tool_picker(self, monkeypatch):
         kinds: list[str] = []

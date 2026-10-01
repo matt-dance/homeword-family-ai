@@ -7,7 +7,6 @@ from homeward_gateway.chat.lookups import (
     build_session_context,
     coerce_open_web_search,
     detect_current_facts_intent,
-    detect_lookup_intent,
     detect_web_search_intent,
     format_current_facts_notes,
     format_web_notes,
@@ -18,8 +17,6 @@ from homeward_gateway.chat.lookups import (
     format_weather_notes,
     is_referential,
     lookup_card,
-    lookup_context_hint,
-    lookup_prompt_notes,
     parse_featured_headlines,
     parse_in_the_news_template,
     parse_scoreboard_events,
@@ -28,12 +25,13 @@ from homeward_gateway.chat.lookups import (
     _parse_wikipedia_incumbent,
 )
 from homeward_gateway.chat.session_state import SessionState
+from homeward_gateway.chat.tool_loop import run_lookup_tool_loop
 from homeward_gateway.pipeline.pipeline import (
     PipelineResult,
     ToolEvent,
+    _lookup_filter_notes,
     process_chat,
     process_chat_stream,
-    resolve_live_lookup,
 )
 from homeward_gateway.pipeline.policy import load_all_presets
 
@@ -165,7 +163,7 @@ class TestDetectLookupIntent:
             "what are some of the latest news stories today?",
             "look up on the web a news story from today",
         ):
-            intent = detect_lookup_intent(question)
+            intent = resolve_lookup_intent(question)[0]
             assert intent is not None, question
             assert intent.kind == "news", question
             assert detect_web_search_intent(question) is None, question
@@ -276,7 +274,7 @@ class TestSessionContext:
         assert intent.date_range is not None
         assert "-" in intent.date_range
 
-        named = detect_lookup_intent("what was the score of Boise State's last game")
+        named = resolve_lookup_intent("what was the score of Boise State's last game")[0]
         assert named is not None
         assert named.kind == "sports"
         assert named.schedule is False
@@ -290,22 +288,6 @@ class TestSessionContext:
         assert intent is not None
         assert intent.kind == "weather"
         assert intent.query == "Denver, CO"
-
-    def test_lookup_context_hint_for_referential_weather(self):
-        intent, context = resolve_lookup_intent(
-            "What will the weather be like there?",
-            self.GAME_HISTORY,
-        )
-        assert intent is not None
-        hint = lookup_context_hint(
-            "What will the weather be like there?",
-            intent,
-            context,
-            referential=True,
-        )
-        prompt = lookup_prompt_notes(format_weather_notes("Eugene", WEATHER_GEO, WEATHER_FORECAST), context_hint=hint)
-        assert "Eugene, OR" in hint or "earlier in this chat" in hint
-        assert "earlier in this chat" in prompt
 
     def test_resolve_weather_from_paraphrased_game_bullets(self):
         history = [
@@ -336,15 +318,10 @@ class TestFormatters:
         assert result.source_label == "Open-Meteo weather"
         assert "70" in result.summary
         assert "clear skies" in result.notes
-        assert "Open-Meteo" in lookup_prompt_notes(result)
-        assert "verified just now" in lookup_prompt_notes(result)
 
-    def test_lookup_prompt_notes_empty_sports(self):
+    def test_empty_sports_notes(self):
         result = format_sports_notes("NFL", [], "unknown team")
-        prompt = lookup_prompt_notes(result)
         assert result.found is False
-        assert "No matching results" in prompt
-        assert "could not find" in prompt.lower()
 
     def test_sports_notes(self):
         result = format_sports_notes(
@@ -369,10 +346,6 @@ class TestFormatters:
         assert result.found is True
         assert "schedule" in result.notes.lower()
         assert "Boise State" in result.summary
-        prompt = lookup_prompt_notes(result)
-        assert "Do NOT say you could not find" in prompt
-        assert "Do not guess where a game is played" in prompt
-        assert "Boise State" in prompt
 
     def test_news_notes(self):
         result = format_news_notes(["Mars rover finds a new rock"])
@@ -394,9 +367,7 @@ class TestFormatters:
 
     def test_current_facts_notes(self):
         result = format_current_facts_notes("President of the United States", "Donald Trump", "January 20, 2025")
-        prompt = lookup_prompt_notes(result)
         assert "Donald Trump" in result.summary
-        assert "training data" in prompt
 
 
 class TestParsers:
@@ -591,7 +562,36 @@ class TestParsers:
         assert not any("Russo-Ukrainian" in item for item in headlines)
 
 
-class TestResolveLiveLookup:
+async def _run_live_lookup(
+    message: str,
+    *,
+    live_lookups: bool,
+    preset,
+    strictness: int,
+    history: list[dict] | None = None,
+    open_web_search: bool = False,
+):
+    loop = await run_lookup_tool_loop(
+        message,
+        history,
+        live_lookups=live_lookups,
+        open_web_search=open_web_search,
+        chat_model="llama3.2:3b",
+        filter_notes=_lookup_filter_notes(
+            preset,
+            strictness,
+            None,
+            classifier_enabled=True,
+            rules_only_classifier=False,
+        ),
+    )
+    notes = "\n".join(
+        str(item.get("content") or "") for item in loop.extra_messages if item.get("content")
+    )
+    return notes, loop.cards, loop.intent, loop.result
+
+
+class TestRunLookupToolLoop:
     @pytest.mark.asyncio
     async def test_disabled_does_not_fetch(self, monkeypatch):
         called = False
@@ -602,7 +602,7 @@ class TestResolveLiveLookup:
             return None
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
-        notes, tools, intent, result = await resolve_live_lookup(
+        notes, tools, intent, result = await _run_live_lookup(
             "What's the weather in Denver?",
             live_lookups=False,
             preset=YOUNG,
@@ -624,7 +624,7 @@ class TestResolveLiveLookup:
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
-        notes, tools, intent, result = await resolve_live_lookup(
+        notes, tools, intent, result = await _run_live_lookup(
             "What's the weather in Denver?",
             live_lookups=True,
             preset=YOUNG,
@@ -644,7 +644,7 @@ class TestResolveLiveLookup:
             return None
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
-        notes, tools, intent, result = await resolve_live_lookup(
+        notes, tools, intent, result = await _run_live_lookup(
             "What's the weather tomorrow?",
             live_lookups=True,
             preset=YOUNG,
@@ -668,7 +668,7 @@ class TestResolveLiveLookup:
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
-        notes, tools, intent, result = await resolve_live_lookup(
+        notes, tools, intent, result = await _run_live_lookup(
             "What's the weather tomorrow?",
             live_lookups=True,
             preset=YOUNG,
@@ -698,7 +698,7 @@ class TestResolveLiveLookup:
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
-        notes, tools, intent, result = await resolve_live_lookup(
+        notes, tools, intent, result = await _run_live_lookup(
             "What's in the news today?",
             live_lookups=True,
             preset=YOUNG,
@@ -751,7 +751,7 @@ class TestResolveLiveLookup:
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
-        notes, tools, intent, result = await resolve_live_lookup(
+        notes, tools, intent, result = await _run_live_lookup(
             "what is going on in the current iran war",
             live_lookups=True,
             open_web_search=True,
@@ -779,7 +779,7 @@ class TestResolveLiveLookup:
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
-        notes, tools, intent, result = await resolve_live_lookup(
+        notes, tools, intent, result = await _run_live_lookup(
             "what are some news stories from today",
             live_lookups=True,
             open_web_search=True,
@@ -804,7 +804,7 @@ class TestResolveLiveLookup:
             return None
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
-        notes, tools, intent, result = await resolve_live_lookup(
+        notes, tools, intent, result = await _run_live_lookup(
             "what is going on in the current iran war",
             live_lookups=True,
             open_web_search=False,
@@ -832,7 +832,7 @@ class TestResolveLiveLookup:
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
-        notes, tools, intent, _result = await resolve_live_lookup(
+        notes, tools, intent, _result = await _run_live_lookup(
             "What's the weather in Denver?",
             live_lookups=True,
             open_web_search=True,
@@ -849,7 +849,7 @@ class TestResolveLiveLookup:
             return None
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
-        notes, tools, intent, result = await resolve_live_lookup(
+        notes, tools, intent, result = await _run_live_lookup(
             "what is going on in the current iran war",
             live_lookups=True,
             open_web_search=True,
@@ -875,7 +875,7 @@ class TestResolveLiveLookup:
 
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         monkeypatch.setattr("homeward_gateway.pipeline.pipeline.filter_output", fake_filter_output)
-        notes, tools, intent, result = await resolve_live_lookup(
+        notes, tools, intent, result = await _run_live_lookup(
             "what is going on in the current iran war",
             live_lookups=True,
             open_web_search=True,

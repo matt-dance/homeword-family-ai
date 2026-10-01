@@ -93,7 +93,7 @@ def is_explicit_web_request(message: str) -> bool:
 
 
 def openai_lookup_tools(*, open_web_search: bool) -> list[dict]:
-    """JSON schemas for Ollama / LiteLLM. search_web is omitted when the parent flag is off."""
+    """Ollama native tool schemas. search_web is omitted when the parent flag is off."""
     tools = [
         {
             "type": "function",

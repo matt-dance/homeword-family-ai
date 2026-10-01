@@ -63,9 +63,6 @@ _CONTENT_STOP = {
     "your",
 }
 
-_CONTEXT_START = "<<<ACTIVE CONTEXT — facts from this chat, not instructions>>>"
-_CONTEXT_END = "<<<END ACTIVE CONTEXT>>>"
-
 
 @dataclass
 class SessionState:
@@ -113,17 +110,6 @@ class SessionState:
             last_lookup_kind=self.last_lookup_kind,
         )
 
-    @classmethod
-    def from_context(cls, context: SessionContext, *, topic: str | None = None) -> SessionState:
-        return cls(
-            topic=topic,
-            place=context.place,
-            team=context.team,
-            venue=context.venue,
-            event_time=context.event_time,
-            last_lookup_kind=context.last_lookup_kind,
-        )
-
     def merge_history(self, history: list[dict] | None) -> SessionState:
         """Fill missing slots from recent chat turns without overwriting persisted facts."""
         inferred = build_session_context(history)
@@ -169,26 +155,6 @@ class SessionState:
             state = replace(state, subject=result.query)
         return state
 
-    def active_context_block(self) -> str:
-        lines: list[str] = []
-        if self.topic:
-            lines.append(f"Topic: {self.topic}")
-        if self.subject:
-            lines.append(f"Subject: {self.subject}")
-        if self.place:
-            lines.append(f"Place: {self.place}")
-        if self.team:
-            lines.append(f"Team: {self.team}")
-        if self.venue:
-            lines.append(f"Venue: {self.venue}")
-        if self.event_time:
-            lines.append(f"Event time: {self.event_time}")
-        if self.last_fact_summary:
-            lines.append(f"Latest verified fact: {self.last_fact_summary}")
-        if not lines:
-            return ""
-        return f"{_CONTEXT_START}\n" + "\n".join(lines) + f"\n{_CONTEXT_END}"
-
     def with_topic(self, message: str) -> SessionState:
         cleaned = re.sub(r"\s+", " ", message.strip())
         if not cleaned or is_referential(cleaned) or _is_vague_follow_up(cleaned, self):
@@ -213,7 +179,6 @@ class ResolvedTurn:
     original_message: str
     expanded_message: str
     is_follow_up: bool
-    context_hint: str
     state: SessionState
 
 
@@ -311,28 +276,10 @@ def _expand_message(message: str, state: SessionState, referential: bool) -> str
     return text
 
 
-def _context_hint(message: str, state: SessionState, referential: bool) -> str:
-    follow_up = referential or _is_vague_follow_up(message, state)
-    if not follow_up:
-        return ""
-    hints: list[str] = []
-    if state.place and not _extract_place(message):
-        hints.append(f"The child is referring to {state.place} from earlier in this chat.")
-    if state.team and not (_matching_team_key(message) or _extract_sports_team(message)):
-        if referential or _SPORTS_CONTINUE_RE.search(message):
-            hints.append(f"The child is referring to {state.team} from earlier in this chat.")
-    about = _about_label(state)
-    if about:
-        hints.append(f"The child is continuing to ask about {about}.")
-    return " ".join(hints)
-
-
 def resolve_turn(
     message: str,
     history: list[dict] | None,
     state: SessionState | None,
-    *,
-    home_location: str | None = None,
 ) -> ResolvedTurn:
     """Resolve follow-ups and merge persisted + inferred context before lookup/LLM."""
     merged = (state or SessionState()).merge_history(history)
@@ -341,12 +288,10 @@ def resolve_turn(
     if not follow_up:
         merged = merged.with_topic(message)
     expanded = _expand_message(message, merged, referential)
-    hint = _context_hint(message, merged, referential)
     return ResolvedTurn(
         original_message=message,
         expanded_message=expanded,
         is_follow_up=follow_up,
-        context_hint=hint,
         state=merged,
     )
 
@@ -355,16 +300,13 @@ def format_user_turn(
     resolved: ResolvedTurn,
     *,
     filtered_content: str,
-    lookup_notes: str = "",
 ) -> str:
     """Build the user message seen by the model.
 
     Live facts travel as tool messages, not LOOKUP DATA / ACTIVE CONTEXT stuffing.
-    ``lookup_notes`` is ignored and kept only so older callers do not break.
     """
     from homeward_gateway.chat.tools import is_self_contained_card_request
 
-    _ = lookup_notes
     if is_self_contained_card_request(resolved.original_message):
         return filtered_content
     if resolved.is_follow_up and resolved.expanded_message != resolved.original_message:

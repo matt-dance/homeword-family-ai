@@ -363,35 +363,6 @@ def build_session_context(history: list[dict] | None, *, limit: int = 10) -> Ses
     )
 
 
-def detect_lookup_intent(message: str) -> LookupIntent | None:
-    """Return at most one named lookup for this turn."""
-    text = (message or "").strip()
-    if not text:
-        return None
-
-    if WEATHER_RE.search(text):
-        place = _extract_place(text)
-        return LookupIntent("weather", place)
-
-    if NEWS_RE.search(text):
-        return LookupIntent("news", "current events")
-
-    team_key = _matching_team_key(text) or _extract_sports_team(text)
-    if SPORTS_ASK_RE.search(text) or team_key:
-        if team_key:
-            scores = _sports_wants_completed_score(text)
-            date_range = _sports_date_range(text, scores=scores)
-            return LookupIntent(
-                "sports",
-                team_key,
-                date_range=date_range,
-                schedule=_sports_wants_schedule(text),
-            )
-        return None
-
-    return None
-
-
 def coerce_open_web_search(live_lookups: bool, open_web_search: bool) -> bool:
     """Open web search cannot stay on unless live lookups are on."""
     return bool(live_lookups and open_web_search)
@@ -602,29 +573,6 @@ def resolve_lookup_intent(
         return sports, ctx
 
     return None, ctx
-
-
-def lookup_context_hint(
-    message: str,
-    intent: LookupIntent,
-    context: SessionContext,
-    *,
-    referential: bool,
-) -> str:
-    """Tell the model when a slot was inferred from earlier in the chat."""
-    if not referential:
-        return ""
-
-    hints: list[str] = []
-    if intent.kind == "weather" and context.place and not _extract_place(message):
-        hints.append(f"The child is asking about {context.place} from earlier in this chat.")
-    if intent.kind == "sports" and context.team and not (
-        _matching_team_key(message) or _extract_sports_team(message)
-    ):
-        hints.append(f"The child is asking about {context.team} from earlier in this chat.")
-    if context.event_time and intent.kind == "weather":
-        hints.append(f"The event time discussed earlier was {context.event_time}.")
-    return " ".join(hints)
 
 
 def resolve_weather_place(
@@ -966,66 +914,6 @@ def lookup_card(result: LookupResult) -> ToolCard:
             "query": result.query,
             "summary": result.summary,
         },
-    )
-
-
-def lookup_prompt_notes(
-    result: LookupResult,
-    *,
-    context_hint: str = "",
-) -> str:
-    prefix = f"{context_hint} " if context_hint else ""
-    if result.kind == "web":
-        if result.found:
-            return (
-                f"{prefix}"
-                "LIVE LOOKUP RESULTS from open web search. "
-                f"Source: {result.source_label}. "
-                "These snippets were fetched just now. Use only them. "
-                "Do not use training data about this topic. "
-                "If they do not answer the question, say you could not check.\n\n"
-                f"{result.notes}"
-            )
-        return (
-            f"{prefix}"
-            "LIVE LOOKUP from open web search. "
-            f"Source: {result.source_label}. "
-            "No matching results were found. Say you could not check. "
-            "Do not invent current events from training data. "
-            "Do not describe protests, wars, or officeholders from memory.\n\n"
-            f"{result.notes}"
-        )
-    if result.found:
-        sports_hint = ""
-        facts_hint = ""
-        if result.kind == "sports":
-            sports_hint = (
-                "For sports, use the home/away and venue lines exactly as written. "
-                "Do not guess where a game is played or contradict the lookup. "
-            )
-        if result.kind == "current_facts":
-            facts_hint = (
-                "These are current facts from Wikipedia — not from your training data. "
-                "Use the officeholder named below even if your training data says someone else. "
-            )
-        return (
-            f"{prefix}"
-            "LIVE LOOKUP RESULTS from a named source — not a generic web search. "
-            f"Source: {result.source_label}. "
-            "These facts were verified just now and ARE the answer. "
-            "Summarize them clearly for the child. "
-            f"{facts_hint}{sports_hint}"
-            "Do NOT say you could not find information, could not check, or that a game "
-            "was cancelled or postponed when results are listed below.\n\n"
-            f"{result.notes}"
-        )
-    return (
-        f"{prefix}"
-        "LIVE LOOKUP from a named source — not a generic web search. "
-        f"Source: {result.source_label}. "
-        "No matching results were found. Say you could not find that in the lookup source. "
-        "Do not invent weather, scores, or headlines.\n\n"
-        f"{result.notes}"
     )
 
 

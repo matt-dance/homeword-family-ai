@@ -1,14 +1,10 @@
-"""Allowlisted lookup tool loop: structured router (small models) or native tools."""
+"""Allowlisted lookup tool loop: judge, regex fallback, optional native tools."""
 
 from __future__ import annotations
 
 import json
-import logging
-import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
-
-import httpx
 
 from homeward_gateway.chat.grounding import (
     GroundingDecision,
@@ -28,9 +24,6 @@ from homeward_gateway.chat.lookup_tools import (
 from homeward_gateway.chat.lookups import coerce_open_web_search
 from homeward_gateway.models.prompts import _BASE_SAFETY
 
-logger = logging.getLogger(__name__)
-
-DecideFn = Callable[..., Awaitable[LookupToolCall | None]]
 JudgeFn = Callable[..., Awaitable[GroundingDecision | None]]
 ChatTurnFn = Callable[..., Awaitable["ModelTurn"]]
 
@@ -41,25 +34,6 @@ _EVIDENCE_ONLY_HINT = (
     "If the notes do not answer the question, say you could not find that "
     "in the lookup results. Do not say you cannot use the web or the internet."
 )
-
-ROUTER_PROMPT = """You choose at most one live lookup tool for a child's question.
-Return JSON only: {{"tool": "<name>" or null, "args": {{}}}}
-
-Tools:
-- get_weather: weather, temperature, rain, jacket. args: place (city), when (today|tomorrow|weekend or "").
-- get_current_events: Wikipedia In the News. Use for news headlines, "news stories from today", and current events. Prefer this over search_web for general news.
-- search_web: timely specific topics (a named war, election, or unfolding event). NOT general news headlines.{web_note}
-- get_sports: scores or schedule. args: team, when.
-- get_current_facts: who currently holds a public office such as the US president. args: topic.
-
-If the child says "tell me more" or similar, only pick a tool when the latest topic still needs a live lookup. Do not reuse an older news lookup after they changed topics.
-
-Recent chat:
-{history}
-
-Child message:
-{message}
-"""
 
 
 @dataclass
@@ -82,7 +56,7 @@ class LookupToolLoopResult:
 
 
 def uses_native_lookup_tools(chat_model: str | None) -> bool:
-    """Same >8GB split as the pipeline classifier skip — 3B/8B use the JSON router."""
+    """Same >8GB split as the pipeline classifier skip — 3B/8B use the regex path."""
     from homeward_gateway.config import settings
     from homeward_gateway.ollama.catalog import estimate_min_ram_gb
 
@@ -99,105 +73,6 @@ def lookup_tool_fact_hint(
     return ""
 
 
-def _extract_json_object(text: str) -> dict[str, Any] | None:
-    raw = (text or "").strip()
-    if not raw:
-        return None
-    try:
-        data = json.loads(raw)
-        return data if isinstance(data, dict) else None
-    except json.JSONDecodeError:
-        pass
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def parse_router_json(text: str, *, open_web_search: bool) -> LookupToolCall | None:
-    payload = _extract_json_object(text)
-    if not payload:
-        return None
-    name = payload.get("tool")
-    if name is None or name is False:
-        return None
-    if not isinstance(name, str):
-        return None
-    name = name.strip()
-    if not name or name.lower() in {"null", "none", "nil"}:
-        return None
-    if name not in LOOKUP_TOOL_NAMES:
-        return None
-    if name == "search_web" and not open_web_search:
-        return None
-    args = payload.get("args") or {}
-    if not isinstance(args, dict):
-        args = {}
-    cleaned = {str(key): "" if value is None else str(value) for key, value in args.items()}
-    return LookupToolCall(name, cleaned)
-
-
-def _format_router_history(history: list[dict] | None, *, limit: int = 8) -> str:
-    lines: list[str] = []
-    for item in (history or [])[-limit:]:
-        role = item.get("role") or "user"
-        if role not in {"user", "assistant"}:
-            continue
-        content = re.sub(r"\s+", " ", str(item.get("content") or "")).strip()
-        if not content:
-            continue
-        lines.append(f"{role}: {content[:400]}")
-    return "\n".join(lines) if lines else "(none)"
-
-
-async def call_structured_router(
-    message: str,
-    history: list[dict] | None = None,
-    *,
-    open_web_search: bool = False,
-    classifier_model: str | None = None,
-) -> LookupToolCall | None:
-    """One JSON router call on the classifier-sized model. Fail closed to regex fallback."""
-    from homeward_gateway.config import settings
-
-    model = classifier_model or settings.classifier_model
-    web_note = (
-        ""
-        if open_web_search
-        else " This tool is not available — never choose search_web."
-    )
-    prompt = ROUTER_PROMPT.format(
-        web_note=web_note,
-        history=_format_router_history(history),
-        message=(message or "").strip(),
-    )
-    timeout = min(float(getattr(settings, "classifier_timeout", 5.0)), 5.0)
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                f"{settings.ollama_base_url.rstrip('/')}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "format": "json",
-                    "keep_alive": "30m",
-                    "options": {"temperature": 0, "num_predict": 80},
-                },
-            )
-            if resp.status_code != 200:
-                return None
-            text = (resp.json() or {}).get("response") or ""
-            return parse_router_json(text, open_web_search=open_web_search)
-    except Exception as exc:
-        logger.info("Lookup router skipped: %s", exc)
-        return None
-
-
 async def resolve_lookup_plan(
     message: str,
     history: list[dict] | None = None,
@@ -207,9 +82,8 @@ async def resolve_lookup_plan(
     context: Any = None,
     classifier_model: str | None = None,
     judge: JudgeFn | None = None,
-    router: DecideFn | None = None,
 ) -> tuple[GroundingDecision | None, LookupToolCall | None]:
-    """Judge first. Regex / injected router run only when judge JSON is empty."""
+    """Judge first. Regex runs only when judge JSON is empty."""
     if judge is not None:
         decision = await judge(
             message,
@@ -229,14 +103,6 @@ async def resolve_lookup_plan(
             open_web_search=open_web_search,
             message=message,
         )
-    if router is not None:
-        routed = await router(
-            message,
-            history,
-            open_web_search=open_web_search,
-        )
-        if routed is not None:
-            return None, routed
     return None, regex_lookup_decision(
         message,
         history,
@@ -244,30 +110,6 @@ async def resolve_lookup_plan(
         open_web_search=open_web_search,
         context=context,
     )
-
-
-async def decide_lookup_tool(
-    message: str,
-    history: list[dict] | None = None,
-    *,
-    open_web_search: bool = False,
-    home_location: str | None = None,
-    context: Any = None,
-    classifier_model: str | None = None,
-    judge: JudgeFn | None = None,
-    router: DecideFn | None = None,
-) -> LookupToolCall | None:
-    _decision, call = await resolve_lookup_plan(
-        message,
-        history,
-        open_web_search=open_web_search,
-        home_location=home_location,
-        context=context,
-        classifier_model=classifier_model,
-        judge=judge,
-        router=router,
-    )
-    return call
 
 
 def lookup_tool_messages(outcome: LookupToolOutcome) -> list[dict]:
@@ -453,7 +295,6 @@ async def run_lookup_tool_loop(
     context: Any = None,
     classifier_model: str | None = None,
     judge: JudgeFn | None = None,
-    router: DecideFn | None = None,
     chat_turn: ChatTurnFn | None = None,
     max_native_steps: int = 3,
     system_prompt: str | None = None,
@@ -470,7 +311,6 @@ async def run_lookup_tool_loop(
         context=context,
         classifier_model=classifier_model,
         judge=judge,
-        router=router,
     )
     if decision is not None:
         if not decision.needs_grounding:
@@ -490,7 +330,7 @@ async def run_lookup_tool_loop(
         )
         return _from_outcomes([outcome], native=False, needs_grounding=True)
 
-    # Judge JSON was empty, but regex/router already planned a lookup. Honor that
+    # Judge JSON was empty, but regex already planned a lookup. Honor that
     # call for every model size so a 14B/27B native turn cannot skip sports, news,
     # or officeholder evidence and answer from memory.
     if call is None and uses_native_lookup_tools(chat_model):

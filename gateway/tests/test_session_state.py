@@ -1,28 +1,11 @@
 """Tests for persisted session state and turn resolution."""
 
-from homeward_gateway.chat.lookups import format_weather_notes
 from homeward_gateway.chat.session_state import (
     ResolvedTurn,
     SessionState,
     format_user_turn,
     resolve_turn,
 )
-
-WEATHER_GEO = {
-    "name": "Eugene",
-    "admin1": "Oregon",
-    "country": "United States",
-    "latitude": 44.05,
-    "longitude": -123.09,
-}
-WEATHER_FORECAST = {
-    "current": {"temperature_2m": 60.0, "wind_speed_10m": 5.0, "weather_code": 3},
-    "daily": {
-        "temperature_2m_max": [65.0],
-        "temperature_2m_min": [50.0],
-        "precipitation_probability_max": [20],
-    },
-}
 
 
 class TestSessionStatePersistence:
@@ -57,12 +40,6 @@ class TestSessionStatePersistence:
         assert merged.place == "Eugene, OR"
         assert merged.last_lookup_kind == "sports"
 
-    def test_active_context_block(self):
-        state = SessionState(topic="weather at the game", place="Eugene, OR")
-        block = state.active_context_block()
-        assert "ACTIVE CONTEXT" in block
-        assert "Eugene, OR" in block
-
 
 class TestTurnResolver:
     GAME_HISTORY = [
@@ -89,14 +66,11 @@ class TestTurnResolver:
             original_message="What will the weather be like at the game?",
             expanded_message="What will the weather be like at the game in Eugene, OR?",
             is_follow_up=True,
-            context_hint="The child is referring to Eugene, OR from earlier in this chat.",
             state=state,
         )
-        weather = format_weather_notes("Eugene", WEATHER_GEO, WEATHER_FORECAST)
         turn = format_user_turn(
             resolved,
             filtered_content="What will the weather be like at the game?",
-            lookup_notes=f"LIVE LOOKUP RESULTS\n{weather.notes}",
         )
         assert "ACTIVE CONTEXT" not in turn
         assert "LOOKUP DATA" not in turn
@@ -109,7 +83,6 @@ class TestTurnResolver:
             original_message="Set a 10-second timer",
             expanded_message="Set a 10-second timer",
             is_follow_up=False,
-            context_hint="",
             state=state,
         )
         turn = format_user_turn(resolved, filtered_content="Set a 10-second timer")
@@ -123,7 +96,6 @@ class TestTurnResolver:
             original_message="How do I make pancakes?",
             expanded_message="How do I make pancakes?",
             is_follow_up=True,
-            context_hint="The child is continuing to ask about pancakes.",
             state=state,
         )
         turn = format_user_turn(resolved, filtered_content="How do I make pancakes?")
@@ -173,4 +145,4 @@ class TestRelatedFollowUpContext:
         next_state = weather.with_topic("What's the weather tomorrow?")
         assert next_state.place == "Denver"
         resolved = resolve_turn("What's the weather tomorrow?", None, next_state)
-        assert "Denver" in (resolved.expanded_message + resolved.context_hint)
+        assert "Denver" in resolved.expanded_message

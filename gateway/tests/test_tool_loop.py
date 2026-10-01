@@ -1,4 +1,4 @@
-"""Structured router + native tool loop. Fakes only — no live LLM."""
+"""Judge / regex / native tool loop. Fakes only — no live LLM."""
 
 import pytest
 
@@ -11,11 +11,9 @@ from homeward_gateway.chat.lookups import (
 )
 from homeward_gateway.chat.lookup_tools import LookupToolCall
 from homeward_gateway.chat.tool_loop import (
-    LookupToolLoopResult,
     ModelTurn,
-    decide_lookup_tool,
     lookup_tool_messages,
-    parse_router_json,
+    resolve_lookup_plan,
     run_lookup_tool_loop,
     uses_native_lookup_tools,
 )
@@ -44,88 +42,40 @@ async def _allow(text: str) -> str | None:
 
 
 class TestNativeHeuristic:
-    def test_default_3b_uses_structured_router(self):
+    def test_default_3b_uses_regex_path(self):
         assert uses_native_lookup_tools("llama3.2:3b") is False
 
     def test_8gb_split_matches_pipeline(self):
-        # Same >8 estimate as _rules_only_classifier: 8B stays on the router;
+        # Same >8 estimate as _rules_only_classifier: 8B stays on the regex path;
         # 14B / 27B use native multi-step tool calls.
         assert uses_native_lookup_tools("llama3.1:8b") is False
         assert uses_native_lookup_tools("qwen2.5:14b") is True
         assert uses_native_lookup_tools("qwen3.8:27b-mlx") is True
 
 
-class TestParseRouterJson:
-    def test_picks_current_events(self):
-        call = parse_router_json(
-            '{"tool": "get_current_events", "args": {}}',
-            open_web_search=True,
-        )
-        assert call == LookupToolCall("get_current_events", {})
-
-    def test_none_and_unknown_are_empty(self):
-        assert parse_router_json('{"tool": null}', open_web_search=True) is None
-        assert parse_router_json('{"tool": "rm_rf", "args": {}}', open_web_search=True) is None
-        assert parse_router_json("not json", open_web_search=True) is None
-
-    def test_search_web_dropped_when_flag_off(self):
-        assert parse_router_json(
-            '{"tool": "search_web", "args": {"query": "iran war"}}',
-            open_web_search=False,
-        ) is None
-        call = parse_router_json(
-            '{"tool": "search_web", "args": {"query": "iran war"}}',
-            open_web_search=True,
-        )
-        assert call is not None
-        assert call.name == "search_web"
-
-
-class TestDecideLookupTool:
+class TestResolveLookupPlan:
     @pytest.mark.asyncio
-    async def test_router_wins_over_regex(self):
-        async def router(*_args, **_kwargs):
-            return LookupToolCall("get_current_events", {})
-
-        call = await decide_lookup_tool(
-            "tell me more",
-            None,
-            open_web_search=True,
-            router=router,
-        )
-        assert call is not None
-        assert call.name == "get_current_events"
-
-    @pytest.mark.asyncio
-    async def test_regex_fallback_when_router_returns_none(self):
-        async def router(*_args, **_kwargs):
-            return None
-
-        call = await decide_lookup_tool(
+    async def test_regex_news_when_judge_is_empty(self):
+        _decision, call = await resolve_lookup_plan(
             "what are some news stories from today",
             None,
             open_web_search=True,
-            router=router,
         )
         assert call is not None
         assert call.name == "get_current_events"
 
     @pytest.mark.asyncio
     async def test_tell_me_more_after_unrelated_topic_is_not_news(self):
-        async def router(*_args, **_kwargs):
-            return None
-
         history = [
             {"role": "user", "content": "what's in the news today"},
             {"role": "assistant", "content": "Gloria Steinem died at 92."},
             {"role": "user", "content": "tell me about black holes"},
             {"role": "assistant", "content": "Black holes have gravity so strong light cannot escape."},
         ]
-        call = await decide_lookup_tool(
+        _decision, call = await resolve_lookup_plan(
             "tell me more",
             history,
             open_web_search=True,
-            router=router,
         )
         assert call is None
 
@@ -164,9 +114,6 @@ class TestSmallModelLoop:
                 return format_news_notes(["Gloria Steinem dies at the age of 92"])
             return format_weather_notes("Denver", WEATHER_GEO, WEATHER_FORECAST)
 
-        async def router(*_args, **_kwargs):
-            return LookupToolCall("get_current_events", {})
-
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         result = await run_lookup_tool_loop(
             "what are some news stories from today",
@@ -175,7 +122,6 @@ class TestSmallModelLoop:
             open_web_search=True,
             chat_model="llama3.2:3b",
             filter_notes=_allow,
-            router=router,
         )
         assert kinds == ["news"]
         assert result.native is False
@@ -202,9 +148,6 @@ class TestSmallModelLoop:
                 ],
             )
 
-        async def router(*_args, **_kwargs):
-            return LookupToolCall("search_web", {"query": "iran war"})
-
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         result = await run_lookup_tool_loop(
             "what is going on in the current iran war",
@@ -213,7 +156,6 @@ class TestSmallModelLoop:
             open_web_search=True,
             chat_model="llama3.2:3b",
             filter_notes=_allow,
-            router=router,
         )
         assert captured["kind"] == "web"
         assert "iran" in captured["query"].lower()
@@ -225,9 +167,6 @@ class TestSmallModelLoop:
         async def fake_fetch(_intent):
             raise AssertionError("must not fetch")
 
-        async def router(*_args, **_kwargs):
-            return LookupToolCall("get_weather", {"place": "Denver"})
-
         monkeypatch.setattr("homeward_gateway.chat.lookup_tools.fetch_lookup", fake_fetch)
         result = await run_lookup_tool_loop(
             "What's the weather in Denver?",
@@ -236,7 +175,6 @@ class TestSmallModelLoop:
             open_web_search=False,
             chat_model="llama3.2:3b",
             filter_notes=_allow,
-            router=router,
         )
         assert result.extra_messages == []
         assert result.cards == []
