@@ -6,7 +6,7 @@ import { CardShell } from "@/components/chat-tool-shell";
 import type { TimerTool } from "@/lib/chat-tools";
 import { Pause, Play, RotateCcw, Sparkles, TimerReset } from "lucide-react";
 
-export function playTimerDing() {
+function playTimerDing() {
   const AudioContextCtor =
     window.AudioContext ||
     (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;

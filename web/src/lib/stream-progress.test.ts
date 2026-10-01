@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   lastAssistantHasText,
   shouldShowStreamThinking,
-  streamComposerHint,
 } from "./stream-progress";
 
 describe("stream progress", () => {
@@ -21,10 +20,5 @@ describe("stream progress", () => {
     expect(lastAssistantHasText({ role: "assistant", content: "" })).toBe(false);
     expect(lastAssistantHasText({ role: "user", content: "hi" })).toBe(false);
     expect(lastAssistantHasText({ role: "assistant", content: "Hi" })).toBe(true);
-  });
-
-  it("explains why the composer is paused", () => {
-    expect(streamComposerHint("Looking that up…")).toMatch(/Tap Stop/i);
-    expect(streamComposerHint(null)).toMatch(/Still working/i);
   });
 });

@@ -25,8 +25,6 @@ export interface HomeworkCameraProps {
   enabled: boolean;
   disabled?: boolean;
   simpleMode?: boolean;
-  /** Optional: send the hint into chat. The panel also shows it inline. */
-  onHint?: (hint: string) => void;
 }
 
 export function HomeworkCamera({
@@ -34,7 +32,6 @@ export function HomeworkCamera({
   enabled,
   disabled,
   simpleMode,
-  onHint,
 }: HomeworkCameraProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef<string | null>(null);
@@ -145,7 +142,6 @@ export function HomeworkCamera({
       if (!result.vision_available) {
         setVisionNote(result.hint);
       }
-      onHint?.(result.hint);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Could not get a hint from that photo.";
       if (message.toLowerCase().includes("parent unlock")) {

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import {
-  clearParentUnlock,
   isParentLockExpired,
   markParentUnlocked,
   subscribeParentLock,
@@ -33,10 +32,6 @@ export function useParentLock() {
 
   const refreshActivity = useCallback(() => {
     markParentUnlocked();
-  }, []);
-
-  const lockNow = useCallback(() => {
-    clearParentUnlock();
   }, []);
 
   useEffect(() => {
@@ -70,5 +65,5 @@ export function useParentLock() {
     };
   }, [syncFromStorage]);
 
-  return { locked, refreshActivity, lockNow };
+  return { locked, refreshActivity };
 }

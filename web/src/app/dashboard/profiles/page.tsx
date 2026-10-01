@@ -782,7 +782,6 @@ function ProfilesContent() {
                     )}
                   </div>
 
-                  {/* Edit Form Drawer */}
                   {isEditing && (
                     <div className="space-y-4 border-t border-border/70 pt-4 animate-slide-down">
                       <div className="grid gap-4 sm:grid-cols-2">
