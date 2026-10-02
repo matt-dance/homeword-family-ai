@@ -310,7 +310,6 @@ class TestHomeworkHintAPI:
     async def test_hint_is_rate_limited_like_transcribe(self, client: AsyncClient):
         child = await _homework_child(client)
         await _unlock_homework(client)
-        rate_limit._attempts.clear()
         for _ in range(rate_limit._MAX_ATTEMPTS):
             resp = await client.post(
                 "/api/v1/chat/homework/hint",

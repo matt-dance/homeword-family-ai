@@ -116,10 +116,3 @@ async def authenticated_client(client: AsyncClient):
     child = await create_child(client)
     client.test_child = child  # type: ignore[attr-defined]
     return client
-
-
-@pytest.fixture
-async def ready_client(authenticated_client: AsyncClient):
-    """Fully set up installation."""
-    await complete_setup(authenticated_client)
-    return authenticated_client

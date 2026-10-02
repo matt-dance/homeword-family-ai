@@ -97,13 +97,11 @@ class TestAuthAPI:
     @pytest.mark.asyncio
     async def test_login_is_rate_limited(self, client: AsyncClient):
         await setup_parent(client)
-        rate_limit._attempts.clear()
         for _ in range(rate_limit._MAX_ATTEMPTS):
             resp = await client.post("/api/v1/auth/login", json={"password": "wrong-password"})
             assert resp.status_code == 401
         locked = await client.post("/api/v1/auth/login", json={"password": DEFAULT_PASSWORD})
         assert locked.status_code == 429
-        rate_limit._attempts.clear()
 
     @pytest.mark.asyncio
     async def test_protected_dashboard_requires_auth(self, client: AsyncClient):

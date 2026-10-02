@@ -198,13 +198,13 @@ class AdvancedSettingsRequest(BaseModel):
 
 
 class MemoryItemCreate(BaseModel):
-    label: str = Field(min_length=1, max_length=500)
-    value: str = Field(min_length=1, max_length=500)
+    label: str = Field(min_length=1, max_length=MEMORY_LABEL_MAX)
+    value: str = Field(min_length=1, max_length=MEMORY_VALUE_MAX)
 
 
 class MemoryItemUpdate(BaseModel):
-    label: str | None = Field(default=None, min_length=1, max_length=500)
-    value: str | None = Field(default=None, min_length=1, max_length=500)
+    label: str | None = Field(default=None, min_length=1, max_length=MEMORY_LABEL_MAX)
+    value: str | None = Field(default=None, min_length=1, max_length=MEMORY_VALUE_MAX)
 
 
 # --- Dependencies ---

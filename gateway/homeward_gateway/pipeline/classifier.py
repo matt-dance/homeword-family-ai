@@ -16,8 +16,6 @@ class ClassifierResult:
     allowed: bool
     reason: str | None = None
     stage: str = "classifier"
-    used_fallback: bool = False
-    model_unavailable: bool = False
 
 
 CLASSIFIER_PROMPT = """You are a content safety classifier for children. Analyze the message and respond with ONLY one word: SAFE or UNSAFE.
@@ -40,8 +38,6 @@ def _with_fallback(primary_reason: str, text: str) -> ClassifierResult:
         allowed=fallback.allowed,
         reason=f"{primary_reason}; {detail}",
         stage=fallback.stage if not fallback.allowed else "classifier",
-        used_fallback=True,
-        model_unavailable=True,
     )
 
 
@@ -102,9 +98,8 @@ def classify_rules_fallback(text: str) -> ClassifierResult:
                 allowed=False,
                 reason=f"fallback: unsafe signal '{signal}'",
                 stage="rules",
-                used_fallback=True,
             )
-    return ClassifierResult(allowed=True, used_fallback=True)
+    return ClassifierResult(allowed=True)
 
 
 async def classify(

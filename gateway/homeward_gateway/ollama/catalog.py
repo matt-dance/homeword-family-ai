@@ -112,7 +112,7 @@ def estimate_min_ram_gb(model_id: str) -> float:
     return 8
 
 
-def pick_recommended_model(ram_gb: float, installed: set[str]) -> str:
+def pick_recommended_model(ram_gb: float) -> str:
     """Best catalog model for this RAM (for the Recommended badge)."""
     fitting = [m for m in MODEL_CATALOG if m.min_ram_gb <= ram_gb]
     if not fitting:

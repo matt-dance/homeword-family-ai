@@ -92,7 +92,6 @@ class TestPinAPI:
     @pytest.mark.asyncio
     async def test_wrong_pin_rejected(self, client: AsyncClient):
         child = await _pin_child(client)
-        rate_limit._attempts.clear()
         resp = await client.post(f"/api/v1/children/{child['id']}/verify-pin", json={"pin": "0000"}, headers=LAN)
         assert resp.status_code == 403
         assert "set-cookie" not in resp.headers
@@ -100,7 +99,6 @@ class TestPinAPI:
     @pytest.mark.asyncio
     async def test_correct_pin_unlocks_chat_for_this_device(self, client: AsyncClient):
         child = await _pin_child(client)
-        rate_limit._attempts.clear()
         resp = await client.post(f"/api/v1/children/{child['id']}/verify-pin", json={"pin": "1234"}, headers=LAN)
         assert resp.status_code == 200
         cookie = resp.headers.get("set-cookie", "")
@@ -118,7 +116,6 @@ class TestPinAPI:
     async def test_pin_unlock_then_resume_twice_keeps_access(self, client: AsyncClient, monkeypatch):
         """Welcome-back chooser and Continue last chat both GET resume after one PIN."""
         child = await _pin_child(client)
-        rate_limit._attempts.clear()
 
         async def fake_process_chat(*_args, **_kwargs):
             return PipelineResult(allowed=True, content="Hi Avery!")
@@ -153,7 +150,6 @@ class TestPinAPI:
     ):
         """After PIN, Continue last chat must load the Start-fresh session (#57), not #38 loop."""
         child = await _pin_child(client)
-        rate_limit._attempts.clear()
         replies = iter(["A short joke.", "The purple dragon is noted."])
 
         async def fake_process_chat(*_args, **_kwargs):
@@ -203,7 +199,6 @@ class TestPinAPI:
     @pytest.mark.asyncio
     async def test_pin_attempts_are_rate_limited(self, client: AsyncClient):
         child = await _pin_child(client)
-        rate_limit._attempts.clear()
         for _ in range(rate_limit._MAX_ATTEMPTS):
             resp = await client.post(
                 f"/api/v1/children/{child['id']}/verify-pin", json={"pin": "0000"}, headers=LAN
@@ -213,7 +208,6 @@ class TestPinAPI:
             f"/api/v1/children/{child['id']}/verify-pin", json={"pin": "1234"}, headers=LAN
         )
         assert locked.status_code == 429
-        rate_limit._attempts.clear()
 
     @pytest.mark.asyncio
     async def test_child_without_pin_needs_no_unlock(self, client: AsyncClient):
@@ -316,7 +310,6 @@ class TestPinAPI:
     async def test_quick_chat_cannot_attach_named_session(self, client: AsyncClient, monkeypatch):
         """PIN skip is only for a Quick Chat session, not the default child's named history."""
         child = await _pin_child(client)
-        rate_limit._attempts.clear()
         unlock = await client.post(
             f"/api/v1/children/{child['id']}/verify-pin", json={"pin": "1234"}, headers=LAN
         )
@@ -396,7 +389,6 @@ class TestPinAPI:
             headers=LAN,
         )
         assert quick.status_code == 200
-        rate_limit._attempts.clear()
         unlock = await client.post(
             f"/api/v1/children/{child['id']}/verify-pin", json={"pin": "1234"}, headers=LAN
         )
@@ -440,7 +432,6 @@ class TestPinAPI:
         )
         assert planted.status_code == 200
 
-        rate_limit._attempts.clear()
         unlock = await client.post(
             f"/api/v1/children/{child['id']}/verify-pin", json={"pin": "1234"}, headers=LAN
         )
