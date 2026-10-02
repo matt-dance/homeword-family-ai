@@ -69,7 +69,6 @@ class LookupToolOutcome:
     cards: list[dict]
     intent: LookupIntent | None
     result: LookupResult | None
-    blocked: bool = False
     skipped: bool = False
 
 
@@ -448,7 +447,6 @@ async def execute_lookup_tool(
             cards=[],
             intent=intent,
             result=None,
-            blocked=True,
         )
 
     return LookupToolOutcome(

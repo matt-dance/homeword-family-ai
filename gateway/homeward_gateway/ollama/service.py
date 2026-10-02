@@ -215,8 +215,7 @@ async def get_recommendations(chat_model: str, classifier_model: str) -> dict[st
     ram_gb, ram_source = get_system_ram_gb()
     reachable = await is_ollama_reachable()
     installed = await list_installed_models() if reachable else []
-    installed_set = set(installed)
-    recommended_id = pick_recommended_model(ram_gb, installed_set)
+    recommended_id = pick_recommended_model(ram_gb)
 
     models = []
     for option in MODEL_CATALOG:

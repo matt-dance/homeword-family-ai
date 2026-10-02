@@ -6,7 +6,6 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
-from homeward_gateway.auth import rate_limit
 from homeward_gateway.config import settings
 from homeward_gateway.db import database as db_module
 from homeward_gateway.db.database import HouseCode
@@ -58,7 +57,6 @@ class TestPairingAPI:
         assert "homeward.local" not in body["join_url"]
         assert body["lan_ip"] == lan_join_ip
 
-        rate_limit._attempts.clear()
         joined = await client.post(
             "/api/v1/pairing/join",
             json={"code": code},
@@ -81,7 +79,6 @@ class TestPairingAPI:
         info = await client.get("/api/v1/pairing")
         code = info.json()["house_code"]
         wrong = "0000" if code != "0000" else "1111"
-        rate_limit._attempts.clear()
         resp = await client.post("/api/v1/pairing/join", json={"code": wrong}, headers=LAN)
         assert resp.status_code == 403
         assert "set-cookie" not in resp.headers
@@ -102,7 +99,6 @@ class TestPairingAPI:
             row.expires_at = past
             await session.commit()
 
-        rate_limit._attempts.clear()
         resp = await client.post("/api/v1/pairing/join", json={"code": code}, headers=LAN)
         assert resp.status_code == 403
         assert "set-cookie" not in resp.headers
@@ -112,7 +108,6 @@ class TestPairingAPI:
         await setup_parent(client)
         first = (await client.get("/api/v1/pairing")).json()
         old_code = first["house_code"]
-        rate_limit._attempts.clear()
         joined = await client.post("/api/v1/pairing/join", json={"code": old_code}, headers=LAN)
         assert joined.status_code == 200
         device_id = joined.json()["device_id"]
@@ -125,7 +120,6 @@ class TestPairingAPI:
         assert "homeward.local" not in rotated.json()["join_url"]
         assert any(d["id"] == device_id for d in rotated.json()["devices"])
 
-        rate_limit._attempts.clear()
         stale = await client.post("/api/v1/pairing/join", json={"code": old_code}, headers=LAN)
         assert stale.status_code == 403
 
@@ -136,7 +130,6 @@ class TestPairingAPI:
     async def test_forget_device(self, client: AsyncClient, lan_join_ip):
         await setup_parent(client)
         code = (await client.get("/api/v1/pairing")).json()["house_code"]
-        rate_limit._attempts.clear()
         joined = await client.post("/api/v1/pairing/join", json={"code": code}, headers=LAN)
         device_id = joined.json()["device_id"]
         forgotten = await client.delete(f"/api/v1/pairing/devices/{device_id}")
@@ -155,7 +148,6 @@ class TestPairingAPI:
         )
         assert session.status_code == 200
         code = (await client.get("/api/v1/pairing")).json()["house_code"]
-        rate_limit._attempts.clear()
         joined = await client.post("/api/v1/pairing/join", json={"code": code}, headers=LAN)
         assert joined.status_code == 200
 

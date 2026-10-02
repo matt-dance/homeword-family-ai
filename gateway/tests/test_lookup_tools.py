@@ -286,7 +286,6 @@ class TestExecuteLookupTool:
             message="what is going on in the current iran war",
             filter_notes=block,
         )
-        assert outcome.blocked is True
         assert "not kid-safe" in outcome.notes
         assert "from memory" in outcome.notes
         assert outcome.cards == []
