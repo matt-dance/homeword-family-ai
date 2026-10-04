@@ -96,38 +96,14 @@ def _package_fixture_resource(name: str):
 
 
 def resolve_fixture(name: str, *, module_file: Path | None = None) -> Path:
-    """Locate a bundled speech sample in editable and installed layouts.
-
-    After ``pip install``, ``Path(__file__).parents[2] / "tests/fixtures"`` points
-    at ``site-packages/tests/fixtures``, which does not exist. Prefer package
-    data at ``homeward_gateway/fixtures/`` (wheel / Docker) and fall back to the
-    checkout path used by editable installs.
-    """
-    module_path = Path(module_file or __file__).resolve()
-    candidates: list[Path] = []
+    """Prefer importlib.resources so a wheel does not walk the source tree."""
     if module_file is None:
         resource = _package_fixture_resource(name)
         if resource is not None:
             resource_path = Path(str(resource))
-            if resource_path.is_file():
-                candidates.append(resource_path)
-    candidates.extend(
-        (
-            module_path.parents[1] / "fixtures" / name,
-            module_path.parents[2] / "tests" / "fixtures" / name,
-        )
-    )
-    seen: set[Path] = set()
-    fallback = candidates[0]
-    for path in candidates:
-        key = path.resolve() if path.exists() else path
-        if key in seen:
-            continue
-        seen.add(key)
-        if path.is_file() and path.stat().st_size > 0:
-            return path
-        fallback = path
-    return fallback
+            if resource_path.is_file() and resource_path.stat().st_size > 0:
+                return resource_path
+    return Path(module_file or __file__).resolve().parents[1] / "fixtures" / name
 
 
 def load_fixture_bytes(name: str, *, module_file: Path | None = None) -> bytes:

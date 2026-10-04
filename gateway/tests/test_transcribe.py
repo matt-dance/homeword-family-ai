@@ -112,7 +112,6 @@ class TestFixtureResolution:
         assert webm.stat().st_size > 0
 
     def test_package_directory_ships_jfk_fixtures(self):
-        """Cold pip/pack installs resolve homeward_gateway/fixtures, not tests/."""
         packaged = Path(__file__).resolve().parents[1] / "homeward_gateway" / "fixtures"
         flac = packaged / "jfk-sample.flac"
         webm = packaged / "jfk-sample.webm"
@@ -137,7 +136,6 @@ class TestFixtureResolution:
         assert path.read_bytes() == b"packaged-flac"
 
     def test_installed_layout_does_not_use_site_packages_tests(self, tmp_path: Path):
-        """Regression: parents[2]/tests/fixtures is wrong after pip install."""
         site = tmp_path / "site-packages"
         voice = site / "homeward_gateway" / "voice"
         packaged = site / "homeward_gateway" / "fixtures"

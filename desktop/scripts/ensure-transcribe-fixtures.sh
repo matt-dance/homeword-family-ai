@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Make sure JFK transcribe self-test clips are present for pack builds.
 #
-# Self-test resolves homeward_gateway/fixtures/jfk-sample.{flac,webm} after a
-# pip/wheel install. Editable checkouts also look at tests/fixtures/. A Family
-# pack that omits both paths 503s GET /api/v1/chat/transcribe/self-test.
+# Self-test resolves homeward_gateway/fixtures/jfk-sample.{flac,webm}.
+# A Family pack that omits them 503s GET /api/v1/chat/transcribe/self-test.
 #
 # Usage:
 #   ensure-transcribe-fixtures.sh source <gateway-dir>
@@ -36,17 +35,14 @@ find_source_fixture() {
   local name="$2"
   local candidate size min
   min="$(min_bytes_for "$name")"
-  for candidate in \
-    "$gateway/homeward_gateway/fixtures/$name" \
-    "$gateway/tests/fixtures/$name"; do
-    if [[ -f "$candidate" ]]; then
-      size="$(file_size "$candidate")"
-      if [[ "$size" -ge "$min" ]]; then
-        printf '%s' "$candidate"
-        return 0
-      fi
+  candidate="$gateway/homeward_gateway/fixtures/$name"
+  if [[ -f "$candidate" ]]; then
+    size="$(file_size "$candidate")"
+    if [[ "$size" -ge "$min" ]]; then
+      printf '%s' "$candidate"
+      return 0
     fi
-  done
+  fi
   return 1
 }
 
@@ -60,7 +56,7 @@ require_source() {
   for name in jfk-sample.flac jfk-sample.webm; do
     if ! path="$(find_source_fixture "$gateway" "$name")"; then
       echo "missing or tiny transcribe self-test fixture: $name" >&2
-      echo "expected under $gateway/homeward_gateway/fixtures or $gateway/tests/fixtures" >&2
+      echo "expected under $gateway/homeward_gateway/fixtures" >&2
       exit 1
     fi
   done
@@ -91,10 +87,7 @@ from pathlib import Path
 
 MIN = {"jfk-sample.flac": 50_000, "jfk-sample.webm": 5_000}
 gateway = Path(sys.argv[1])
-sources = (
-    gateway / "homeward_gateway" / "fixtures",
-    gateway / "tests" / "fixtures",
-)
+src_dir = gateway / "homeward_gateway" / "fixtures"
 
 try:
     import homeward_gateway
@@ -105,13 +98,8 @@ dest_dir = Path(homeward_gateway.__file__).resolve().parent / "fixtures"
 dest_dir.mkdir(parents=True, exist_ok=True)
 
 for name, min_size in MIN.items():
-    src = None
-    for folder in sources:
-        candidate = folder / name
-        if candidate.is_file() and candidate.stat().st_size >= min_size:
-            src = candidate
-            break
-    if src is None:
+    src = src_dir / name
+    if not (src.is_file() and src.stat().st_size >= min_size):
         sys.exit(f"missing source transcribe fixture {name} under {gateway}")
     dest = dest_dir / name
     shutil.copy2(src, dest)
