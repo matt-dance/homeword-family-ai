@@ -34,17 +34,6 @@ func openURLCmd(goos, rawURL string) *exec.Cmd {
 	}
 }
 
-func openProgram(goos string) string {
-	switch goos {
-	case "windows":
-		return "cmd"
-	case "linux":
-		return "xdg-open"
-	default:
-		return "open"
-	}
-}
-
 // DecideLaunchOpen reports whether this invocation should open the parent
 // URL and write .browser_opened.
 //

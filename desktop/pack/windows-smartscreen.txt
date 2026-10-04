@@ -12,7 +12,7 @@ Homeward is open-source family software (MIT). It installs into your user
 folder, starts at login, and does not need Administrator rights.
 
 After install, open http://localhost:43123 on this computer. Kids on the
-same Wi-Fi use http://homeward.local:43123/chat.
+same Wi-Fi scan the QR or type the house code from Add a phone or tablet.
 
 Chat and speech models are not inside this installer. The setup wizard
 downloads them on first use.

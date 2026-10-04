@@ -16,8 +16,6 @@ class PolicyPreset:
     age_min: int
     age_max: int
     strictness_default: int
-    strictness_min: int
-    strictness_max: int
     blocked_topics: list[str] = field(default_factory=list)
     blocked_keywords: list[str] = field(default_factory=list)
     jailbreak_patterns: list[str] = field(default_factory=list)
@@ -34,8 +32,6 @@ def _load_preset(path: Path) -> PolicyPreset:
         age_min=data["age_range"]["min"],
         age_max=data["age_range"]["max"],
         strictness_default=data["strictness"]["default"],
-        strictness_min=data["strictness"]["min"],
-        strictness_max=data["strictness"]["max"],
         blocked_topics=data["rules"].get("blocked_topics", []),
         blocked_keywords=data["rules"].get("blocked_keywords", []),
         jailbreak_patterns=data["rules"].get("jailbreak_patterns", []),

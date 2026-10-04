@@ -27,7 +27,13 @@ func TestShouldOpenOnBoot(t *testing.T) {
 
 func TestOpenURLUsesOpen(t *testing.T) {
 	cmd := OpenURL("http://127.0.0.1:43123")
-	want := openProgram(runtime.GOOS)
+	want := "open"
+	switch runtime.GOOS {
+	case "windows":
+		want = "cmd"
+	case "linux":
+		want = "xdg-open"
+	}
 	if cmd.Args[0] != want {
 		t.Fatalf("%v", cmd.Args)
 	}
@@ -52,24 +58,6 @@ func TestOpenURLCmdWindows(t *testing.T) {
 		if cmd.Args[i] != want[i] {
 			t.Fatalf("%v", cmd.Args)
 		}
-	}
-}
-
-func TestOpenProgram(t *testing.T) {
-	cases := []struct {
-		goos string
-		want string
-	}{
-		{goos: "darwin", want: "open"},
-		{goos: "linux", want: "xdg-open"},
-		{goos: "windows", want: "cmd"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.goos, func(t *testing.T) {
-			if got := openProgram(tc.goos); got != tc.want {
-				t.Fatalf("got %q want %q", got, tc.want)
-			}
-		})
 	}
 }
 
