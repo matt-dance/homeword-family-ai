@@ -6,8 +6,6 @@ age_range:
   max: 8
 strictness:
   default: 4
-  min: 3
-  max: 5
 rules:
   blocked_topics:
     - violence

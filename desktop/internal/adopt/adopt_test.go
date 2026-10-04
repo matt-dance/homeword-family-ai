@@ -11,7 +11,7 @@ func TestDecide(t *testing.T) {
 	if d := Decide(false, false); !d.StartOllama {
 		t.Fatal("free port should start")
 	}
-	if d := Decide(true, true); d.StartOllama || d.Reason != "adopt" {
+	if d := Decide(true, true); d.StartOllama {
 		t.Fatalf("adopt %+v", d)
 	}
 	if d := Decide(true, false); d.StartOllama || d.Reason != "blocked" {

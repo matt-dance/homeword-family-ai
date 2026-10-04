@@ -6,8 +6,6 @@ age_range:
   max: 17
 strictness:
   default: 2
-  min: 1
-  max: 4
 rules:
   blocked_topics:
     - explicit sexual content

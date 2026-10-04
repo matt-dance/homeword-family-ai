@@ -243,7 +243,7 @@ jobs:
             echo
             echo "Chat and speech model weights are not included. After install, the setup wizard downloads models."
             echo
-            echo "On this computer open **http://localhost:43123**. Kids on the same Wi-Fi use **http://homeward.local:43123/chat**."
+            echo "On this computer open **http://localhost:43123**. Kids on the same Wi-Fi scan the QR or type the house code from **Add a phone or tablet**."
             echo
             echo "| File | Platform |"
             echo "| --- | --- |"

@@ -55,7 +55,7 @@ SetupIconFile={#HomewardIcon}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "{#HomewardSourceDir}\Homeward.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#HomewardSourceDir}\Homeward.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#HomewardSourceDir}\resources\*"; DestDir: "{app}\resources"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

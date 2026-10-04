@@ -18,7 +18,7 @@ func Decide(occupied bool, isOllama bool) Decision {
 		return Decision{StartOllama: true}
 	}
 	if isOllama {
-		return Decision{StartOllama: false, Reason: "adopt"}
+		return Decision{StartOllama: false}
 	}
 	return Decision{StartOllama: false, Reason: "blocked"}
 }

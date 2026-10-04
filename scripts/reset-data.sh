@@ -26,11 +26,6 @@ if [[ -f gateway/data/homeward.db ]]; then
   echo "Removed gateway/data/homeward.db"
 fi
 
-if [[ -f gateway/homeward.db ]]; then
-  rm -f gateway/homeward.db
-  echo "Removed gateway/homeward.db"
-fi
-
 echo ""
 echo "Done. Start Homeward again for a fresh setup wizard:"
 echo "  ./scripts/install.sh   (Docker)"
